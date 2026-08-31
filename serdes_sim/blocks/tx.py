@@ -22,9 +22,14 @@ class TxResult:
     dac_lsb: float
     dac_clip_fraction: float
     driver_filtered_v: np.ndarray   # prima delle rail
-    driver_voltage_v: np.ndarray    # uscita driver [V]
+    driver_voltage_v: np.ndarray    # uscita driver ideale differenziale [V]
     driver_clip_fraction: float
     tx_tie_ui: np.ndarray | None = None  # jitter iniettato dal clock TX [UI/simbolo]
+    # coppia differenziale P/N (v. run_differential)
+    vp_v: np.ndarray | None = None
+    vn_v: np.ndarray | None = None
+    vcm_v: np.ndarray | None = None
+    v_diff_v: np.ndarray | None = None   # ciò che il canale vede davvero
 
 
 def tx_clock_tie_ui(cfg, rng):
@@ -77,7 +82,7 @@ def run_tx(cfg, pam4_symbols, rng=None) -> TxResult:
     driver_voltage_v = np.clip(driver_filtered_v, -cfg.driver_clip_v, cfg.driver_clip_v)
     driver_clip_fraction = float(np.mean(np.abs(driver_filtered_v) > cfg.driver_clip_v))
 
-    return TxResult(
+    result = TxResult(
         tx_ffe_symbols=tx_ffe_symbols,
         swing_cost=swing_cost,
         ffe_freq_norm=w / np.pi,
@@ -92,3 +97,40 @@ def run_tx(cfg, pam4_symbols, rng=None) -> TxResult:
         driver_voltage_v=driver_voltage_v,
         driver_clip_fraction=driver_clip_fraction,
     )
+    run_differential(cfg, result, rng)
+    return result
+
+
+def run_differential(cfg, tx: TxResult, rng=None):
+    """Coppia P/N all'uscita del driver.
+
+    vp = +(1+ε/2)·v/2 + vcm ;  vn = −(1−ε/2)·v(t−τ)/2 + vcm
+    Il ricevitore differenziale vede v_diff = vp − vn: lo skew τ filtra il
+    modo differenziale (notch a 1/(2τ)) e lo sbilanciamento ε fa trapelare il
+    common-mode nel differenziale. Con tutto a zero: v_diff ≡ v (bit-esatto)."""
+    v = tx.driver_voltage_v
+    skew_on = cfg.pn_skew_ps > 0
+    mism_on = cfg.pn_gain_mismatch_pct > 0
+    cm_on = cfg.vcm_offset_v != 0 or cfg.vcm_noise_mv > 0
+    if not (skew_on or mism_on or cm_on):
+        tx.vp_v = v / 2
+        tx.vn_v = -v / 2
+        tx.vcm_v = np.zeros_like(v)
+        tx.v_diff_v = v
+        return
+    vcm = np.full_like(v, cfg.vcm_offset_v)
+    if cfg.vcm_noise_mv > 0 and rng is not None:
+        vcm = vcm + rng.normal(0, cfg.vcm_noise_mv * 1e-3, len(v))
+    if skew_on:
+        tau_samples = cfg.pn_skew_ps * 1e-12 * cfg.fs_analog_hz
+        idx = np.arange(len(v), dtype=float)
+        v_n_arm = np.interp(idx - tau_samples, idx, v)
+    else:
+        v_n_arm = v
+    # il guadagno di ciascun ramo moltiplica TUTTO il ramo (segnale + CM):
+    # è così che lo sbilanciamento converte il common-mode in differenziale
+    eps = cfg.pn_gain_mismatch_pct / 100
+    tx.vp_v = (1 + eps / 2) * (v / 2 + vcm)
+    tx.vn_v = (1 - eps / 2) * (-v_n_arm / 2 + vcm)
+    tx.vcm_v = vcm
+    tx.v_diff_v = tx.vp_v - tx.vn_v

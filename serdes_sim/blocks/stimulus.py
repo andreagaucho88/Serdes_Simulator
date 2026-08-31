@@ -131,6 +131,21 @@ def generate_stimulus(n_symbols: int, prbs_order: int,
     return symbols_from_bits(bits, spec)
 
 
+def clock_pattern_bits(n_bits: int, spec: ModulationSpec,
+                       half_period_ui: int = 1) -> np.ndarray:
+    """Pattern clock da BERT: alterna livello minimo e massimo ogni
+    half_period_ui simboli (clock2 = 0101…, clock8 = 4 bassi + 4 alti)."""
+    bps = spec.bits_per_symbol
+    lo = np.asarray(spec.bits[0], dtype=np.uint8)
+    hi = np.asarray(spec.bits[-1], dtype=np.uint8)
+    n_symbols = n_bits // bps + 1
+    sym_bits = np.empty((n_symbols, bps), dtype=np.uint8)
+    phase = (np.arange(n_symbols) // half_period_ui) % 2
+    sym_bits[phase == 0] = lo
+    sym_bits[phase == 1] = hi
+    return sym_bits.reshape(-1)[:n_bits]
+
+
 # ---------------------------------------------------------------------------
 # Utility su simboli (parametrizzate sui livelli)
 # ---------------------------------------------------------------------------

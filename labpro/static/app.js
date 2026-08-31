@@ -54,8 +54,14 @@ const S = { cfg: null, acc: null, running: false, presets: [], ws: null, panels:
 function cfgChips() {
   if (!S.cfg) return;
   const bps = S.cfg.modulation === "NRZ" ? 1 : 2;
-  $("#chip-rate").textContent = (S.cfg.symbol_rate_hz / 1e9).toFixed(3) + " GBd · " + (bps * S.cfg.symbol_rate_hz / 1e9).toFixed(1) + " Gb/s";
-  $("#chip-mod").textContent = S.cfg.modulation + (S.cfg.modulation === "PAM4" ? " " + S.cfg.pam4_mapping : "") + " · PRBS" + S.cfg.prbs_order;
+  const gbs = bps * S.cfg.symbol_rate_hz / 1e9;
+  // sottotitolo DINAMICO: mezzo e rate reali della configurazione corrente
+  const medium = S.cfg.link_medium === "copper" ? "ELETTRICO (RAME)" : "ELETTRO-OTTICO";
+  $("#brand-sub").textContent = `PRO · BANCO ${medium} · ${gbs.toFixed(gbs >= 100 ? 0 : 1)} Gb/s`;
+  $("#chip-rate").textContent = (S.cfg.symbol_rate_hz / 1e9).toFixed(3) + " GBd · " + gbs.toFixed(1) + " Gb/s";
+  const pat = S.cfg.pattern === "prbs" ? "PRBS" + S.cfg.prbs_order
+    : (S.cfg.pattern === "eth" ? "ETH " + S.cfg.l2_frame_bytes + "B" : S.cfg.pattern);
+  $("#chip-mod").textContent = S.cfg.modulation + (S.cfg.modulation === "PAM4" ? " " + S.cfg.pam4_mapping : "") + " · " + pat;
   const fecEl = $("#chip-fec");
   fecEl.textContent = S.cfg.fec_mode === "none" ? "FEC off" : "FEC " + S.cfg.fec_mode.toUpperCase() + " in-path";
   fecEl.classList.toggle("active", S.cfg.fec_mode !== "none");
@@ -142,6 +148,19 @@ const PARAMS = {
   wavelength_nm: { l: "λ", u: "nm", min: 1260, max: 1610, step: 5 },
   fiber_loss_db_km: { l: "Loss fibra", u: "dB/km", min: 0.1, max: 0.6, step: 0.01 },
   n_symbols: { l: "Simboli/record", type: "select", opts: [4095, 6143, 8191, 12287, 16383] },
+  pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "clock2", "clock8", "eth"],
+    names: { prbs: "PRBS", clock2: "clock 0101", clock8: "clock 4+4", eth: "frame Ethernet (L2)" } },
+  l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
+  link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
+    names: { optical: "ottico (MZM+fibra+PD)", copper: "rame (KR/CR/C2M)" } },
+  pn_skew_ps: { l: "Skew P/N", u: "ps", min: 0, max: 10, step: 0.25 },
+  pn_gain_mismatch_pct: { l: "Mismatch P/N", u: "%", min: 0, max: 30, step: 1 },
+  vcm_offset_v: { l: "V_cm offset", u: "V", min: -0.3, max: 0.3, step: 0.01 },
+  vcm_noise_mv: { l: "Rumore CM", u: "mVrms", min: 0, max: 200, step: 5 },
+  xtalk_next_db: { l: "NEXT @Nyq", u: "dB", min: -60, max: 0, step: 1 },
+  xtalk_fext_db: { l: "FEXT @Nyq", u: "dB", min: -60, max: 0, step: 1 },
+  s4p_pairs: { l: "Porte s4p", type: "select", opts: ["13_24", "12_34"],
+    names: { "13_24": "P/N = 1,3 → 2,4", "12_34": "P/N = 1,2 → 3,4" } },
   training_start: { l: "Inizio training", u: "simboli", min: 100, max: 2500, step: 50 },
   pd_dark_current_a: { l: "Dark current", u: "nA", min: 0, max: 100, step: 1, scale: 1e-9 },
   pd_saturation_a: { l: "Saturazione PD", u: "mA", min: 0.05, max: 3, step: 0.05, scale: 1e-3 },
@@ -245,12 +264,26 @@ function readout(items) {
 }
 
 /* ================= PANNELLI ================= */
-const NODE_OPTS = { vctle: "Uscita CTLE", vtia: "Uscita TIA", pfiber: "P ottica al PD", pmzm: "P ottica MZM", chan: "Uscita canale", driver: "Uscita driver" };
+const NODE_OPTS = {
+  vctle: "Uscita CTLE", vtia: "Uscita TIA/AFE",
+  pfiber: "P ottica al PD", pmzm: "P ottica MZM",
+  chan: "Uscita canale", driver: "Driver (diff. ideale)",
+  vp: "V_p (ramo P)", vn: "V_n (ramo N)", vdiff: "V_diff", vcm: "V_cm",
+};
+const OPTICAL_NODES = new Set(["pfiber", "pmzm"]);
 function nodeSelect(panel, cb, def = "vctle") {
   const sel = CE("select");
-  for (const [k, v] of Object.entries(NODE_OPTS)) { const o = CE("option"); o.value = k; o.textContent = v; sel.appendChild(o); }
-  sel.value = def; sel.onchange = cb;
-  // nell'header, prima dei bottoni ridimensiona/chiudi
+  const fill = () => {
+    const cur = sel.value || def;
+    sel.innerHTML = "";
+    for (const [k, v] of Object.entries(NODE_OPTS)) {
+      if (S.cfg && S.cfg.link_medium === "copper" && OPTICAL_NODES.has(k)) continue;
+      const o = CE("option"); o.value = k; o.textContent = v; sel.appendChild(o);
+    }
+    sel.value = [...sel.options].some(o => o.value === cur) ? cur : "vctle";
+  };
+  fill();
+  sel.value = def; sel.onchange = cb; sel._refill = fill;
   const firstBtn = panel.head.querySelector(".icon-btn");
   panel.head.insertBefore(sel, firstBtn);
   return sel;
@@ -270,10 +303,12 @@ PANEL_DEFS.chain = {
   },
   onConfig(p) {
     const fecOn = S.cfg.fec_mode !== "none";
+    const copper = S.cfg.link_medium === "copper";
     const jitOn = S.cfg.tx_rj_rms_fs > 0 || S.cfg.tx_pj_amp_ui > 0 || S.cfg.tx_dcd_pct > 0;
+    const ethOn = S.cfg.pattern === "eth";
     const rows = [
-      [["stim", "PRBS", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FFE", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver", "el", "tx"], ["ch", "Canale", "el", "channel"], ["mzm", "MZM", "op", "optical"], ["fib", "Fibra", "op", "optical"]],
-      [["pd", "PD", "el", "scope"], ["tia", "TIA·AGC", "el", "scope"], ["ctle", "CTLE", "el", "ctle"], ["adc", "ADC", "dg", "adc"], ["cdr", "CDR", "ck", "timing"], ["fse", "FSE", "dg", "eq"], ["dfe", "DFE", "dg", "eq"], ["slc", "Slicer", "dg", "decisions"], ["dmx", "DEMUX", "dg", "decisions"], ["fdec", "FEC dec", fecOn ? "dg" : "off", "feclive"]],
+      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FFE", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", "Canale", "el", "channel"], ["mzm", "MZM", copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
+      [["pd", "PD", copper ? "off" : "el", "scope"], ["tia", copper ? "AFE" : "TIA·AGC", "el", "scope"], ["ctle", "CTLE", "el", "ctle"], ["adc", "ADC", "dg", "adc"], ["cdr", "CDR", "ck", "timing"], ["fse", "FSE", "dg", "eq"], ["dfe", "DFE", "dg", "eq"], ["slc", "Slicer", "dg", "decisions"], ["dmx", "DEMUX", "dg", "decisions"], ["fdec", ethOn ? "FEC·L2" : "FEC dec", fecOn || ethOn ? "dg" : "off", ethOn ? "l2" : "feclive"]],
     ];
     const W = 98, H = 42, G = 13, X0 = 18, Y = [42, 130];
     const cmap = { el: COL.el, op: COL.op, dg: COL.dg, ck: COL.am, off: "#3A4854" };
@@ -520,6 +555,7 @@ PANEL_DEFS.scope = {
   },
   async refetch(p) {
     try {
+      if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
       const d = await GET(`/api/panel/eye?node=${p.node}&n=600&source=${S.running ? "live" : "auto"}`);
       // node o configurazione cambiati: azzera la density map (mai mescolare
       // acquisizioni con scale/configurazioni diverse)
@@ -556,6 +592,7 @@ PANEL_DEFS.spectrum = {
     p.lastFetch = 0; this.refetch(p);
   },
   async refetch(p) {
+    if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
     const d = await GET(`/api/panel/spectrum?node=${p.node}&source=${S.running ? "live" : "auto"}`);
     const traces = [{ x: d.f_ghz, y: d.psd_db, name: d.label, line: { color: COL.el, width: 1.2 } }];
     if (d.model_db) traces.push({ x: d.f_ghz, y: d.model_db, name: "floor noise budget", line: { color: COL.am, dash: "dash", width: 1.6 } });
@@ -658,12 +695,13 @@ PANEL_DEFS.feclive = {
   onConfig(p) { syncParams(p.body); },
 };
 
-/* --- serializer + TX PLL (jitter injection) --- */
+/* --- serializer + TX PLL (jitter injection) + coppia P/N --- */
 PANEL_DEFS.serpll = {
-  title: "Serializer · TX PLL — iniezione jitter", size: "s6",
+  title: "Serializer · TX PLL · uscita P/N", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct"]));
+    p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct",
+      "pn_skew_ps", "pn_gain_mismatch_pct", "vcm_offset_v", "vcm_noise_mv"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.body.appendChild(CE("div", "note", "Il jitter è iniettato sul time base del serializer/DAC (reference plane: clock TX), un offset per UI. Misuralo nel pannello <b>Jitter · TIE</b>: al driver vedi ciò che hai iniettato + il DDJ del pattern; al CTLE si somma tutto il canale."));
     this.onConfig(p);
@@ -676,8 +714,10 @@ PANEL_DEFS.serpll = {
       { l: "RJ iniettato", v: fix(S.cfg.tx_rj_rms_fs / 1000, 2) + " ps", sub: fix(S.cfg.tx_rj_rms_fs * 1e-3 / ui_ps, 4) + " UI rms" },
       { l: "PJ iniettato", v: fix(S.cfg.tx_pj_amp_ui * ui_ps, 2) + " ps pk", sub: "@ " + fix(S.cfg.tx_pj_freq_mhz, 0) + " MHz" },
       { l: "DCD", v: fix(S.cfg.tx_dcd_pct / 100 * ui_ps, 2) + " ps pp", sub: fix(S.cfg.tx_dcd_pct, 1) + " %UI" },
+      { l: "skew P/N", v: fix(S.cfg.pn_skew_ps, 2) + " ps", sub: "notch DM a " + (S.cfg.pn_skew_ps > 0 ? fix(500 / S.cfg.pn_skew_ps, 0) + " GHz" : "∞"), title: "lo skew fra i rami filtra il differenziale: notch a 1/(2τ)" },
       { l: "UI", v: fix(ui_ps, 2) + " ps" },
     ]));
+    p.ro.appendChild(CE("div", "note", "Osserva V_p, V_n, V_diff e V_cm come nodi dello Scope: lo sbilanciamento P/N fa trapelare il common-mode nel differenziale."));
   },
 };
 
@@ -697,6 +737,7 @@ PANEL_DEFS.jitter = {
   },
   async refetch(p) {
     try {
+      if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
       const d = await GET(`/api/panel/jitter?node=${p.node}&source=${S.running ? "live" : "auto"}`);
       p.ro.innerHTML = "";
       p.ro.appendChild(readout([
@@ -753,8 +794,8 @@ PANEL_DEFS.berlive = {
 
 /* --- pannelli parametrici + plot --- */
 PANEL_DEFS.stimulus = {
-  title: "Stimolo — PRBS e modulazione", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "prbs_order", "modulation", "pam4_mapping", "n_symbols"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
+  title: "PPG — pattern e modulazione", size: "s6",
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/stimulus");
     const lay = PL({ height: 210, showlegend: false });
@@ -788,10 +829,11 @@ PANEL_DEFS.tx = {
 };
 
 PANEL_DEFS.channel = {
-  title: "Canale elettrico", size: "s6",
+  title: "Canale elettrico · mezzo · crosstalk", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["channel_il_nyquist_db", "return_loss_db", "echo_delay_ui", "group_delay_ripple_ps"]));
+    p.body.appendChild(paramsBlock(["link_medium", "channel_il_nyquist_db", "return_loss_db", "echo_delay_ui", "group_delay_ripple_ps", "xtalk_next_db", "xtalk_fext_db", "s4p_pairs"]));
+    p.body.appendChild(CE("div", "note", "NEXT/FEXT a 0 dB = spenti; valori negativi = accoppiamento dell'aggressore (PRBS indipendente). In modalità <b>rame</b> la catena ottica è bypassata: canale → AFE (profili KR/CR/C2M)."));
     p.src = CE("div"); p.body.appendChild(p.src);
     p.plotS = CE("div", "plot"); p.body.appendChild(p.plotS);
     p.plotC = CE("div", "plot"); p.body.appendChild(p.plotC);
@@ -1001,6 +1043,111 @@ PANEL_DEFS.rxfe = {
   onConfig(p) { syncParams(p.body); },
 };
 
+/* --- BERT: error detector + error insertion --- */
+PANEL_DEFS.bert = {
+  title: "BERT — Error Detector", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
+    const btn = CE("button", "btn btn-accent", "Inserisci errori");
+    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value })
+      .then(() => { p.note.innerHTML = `<span class="warn">${p.nIns.value} bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.</span>`; })
+      .catch(e => toast(e.message));
+    bar.append(CE("span", "", "bit da invertire:"), p.nIns, btn);
+    p.body.appendChild(bar);
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
+    p.note = CE("div", "note", "L'ED confronta le decisioni col pattern di riferimento pulito (le inserzioni corrompono solo il TX, come su un BERT reale). La mappa mostra DOVE cadono gli errori nel record.");
+    p.body.appendChild(p.note);
+    p.lastFetch = 0;
+    this.refetch(p);
+  },
+  async refetch(p) {
+    try {
+      const d = await GET(`/api/panel/bert?source=${S.running ? "live" : "auto"}`);
+      p.ro.innerHTML = "";
+      if (d.link_down) { p.ro.appendChild(readout([{ l: "SYNC", v: "LOSS", cls: "fail", big: true, sub: "pattern lock perso: l'ED non conta" }])); return; }
+      const a = S.acc || {};
+      p.ro.appendChild(readout([
+        { l: "sync pattern", v: d.sync ? "LOCK" : "LOSS", cls: d.sync ? "ok" : "fail" },
+        { l: "errori (record)", v: String(d.n_errors), big: true, sub: "validation" },
+        { l: "inseriti (record)", v: String(d.inserted.length), cls: d.inserted.length ? "warn" : "" },
+        { l: "inseriti (totale)", v: String(a.injected_total || 0) },
+      ]));
+      const shapes = [vline(d.validation_start, COL.muted, "dot")];
+      const lay = PL({ height: 190, showlegend: false, shapes });
+      mergeAxis(lay, "xaxis", { title: { text: "posizione nel record [simboli] — mappa errori", font: { size: 9 } } });
+      mergeAxis(lay, "yaxis", { title: { text: "err/bin", font: { size: 9 } } });
+      const traces = [{ x: d.hist_x, y: d.hist, type: "bar", marker: { color: COL.fail } }];
+      if (d.inserted.length) traces.push({ x: d.inserted, y: d.inserted.map(() => Math.max(...d.hist, 1)), mode: "markers", marker: { color: COL.am, symbol: "triangle-down", size: 9 }, name: "inseriti" });
+      plot(p.plotEl, traces, lay);
+    } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
+  },
+  onConfig(p) { this.refetch(p); },
+  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 1800) { p.lastFetch = now; this.refetch(p); } },
+};
+
+/* --- Ethernet L2 (traffic analyzer) --- */
+PANEL_DEFS.l2 = {
+  title: "Ethernet · Traffic L2-lite", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes"]));
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.note = CE("div", "note", "Frame reali (preamble+SFD, header, seq, FCS CRC-32) nel payload del link → attraverso FEC e PHY → delineazione e conteggio all'RX. NON è uno stack di clause: niente 64b/66b, AM, AN/LT, RFC 2544 (roadmap).");
+    p.body.appendChild(p.note);
+    this.onTick(p);
+  },
+  onTick(p) {
+    const a = S.acc; if (!a || !a.l2) return;
+    const l = a.l2;
+    p.ro.innerHTML = "";
+    if (!l.active) {
+      p.ro.appendChild(readout([{ l: "traffico", v: "OFF", sub: "imposta pattern = frame Ethernet (L2)" }]));
+      return;
+    }
+    if (S.acc.last && S.acc.last.link_up === false) {
+      p.ro.appendChild(readout([{ l: "LINK", v: "DOWN", cls: "fail", big: true }]));
+      return;
+    }
+    p.ro.appendChild(readout([
+      { l: "frame OK (cum.)", v: String(l.frames_ok), big: true, cls: "ok", sub: l.frame_bytes + "B/frame" },
+      { l: "FCS errati", v: String(l.frames_fcs_bad), cls: l.frames_fcs_bad ? "fail" : "ok" },
+      { l: "persi", v: String(l.frames_lost), cls: l.frames_lost ? "fail" : "ok", sub: isFinite(l.loss_pct) ? fix(l.loss_pct, 2) + " %" : "" },
+      { l: "throughput utile", v: fix(l.throughput_gbps, 2) + " Gb/s", sub: "payload con FCS ok / tempo" },
+    ]));
+  },
+  onConfig(p) { syncParams(p.body); },
+};
+
+/* --- Link training --- */
+PANEL_DEFS.train = {
+  title: "Link training (coordinate descent)", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    const btn = CE("button", "btn btn-accent", "Avvia training (~10 s)");
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "training…";
+      try {
+        const d = await POST("/api/experiment/train", {});
+        const rows = d.steps.map(s =>
+          `<tr><td>${s.param}</td><td>${s.chosen == null ? "invariato" : (s.field.includes("hz") ? fix(s.chosen / 1e9, 1) + " GHz" : fix(s.chosen, 2))}</td><td>${sci(s.score_after)}</td></tr>`).join("");
+        p.out.innerHTML = `<div class="readout">
+          <div class="ro"><label>BER media prima</label><b>${sci(d.score_before)}</b><span class="sub">2 seed</span></div>
+          <div class="ro"><label>BER media dopo</label><b class="${d.score_after < d.score_before ? "ok" : ""}">${sci(d.score_after)}</b><span class="sub">config applicata</span></div>
+          </div><table class="mini"><tr><th>fase</th><th>scelta</th><th>score</th></tr>${rows}</table>`;
+      } catch (e) { p.out.innerHTML = `<div class="note w">${e.message}</div>`; }
+      btn.disabled = false; btn.textContent = "Avvia training (~10 s)";
+    };
+    bar.append(btn);
+    p.body.appendChild(bar);
+    p.out = CE("div"); p.body.appendChild(p.out);
+    p.body.appendChild(CE("div", "note", "Fasi: CTLE zero → CTLE gain DC → TX FFE pre → TX FFE post, ognuna valutata end-to-end su 2 seed (i LINK DOWN contano 0.5). NON è l'AN/LT di clause (nessuno scambio di coefficienti col link partner): è un tuning locale onesto. La config migliore viene applicata al banco."));
+  },
+};
+
 /* --- sweep parametrico integrato --- */
 PANEL_DEFS.sweep = {
   title: "Sweep parametrico (end-to-end)", size: "s6",
@@ -1102,11 +1249,14 @@ const PALETTE = [
   ["jitter", "Jitter · TIE", "digital", 4, 1],
   ["spectrum", "Spectrum analyzer", "electrical", 4, 2],
   ["berlive", "BER live (accumulo)", "digital", 4, 3],
-  ["feclive", "FEC live (accumulo)", "digital", 4, 4],
-  ["sweep", "Sweep parametrico", null, 4, 5],
-  ["jtol", "JTOL-lite (PJ)", "digital", 4, 6],
-  ["standards", "Standard IEEE/OIF", null, 4, 7],
-  ["checks", "Checkpoint & ledger", null, 4, 8],
+  ["bert", "BERT · Error Detector", "digital", 4, 4],
+  ["feclive", "FEC live (accumulo)", "digital", 4, 5],
+  ["l2", "Ethernet · Traffic L2", "digital", 4, 6],
+  ["sweep", "Sweep parametrico", null, 4, 7],
+  ["jtol", "JTOL-lite (PJ)", "digital", 4, 8],
+  ["train", "Link training", "digital", 4, 9],
+  ["standards", "Standard IEEE/OIF", null, 4, 10],
+  ["checks", "Checkpoint & ledger", null, 4, 11],
 ];
 const VIEWS = {
   "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks"],
@@ -1115,6 +1265,7 @@ const VIEWS = {
   "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "rxfe", "ctle", "adc", "timing", "eq", "decisions", "scope"],
   "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "checks"],
+  "BERT e traffico": ["chain", "stimulus", "bert", "l2", "feclive", "berlive", "train"],
 };
 let PANEL_SEQ = 0;
 const SIZES = ["s4", "s6", "s8", "s12"];
@@ -1213,9 +1364,13 @@ async function boot() {
   S.cfg = st.cfg; S.acc = st.acc; S.running = st.running; S.presets = st.presets;
   S.defaults = st.defaults || {}; S.sweepable = st.sweepable || {};
   const ps = $("#preset-select");
-  ps.innerHTML = `<option value="">— preset —</option>`;
+  ps.innerHTML = `<option value="">— preset didattici —</option>`;
   for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; ps.appendChild(o); }
-  ps.onchange = () => { if (ps.value) POST("/api/preset", { name: ps.value }).catch(e => toast(e.message)); };
+  ps.onchange = () => { if (ps.value) { POST("/api/preset", { name: ps.value }).catch(e => toast(e.message)); $("#profile-select").value = ""; } };
+  const pf = $("#profile-select");
+  pf.innerHTML = `<option value="">— profili standard IEEE/OIF —</option>`;
+  for (const p of (st.profiles || [])) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; pf.appendChild(o); }
+  pf.onchange = () => { if (pf.value) { POST("/api/preset", { name: pf.value }).catch(e => toast(e.message)); ps.value = ""; } };
   $("#btn-run").onclick = () => POST("/api/run", { running: !S.running }).catch(e => toast(e.message));
   $("#btn-reset").onclick = () => POST("/api/reset").catch(e => toast(e.message));
   const vs = $("#view-select");

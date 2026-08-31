@@ -301,6 +301,80 @@ def test_livebench_epf_hist_accumulates():
     assert len(hist) == 41 and sum(hist) == s["fec"]["frames_total"] > 0
 
 
+def test_s4p_mixed_mode():
+    # s4p sintetico: solo trasmissione differenziale ideale fra le coppie
+    # (1,3)→(2,4): S21=S43=0.5, S23=S41=-0.25 → SDD21=0.75, SCD21=0.25? no:
+    # SDD21 = 0.5*(S21 - S23 - S41 + S43)
+    from serdes_sim.blocks.channel import parse_touchstone_text, s4p_mixed_mode_21
+    rows = []
+    for f in (1.0, 10.0, 20.0):
+        S = [[0.0] * 8 for _ in range(4)]
+        vals = []
+        M = np.zeros((4, 4))
+        M[1, 0] = 0.5; M[3, 2] = 0.5    # S21, S43
+        M[1, 2] = -0.25; M[3, 0] = -0.25  # S23, S41
+        for i in range(4):
+            for j in range(4):
+                vals += [M[i, j], 0.0]
+        rows.append(" ".join(str(v) for v in [f] + vals))
+    text = "# GHZ S RI R 50\n" + "\n".join(rows)
+    fhz, S4, z0, n_ports = parse_touchstone_text(text)
+    assert n_ports == 4 and len(fhz) == 3
+    sdd21, scd21 = s4p_mixed_mode_21(fhz, S4, "13_24")
+    assert np.allclose(sdd21, 0.5 * (0.5 - (-0.25) - (-0.25) + 0.5))
+    # il mapping alternativo dà un risultato diverso (porte diverse)
+    sdd21b, _ = s4p_mixed_mode_21(fhz, S4, "12_34")
+    assert not np.allclose(sdd21, sdd21b)
+
+
+def test_ethernet_roundtrip_and_analyzer():
+    from serdes_sim.blocks import ethernet
+    bits, n_frames, _ = ethernet.build_stream_bits(60000, 256)
+    a = ethernet.analyze_stream_bits(bits, 256, window_s=1e-6)
+    assert a.frames_ok >= n_frames - 1 and a.frames_fcs_bad == 0
+    assert a.frames_lost == 0
+    # corrompi un byte: un frame perde l'FCS
+    bad = bits.copy(); bad[3000] ^= 1
+    a2 = ethernet.analyze_stream_bits(bad, 256, window_s=1e-6)
+    assert a2.frames_fcs_bad >= 1
+
+
+def test_l2_through_phy_with_fec():
+    r = simulate(LinkConfig(pattern="eth", fec_mode="kp4", **GOOD_LINK),
+                 depth="light")
+    assert r.link_up and r.l2 is not None
+    assert r.l2.frames_ok >= 1 and r.l2.frames_fcs_bad == 0
+    assert r.l2.frames_lost == 0
+
+
+def test_bert_error_insertion_counted():
+    base = simulate(LinkConfig(**GOOD_LINK), depth="light")
+    r = simulate(LinkConfig(err_insert_bits=20, **GOOD_LINK), depth="light")
+    delta = r.metrics_rows[2]["bit_errors"] - base.metrics_rows[2]["bit_errors"]
+    assert 15 <= delta <= 20     # quasi tutte le inserzioni contate dall'ED
+
+
+def test_copper_medium_runs_and_skips_optics():
+    r = simulate(LinkConfig(link_medium="copper",
+                            channel_il_nyquist_db=14.0), depth="light")
+    assert r.link_up and r.optical is None
+    assert r.ber_post_dfe < 0.05
+
+
+def test_pn_skew_degrades_link():
+    r0 = simulate(LinkConfig(), depth="light")
+    r1 = simulate(LinkConfig(pn_skew_ps=6.0), depth="light")
+    assert r1.ber_post_dfe > r0.ber_post_dfe
+
+
+def test_link_train_improves_or_keeps():
+    from serdes_sim.engine import link_train
+    cfg = LinkConfig(ctle_zero_hz=15e9)   # partenza volutamente storta
+    new_cfg, steps, base, final = link_train(cfg, seeds=(1101,))
+    assert final <= base + 1e-9
+    assert len(steps) == 4
+
+
 def test_livebench_accumulates_and_resets():
     import time
     from serdes_sim.livebench import LiveBench

@@ -52,10 +52,11 @@ def level_statistics(train_out, train_truth, spec=PAM4_GRAY):
     rows = []
     for level in spec.levels_array:
         x = train_out[np.isclose(train_truth, level)]
+        # con pattern clock i livelli interni non vengono trasmessi
         rows.append({
             "nominal_level": float(level),
-            "mean": float(np.mean(x)),
-            "sigma": float(np.std(x, ddof=1)),
+            "mean": float(np.mean(x)) if len(x) else float(level),
+            "sigma": float(np.std(x, ddof=1)) if len(x) > 1 else 0.0,
             "count": int(len(x)),
         })
     for r in rows:

@@ -55,11 +55,15 @@ def ref_sim(cfg: LinkConfig):
 # ---------------------------------------------------------------------------
 
 NODES = {
-    "driver": ("Uscita driver", "electrical", "V", "tx"),
+    "driver": ("Uscita driver (diff. ideale)", "electrical", "V", "tx"),
+    "vp": ("V_p (ramo positivo)", "electrical", "V", "tx"),
+    "vn": ("V_n (ramo negativo)", "electrical", "V", "tx"),
+    "vdiff": ("V_diff = Vp−Vn", "electrical", "V", "tx"),
+    "vcm": ("V_cm (common-mode)", "electrical", "V", "tx"),
     "chan": ("Uscita canale", "electrical", "V", "rx"),
     "pmzm": ("P ottica MZM", "optical", "mW", "tx"),
     "pfiber": ("P ottica al PD", "optical", "mW", "rx"),
-    "vtia": ("Uscita TIA", "electrical", "V", "rx"),
+    "vtia": ("Uscita TIA/AFE", "electrical", "V", "rx"),
     "vctle": ("Uscita CTLE", "electrical", "V", "rx"),
 }
 
@@ -67,12 +71,21 @@ NODES = {
 def get_wave(sim, node):
     if node == "driver":
         return sim.tx.driver_voltage_v
+    if node == "vp":
+        return sim.tx.vp_v
+    if node == "vn":
+        return sim.tx.vn_v
+    if node == "vdiff":
+        return sim.tx.v_diff_v
+    if node == "vcm":
+        return sim.tx.vcm_v
     if node == "chan":
         return sim.channel.electrical_waveform_v
-    if node == "pmzm":
-        return sim.optical.P_mzm_w * 1e3
-    if node == "pfiber":
-        return sim.optical.P_fiber_w * 1e3
+    if node in ("pmzm", "pfiber"):
+        if sim.optical is None:
+            raise ValueError("nodo ottico non disponibile in modalità copper")
+        return (sim.optical.P_mzm_w if node == "pmzm"
+                else sim.optical.P_fiber_w) * 1e3
     if node == "vtia":
         return sim.receiver.v_tia_v
     return sim.receiver.v_ctle_v
@@ -341,6 +354,9 @@ def channel_panel(sim, cfg):
 
 
 def optical_panel(sim, cfg):
+    if sim.optical is None:
+        return {"inactive": True,
+                "reason": "link_medium=copper: la catena ottica è bypassata"}
     from serdes_sim.blocks.optical import imdd_small_signal_response
     o = sim.optical
     f = np.linspace(0, 1.5 * cfg.nyquist_hz, 800)
@@ -467,6 +483,54 @@ def decisions_panel(sim, cfg):
     return J(out)
 
 
+def bert_panel(sim, cfg):
+    """Error detector: mappa degli errori sulla validation + inserzioni."""
+    if not sim.link_up:
+        return {"link_down": True}
+    from serdes_sim.blocks.stimulus import hard_slice
+    eq = sim.eq
+    spec = sim.spec
+    decided = hard_slice(eq.dfe_output, spec.levels_array)
+    err_sym = eq.symbol_k_fse[decided != eq.d_fse]
+    err_val = err_sym[err_sym >= cfg.training_stop + 200]
+    # densità per bin da 256 simboli
+    nbins = max(cfg.n_symbols // 256, 1)
+    hist, edges = np.histogram(err_val, bins=nbins, range=(0, cfg.n_symbols))
+    out = {
+        "err_positions_sym": err_val[:3000],
+        "hist_x": 0.5 * (edges[:-1] + edges[1:]),
+        "hist": hist,
+        "n_errors": int(len(err_val)),
+        "pattern": cfg.pattern,
+        "sync": bool(sim.cdr.pattern_locked) if sim.cdr is not None else True,
+        "validation_start": cfg.training_stop + 200,
+        "inserted": (sim.err_positions // spec.bits_per_symbol
+                     if sim.err_positions is not None else []),
+    }
+    return J(out)
+
+
+def l2_panel(sim, cfg):
+    if cfg.pattern != "eth":
+        return {"inactive": True}
+    if not sim.link_up:
+        return {"link_down": True}
+    if sim.l2 is None:
+        return {"inactive": True, "reason": "finestra troppo corta"}
+    l2 = sim.l2
+    return J({
+        "frames_expected": l2.frames_expected,
+        "frames_detected": l2.frames_detected,
+        "frames_ok": l2.frames_ok,
+        "frames_fcs_bad": l2.frames_fcs_bad,
+        "frames_lost": l2.frames_lost,
+        "throughput_gbps": l2.throughput_gbps,
+        "line_rate_gbps": l2.line_rate_gbps,
+        "frame_bytes": cfg.l2_frame_bytes,
+        "fec": cfg.fec_mode,
+    })
+
+
 def stimulus_panel(sim, cfg):
     return J({
         "symbols": sim.pam4_symbols[:64],
@@ -531,6 +595,8 @@ def checks_panel(sim, cfg):
 
 PANEL_BUILDERS = {
     "eye": eye_panel,
+    "bert": bert_panel,
+    "l2": l2_panel,
     "jitter": jitter_panel,
     "spectrum": spectrum_panel,
     "ctle": ctle_panel,

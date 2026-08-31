@@ -46,6 +46,16 @@ class LiveBench:
         self.frames_miscorrected = 0
         self.symbols_corrected = 0
         self.link_down_records = 0
+        # L2 (pattern eth)
+        self.l2_expected = 0
+        self.l2_ok = 0
+        self.l2_fcs_bad = 0
+        self.l2_lost = 0
+        self.l2_thr_sum = 0.0
+        self.l2_records = 0
+        # BERT error insertion (one-shot sul prossimo record)
+        self._inject_bits = 0
+        self.injected_total = 0
         self.postfec_bits = 0
         self.postfec_errors = 0
         self.errors_per_frame = []     # storia recente (cap 2000)
@@ -58,6 +68,12 @@ class LiveBench:
     def reset_stats(self):
         with self._lock:
             self._reset_locked()
+
+    def inject_errors(self, n_bits: int):
+        """BERT: inverte n bit del pattern TX (vs riferimento ED) al
+        prossimo record. One-shot."""
+        with self._lock:
+            self._inject_bits = int(max(0, min(n_bits, 200)))
 
     @property
     def cfg(self) -> LinkConfig:
@@ -99,8 +115,12 @@ class LiveBench:
                 cfg = self._cfg
                 self._seed += 1
                 seed = self._seed
+                inject = self._inject_bits
+                self._inject_bits = 0
+            run_cfg = (cfg if inject == 0
+                       else cfg.with_updates(err_insert_bits=inject))
             try:
-                r = simulate(cfg, seed=seed, depth="light")
+                r = simulate(run_cfg, seed=seed, depth="light")
             except Exception:
                 # config al limite: ferma l'acquisizione invece di girare a vuoto
                 with self._lock:
@@ -111,6 +131,8 @@ class LiveBench:
                     continue  # config cambiata a metà record: scarta
                 self.latest = r
                 self.records += 1
+                if inject:
+                    self.injected_total += inject
                 if not r.link_up:
                     # niente lock CDR/pattern: il record non produce bit validi
                     self.link_down_records += 1
@@ -153,6 +175,13 @@ class LiveBench:
                     del self.errors_per_frame[:-2000]
                     np.add.at(self.epf_hist,
                               np.minimum(fa.errors_per_frame, 40), 1)
+                if r.l2 is not None:
+                    self.l2_expected += r.l2.frames_expected
+                    self.l2_ok += r.l2.frames_ok
+                    self.l2_fcs_bad += r.l2.frames_fcs_bad
+                    self.l2_lost += r.l2.frames_lost
+                    self.l2_thr_sum += r.l2.throughput_gbps
+                    self.l2_records += 1
                 self.ber_history.append(self.ber_cum)
                 del self.ber_history[:-600]
                 snap = self._snapshot_locked()
@@ -211,6 +240,19 @@ class LiveBench:
                      else 7,
             },
             "link_down_records": self.link_down_records,
+            "injected_total": self.injected_total,
+            "l2": {
+                "active": bool(self._cfg.pattern == "eth"),
+                "frames_expected": self.l2_expected,
+                "frames_ok": self.l2_ok,
+                "frames_fcs_bad": self.l2_fcs_bad,
+                "frames_lost": self.l2_lost,
+                "loss_pct": (100.0 * self.l2_lost / self.l2_expected
+                             if self.l2_expected else float("nan")),
+                "throughput_gbps": (self.l2_thr_sum / self.l2_records
+                                    if self.l2_records else float("nan")),
+                "frame_bytes": self._cfg.l2_frame_bytes,
+            },
             "last": {
                 "link_up": bool(r is not None and r.link_up),
                 "cdr_locked": bool(r is not None and (
@@ -226,7 +268,8 @@ class LiveBench:
                 "checks_fail": (sum(1 for c in r.checks if c["status"] == "FAIL")
                                 if r is not None else 0),
                 "p_pd_dbm": (r.optical.power_budget_dbm["PD input"]
-                             if r is not None else float("nan")),
+                             if r is not None and r.optical is not None
+                             else float("nan")),
             },
             "running": self._running,
         }

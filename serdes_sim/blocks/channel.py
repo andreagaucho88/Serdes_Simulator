@@ -36,8 +36,11 @@ def measured_channel_response(f_hz, cfg):
       dell'ultimo tratto;
     - simmetria Hermitiana per garantire una risposta impulsiva reale.
     """
-    f_s2p, S, _ = parse_touchstone_s2p_text(cfg.s2p_text)
-    s21 = S[:, 1, 0]
+    f_s2p, S, _, n_ports = parse_touchstone_text(cfg.s2p_text)
+    if n_ports == 4:
+        s21, _ = s4p_mixed_mode_21(f_s2p, S, cfg.s4p_pairs)  # SDD21
+    else:
+        s21 = S[:, 1, 0]
     order = np.argsort(f_s2p)
     f_s2p, s21 = f_s2p[order], s21[order]
 
@@ -167,6 +170,90 @@ def parse_touchstone_s2p_text(text):
     S[:, 0, 1] = pair(a[:, 5], a[:, 6])  # S12
     S[:, 1, 1] = pair(a[:, 7], a[:, 8])
     return a[:, 0] * unit_scale[unit], S, z0
+
+
+def parse_touchstone_text(text):
+    """Parser Touchstone 1.x generico a n porte (2 o 4).
+
+    Ritorna (f_hz, S[punti, n, n], z0, n_ports). Per s4p il port order è
+    quello del file (row-major S11 S12 S13 S14 / S21 ... come da Touchstone
+    1.x per n>2); il mapping fisico P/N è scelto altrove (s4p_pairs)."""
+    unit_scale = {"HZ": 1.0, "KHZ": 1e3, "MHZ": 1e6, "GHZ": 1e9}
+    option = None
+    rows = []
+    for raw in text.splitlines():
+        line = raw.split("!")[0].strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            tokens = line[1:].upper().split()
+            if len(tokens) < 3 or tokens[1] != "S":
+                raise ValueError("option line attesa: # <unit> S <RI|MA|DB> R <z0>")
+            option = tokens
+            continue
+        if line.startswith("["):
+            raise NotImplementedError("Touchstone 2.x: usare scikit-rf")
+        rows.extend(float(v) for v in line.split())
+    if option is None:
+        raise ValueError("file senza option line")
+    unit, fmt = option[0], option[2]
+    if unit not in unit_scale or fmt not in {"RI", "MA", "DB"}:
+        raise ValueError("unità/formato non supportati")
+    z0 = float(option[option.index("R") + 1]) if "R" in option else 50.0
+    # inferenza porte: il conteggio può essere ambiguo (99 valori = 11 punti
+    # s2p O 3 punti s4p) → si sceglie il candidato con frequenze crescenti
+    arr = np.asarray(rows)
+    candidates = []
+    for n_try in (4, 2):
+        per_point = 1 + 2 * n_try * n_try
+        if len(arr) % per_point == 0 and len(arr) // per_point >= 2:
+            freqs = arr.reshape(-1, per_point)[:, 0]
+            if np.all(np.diff(freqs) > 0):
+                candidates.append(n_try)
+    if not candidates:
+        raise ValueError("numero di valori non compatibile con s2p/s4p "
+                         "(o griglia di frequenze non monotona)")
+    n_ports = candidates[0]
+    per_point = 1 + 2 * n_ports * n_ports
+    a = arr.reshape(-1, per_point)
+
+    def pair(v1, v2):
+        if fmt == "RI":
+            return v1 + 1j * v2
+        mag = v1 if fmt == "MA" else 10 ** (v1 / 20)
+        return mag * np.exp(1j * np.deg2rad(v2))
+
+    vals = a[:, 1:]
+    S = np.empty((len(a), n_ports, n_ports), dtype=complex)
+    for i in range(n_ports):
+        for j in range(n_ports):
+            k = 2 * (i * n_ports + j)
+            S[:, i, j] = pair(vals[:, k], vals[:, k + 1])
+    if n_ports == 2:
+        # Touchstone s2p: ordine S11 S21 S12 S22 (non row-major!)
+        S2 = np.empty_like(S)
+        S2[:, 0, 0] = pair(vals[:, 0], vals[:, 1])
+        S2[:, 1, 0] = pair(vals[:, 2], vals[:, 3])
+        S2[:, 0, 1] = pair(vals[:, 4], vals[:, 5])
+        S2[:, 1, 1] = pair(vals[:, 6], vals[:, 7])
+        S = S2
+    return a[:, 0] * unit_scale[unit], S, z0, n_ports
+
+
+def s4p_mixed_mode_21(f_hz, S4, pairs="13_24"):
+    """SDD21 e SCD21 dal 4-porte single-ended (trasformazione mixed-mode).
+
+    pairs "13_24": ingresso differenziale = porte (1,3), uscita = (2,4);
+    pairs "12_34": ingresso = (1,2), uscita = (3,4)."""
+    if pairs == "13_24":
+        ip, im, op, om = 0, 2, 1, 3
+    else:
+        ip, im, op, om = 0, 1, 2, 3
+    sdd21 = 0.5 * (S4[:, op, ip] - S4[:, op, im]
+                   - S4[:, om, ip] + S4[:, om, im])
+    scd21 = 0.5 * (S4[:, op, ip] + S4[:, op, im]
+                   - S4[:, om, ip] - S4[:, om, im])
+    return sdd21, scd21
 
 
 def sparameter_diagnostics(f_hz, S):

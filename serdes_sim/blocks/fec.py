@@ -421,6 +421,7 @@ class FecLinkResult:
     pre_fec_ber: float
     post_fec_ber: float
     errors_per_frame: np.ndarray   # symbol errors reali (dal confronto col TX)
+    post_payload_bits: np.ndarray = None   # payload decodificato (per L2)
 
 
 def decode_stream(decided_bits, tx_coded_bits, codec: RSCodec,
@@ -469,6 +470,7 @@ def decode_stream(decided_bits, tx_coded_bits, codec: RSCodec,
         pre_fec_ber=pre_err / max(len(tx), 1),
         post_fec_ber=post_err / max(len(payload_tx), 1),
         errors_per_frame=errors_per_frame,
+        post_payload_bits=post,
     )
 
 

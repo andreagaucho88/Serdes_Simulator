@@ -50,6 +50,56 @@ class ReceiverResult:
     ctle_noise_enhancement_db: float
 
 
+def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
+    """AFE per link elettrico (KR/CR/C2M): niente PD/TIA in corrente.
+
+    Il rumore dell'amplificatore è modellato come densità di tensione
+    input-referred equivalente vₙ = iₙ·Z_T (dichiarato): stessa manopola
+    tia_noise, stesso ordine di grandezza di un AFE reale."""
+    n = len(v_in)
+    vn_v_rthz = cfg.tia_noise_a_rt_hz * cfg.tia_transimpedance_ohm
+    S_v2_hz = vn_v_rthz ** 2
+    noise_v = white_noise_from_one_sided_psd(S_v2_hz, n, cfg.fs_analog_hz, rng)
+
+    f_enbw_hz = np.linspace(0, cfg.fs_analog_hz / 2, 80_001)
+    H_pos = butterworth_magnitude(f_enbw_hz, cfg.tia_bw_hz, order=3)
+    enbw_hz = enbw_one_sided_hz(H_pos, f_enbw_hz)
+
+    v_filtered, _, _ = apply_frequency_response(
+        v_in + noise_v, cfg.fs_analog_hz,
+        lambda f: butterworth_response(f, cfg.tia_bw_hz, order=3,
+                                       causal=cfg.causal_filters))
+    v_afe = np.clip(v_filtered, -cfg.tia_clip_v, cfg.tia_clip_v)
+    clip_fraction = float(np.mean(np.abs(v_filtered) > cfg.tia_clip_v))
+    v_ac = v_afe - np.mean(v_afe)
+    agc_gain = float(cfg.agc_target_rms_v / max(rms_ac(v_ac), 1e-30))
+    v_agc_v = agc_gain * v_ac
+
+    dc_gain_db = getattr(cfg, "ctle_dc_gain_db", 0.0)
+    v_ctle_v, H_ctle, f_fft_hz = apply_frequency_response(
+        v_agc_v, cfg.fs_analog_hz,
+        lambda f: ctle_response(f, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
+                                cfg.ctle_hf_pole_hz, dc_gain_db))
+    f_noise_hz = np.linspace(0, cfg.fs_analog_hz / 2, 100_001)
+    Hct = ctle_response(f_noise_hz, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
+                        cfg.ctle_hf_pole_hz, dc_gain_db)
+    noise_enh_db = float(db10(np.trapz(np.abs(Hct) ** 2, f_noise_hz)
+                              / (f_noise_hz[-1] - f_noise_hz[0])))
+    zeros = np.zeros(n)
+    return ReceiverResult(
+        i_pd_signal_a=zeros, pd_sat_fraction=0.0,
+        S_shot_a2_hz=0.0, S_tia_a2_hz=S_v2_hz, S_rin_a2_hz=0.0,
+        tia_enbw_hz=enbw_hz,
+        noise_rms_after_tia_a={"AFE (V, equivalente)": float(
+            np.sqrt(S_v2_hz * enbw_hz))},
+        i_pd_noisy_a=zeros,
+        v_tia_v=v_afe, tia_clip_fraction=clip_fraction,
+        agc_gain=agc_gain, v_agc_v=v_agc_v, v_ctle_v=v_ctle_v,
+        H_ctle=H_ctle, f_fft_hz=f_fft_hz,
+        ctle_noise_enhancement_db=noise_enh_db,
+    )
+
+
 def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     # --- Photodiode: square-law, banda, saturazione -------------------------
     i_pd_unfiltered_a = cfg.pd_responsivity_a_w * P_fiber_w + cfg.pd_dark_current_a

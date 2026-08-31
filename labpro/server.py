@@ -23,7 +23,8 @@ import tornado.websocket
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
-from serdes_sim.engine import jitter_tolerance  # noqa: E402
+from serdes_sim.config import STANDARD_PROFILES  # noqa: E402
+from serdes_sim.engine import jitter_tolerance, link_train  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
 
@@ -102,6 +103,8 @@ class ApiState(Base):
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
             "presets": [{"name": k, "desc": v[1]} for k, v in PRESETS.items()],
+            "profiles": [{"name": k, "desc": v[1]}
+                         for k, v in STANDARD_PROFILES.items()],
             "sweepable": {k: {"label": v[0], "lo": v[1], "hi": v[2]}
                           for k, v in SWEEPABLE_FIELDS.items()},
         })
@@ -182,10 +185,11 @@ class ApiConfig(Base):
 class ApiPreset(Base):
     def post(self):
         name = self.body_json().get("name")
-        if name not in PRESETS:
+        source = PRESETS if name in PRESETS else STANDARD_PROFILES
+        if name not in source:
             self.set_status(400)
-            return self.write_json({"error": "preset sconosciuto"})
-        BENCH.set_config(PRESETS[name][0])
+            return self.write_json({"error": "preset/profilo sconosciuto"})
+        BENCH.set_config(source[name][0])
         persist()
         broadcast({"type": "config", "cfg": BENCH.cfg.to_dict()})
         self.write_json({"ok": True, "cfg": BENCH.cfg.to_dict()})
@@ -213,21 +217,64 @@ class ApiS2P(Base):
         body = self.body_json()
         text = body.get("text", "")
         try:
-            from serdes_sim.blocks.channel import (parse_touchstone_s2p_text,
-                                                   sparameter_diagnostics)
-            f, S, z0 = parse_touchstone_s2p_text(text)
-            diag = sparameter_diagnostics(f, S).to_dict()
+            from serdes_sim.blocks.channel import (parse_touchstone_text,
+                                                   s4p_mixed_mode_21)
+            import numpy as np
+            f, S, z0, n_ports = parse_touchstone_text(text)
+            if n_ports == 4:
+                pairs = body.get("pairs", BENCH.cfg.s4p_pairs)
+                sdd21, scd21 = s4p_mixed_mode_21(f, S, pairs)
+                diag = {
+                    "tipo": "s4p → mixed-mode",
+                    "sdd21_nyq_db": float(20 * np.log10(max(
+                        np.abs(np.interp(BENCH.cfg.nyquist_hz, f,
+                                         np.abs(sdd21))), 1e-12))),
+                    "scd21_max_db": float(20 * np.log10(max(
+                        np.abs(scd21).max(), 1e-12))),
+                    "conversione_di_modo":
+                        "SCD21 alto = squilibrio P/N del canale",
+                }
+            else:
+                from serdes_sim.blocks.channel import sparameter_diagnostics
+                diag = {"tipo": "s2p"} | sparameter_diagnostics(f, S).to_dict()
         except Exception as exc:
             self.set_status(400)
             return self.write_json({"error": str(exc)})
         if body.get("apply"):
-            BENCH.set_config(BENCH.cfg.with_updates(
-                s2p_text=text, s2p_name=body.get("name", "upload"),
-                use_s2p_channel=True))
+            updates = dict(s2p_text=text, s2p_name=body.get("name", "upload"),
+                           use_s2p_channel=True)
+            if n_ports == 4 and body.get("pairs"):
+                updates["s4p_pairs"] = body["pairs"]
+            BENCH.set_config(BENCH.cfg.with_updates(**updates))
             persist()
             broadcast({"type": "config", "cfg": BENCH.cfg.to_dict()})
         self.write_json({"ok": True, "points": len(f), "z0": z0,
-                         "diag": paneldata.J(diag)})
+                         "n_ports": n_ports, "diag": paneldata.J(diag)})
+
+
+class ApiInject(Base):
+    def post(self):
+        n = int(self.body_json().get("bits", 10))
+        BENCH.inject_errors(n)
+        self.write_json({"ok": True, "bits": n})
+
+
+class ApiTrain(Base):
+    def post(self):
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            new_cfg, steps, base, final = link_train(BENCH.cfg)
+        finally:
+            pass
+        BENCH.set_config(new_cfg)
+        persist()
+        broadcast({"type": "config", "cfg": new_cfg.to_dict()})
+        if was_running:
+            BENCH.start()
+        self.write_json({"ok": True, "steps": paneldata.J(steps),
+                         "score_before": base, "score_after": final,
+                         "cfg": new_cfg.to_dict()})
 
 
 class ApiPanel(Base):
@@ -303,6 +350,8 @@ def make_app():
         (r"/api/s2p", ApiS2P),
         (r"/api/experiment/sweep", ApiSweep),
         (r"/api/experiment/jtol", ApiJtol),
+        (r"/api/experiment/train", ApiTrain),
+        (r"/api/inject", ApiInject),
         (r"/api/panel/(\w+)", ApiPanel),
         (r"/ws", WS),
         (r"/static/(.*)", tornado.web.StaticFileHandler,

@@ -16,6 +16,8 @@ class LinkConfig:
     analog_sps: int = 16
     n_symbols: int = 8191
     prbs_order: int = 13          # 7, 9, 11, 13, 15, 23, 31
+    pattern: str = "prbs"         # "prbs" | "clock2" | "clock8" | "eth" (frame L2)
+    l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
     fec_mode: str = "none"        # "none" | "kp4" RS(544,514) | "kr4" RS(528,514)
@@ -36,6 +38,23 @@ class LinkConfig:
     driver_gain_v_per_unit: float = 0.65
     driver_bw_hz: float = 40e9
     driver_clip_v: float = 0.95
+
+    # Coppia differenziale P/N all'uscita del driver (default: ideale)
+    pn_skew_ps: float = 0.0            # ritardo N rispetto a P
+    pn_gain_mismatch_pct: float = 0.0  # sbilanciamento di ampiezza P vs N
+    vcm_offset_v: float = 0.0          # common-mode DC
+    vcm_noise_mv: float = 0.0          # rumore common-mode bianco (RMS)
+
+    # Mezzo del link: "optical" = catena completa MZM/fibra/PD;
+    # "copper" = elettrico puro (KR/CR/C2M): canale → RX AFE, niente ottica
+    link_medium: str = "optical"
+
+    # Crosstalk da aggressore sullo stesso connettore (0 = off)
+    xtalk_next_db: float = 0.0     # accoppiamento NEXT @Nyquist [dB, >0 = off]
+    xtalk_fext_db: float = 0.0     # accoppiamento FEXT @Nyquist [dB, >0 = off]
+
+    # BERT: bit del pattern invertiti al TX rispetto al riferimento dell'ED
+    err_insert_bits: int = 0
 
     # Canale elettrico
     channel_il_nyquist_db: float = 12.0
@@ -102,6 +121,7 @@ class LinkConfig:
     s2p_text: str = ""
     s2p_name: str = ""
     use_s2p_channel: bool = False
+    s4p_pairs: str = "13_24"      # mapping porte s4p: "13_24" o "12_34"
 
     # Filtri DAC/driver/MZM/PD/TIA: False = solo magnitudine (fase zero,
     # scelta didattica del v7); True = Butterworth causale con fase reale.
@@ -176,6 +196,24 @@ class LinkConfig:
         if self.rx_ppm_offset != 0 and self.cdr_mode == "oracle":
             problems.append("con rx_ppm_offset l'oracle a fase fissa non è "
                             "definito: usa cdr_mode gardner o mm")
+        if self.pattern not in ("prbs", "clock2", "clock8", "eth"):
+            problems.append("pattern deve essere prbs/clock2/clock8/eth")
+        if self.pattern in ("clock2", "clock8") and self.fec_mode != "none":
+            problems.append("il FEC in-path richiede un payload (prbs o eth)")
+        if not (64 <= self.l2_frame_bytes <= 1024):
+            problems.append("l2_frame_bytes fuori range [64, 1024]")
+        if self.link_medium not in ("optical", "copper"):
+            problems.append("link_medium deve essere optical o copper")
+        if not (0 <= self.pn_skew_ps <= 10):
+            problems.append("pn_skew_ps fuori range [0, 10] ps")
+        if not (0 <= self.pn_gain_mismatch_pct <= 30):
+            problems.append("pn_gain_mismatch_pct fuori range [0, 30] %")
+        if not (0 <= self.vcm_noise_mv <= 200):
+            problems.append("vcm_noise_mv fuori range [0, 200] mV")
+        if not (0 <= self.err_insert_bits <= 200):
+            problems.append("err_insert_bits fuori range [0, 200]")
+        if self.s4p_pairs not in ("13_24", "12_34"):
+            problems.append("s4p_pairs deve essere 13_24 o 12_34")
         return problems
 
     def with_updates(self, **kwargs) -> "LinkConfig":
@@ -236,3 +274,61 @@ PRESETS: dict[str, tuple[LinkConfig, str]] = {
 
 
 DEFAULT_PRESET = "112G didattico — 2 km @1550 nm"
+
+
+# ---------------------------------------------------------------------------
+# Profili standard a 4 assi: standard/clause · reference plane/reach · mezzo ·
+# FEC. L'architettura interna resta la reference implementation didattica di
+# questo banco: IEEE/OIF specificano le interfacce, non l'interno del SerDes.
+# I numeri di canale/loss sono RAPPRESENTATIVI del reach, non maschere di
+# clause. Stato aggiornato alla stesura (2026).
+# ---------------------------------------------------------------------------
+
+STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
+    "IEEE 802.3by — 25GBASE-LR · PMD ottico 10 km (NRZ)": (
+        LinkConfig(symbol_rate_hz=25.78125e9, modulation="NRZ", fec_mode="kr4",
+                   wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
+                   fiber_km=10.0, fiber_loss_db_km=0.35,
+                   channel_il_nyquist_db=6.0, laser_dbm=4.0),
+        "25.78125 GBd NRZ · O-band 10 km · RS(528,514) — pubblicato."),
+    "IEEE 802.3bs — 400GBASE-FR8 · 50G/λ ottico 2 km (PAM4)": (
+        LinkConfig(symbol_rate_hz=26.5625e9, fec_mode="kp4",
+                   wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
+                   fiber_km=2.0, fiber_loss_db_km=0.35,
+                   channel_il_nyquist_db=6.0, laser_dbm=3.0),
+        "26.5625 GBd PAM4 per corsia · RS(544,514) — pubblicato."),
+    "IEEE 802.3cu — 100GBASE-FR1 · PMD ottico 2 km": (
+        LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
+                   fiber_km=2.0, fiber_loss_db_km=0.35,
+                   channel_il_nyquist_db=8.0, laser_dbm=3.0),
+        "53.125 GBd PAM4 · O-band 2 km · RS(544,514) — pubblicato."),
+    "IEEE 802.3cu — 100GBASE-LR1 · PMD ottico 10 km": (
+        LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
+                   fiber_km=10.0, fiber_loss_db_km=0.35,
+                   channel_il_nyquist_db=8.0, laser_dbm=4.5),
+        "53.125 GBd PAM4 · O-band 10 km · RS(544,514) — pubblicato."),
+    "IEEE 802.3ck — 100G/lane C2M (AUI) · elettrico corto": (
+        LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   link_medium="copper", channel_il_nyquist_db=10.0,
+                   return_loss_db=14.0),
+        "53.125 GBd PAM4 chip-to-module · rame corto · KP4 — pubblicato."),
+    "IEEE 802.3ck — 100GBASE-KR1-like · backplane elettrico": (
+        LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   link_medium="copper", channel_il_nyquist_db=16.0,
+                   return_loss_db=10.0, tia_noise_a_rt_hz=20e-12),
+        "53.125 GBd PAM4 backplane · loss rappresentativa (non è la maschera "
+        "COM di clause) · KP4 — pubblicato."),
+    "OIF CEI-112G-VSR-like · modulo elettrico": (
+        LinkConfig(symbol_rate_hz=56.0e9, fec_mode="kp4",
+                   link_medium="copper", channel_il_nyquist_db=9.0),
+        "56 GBd PAM4 very-short-reach · rame · KP4 — IA OIF-CEI-5.x."),
+    "P802.3dj (draft) — 200G/lane · elettrico C2C": (
+        LinkConfig(symbol_rate_hz=106.25e9, fec_mode="kp4",
+                   link_medium="copper", channel_il_nyquist_db=12.0,
+                   dac_bw_hz=55e9, driver_bw_hz=60e9, tia_bw_hz=55e9,
+                   pd_bw_hz=70e9, mzm_bw_hz=60e9, ctle_pole_hz=40e9,
+                   ctle_hf_pole_hz=80e9),
+        "106.25 GBd PAM4 · PROGETTO IN CORSO (draft): numeri non definitivi."),
+}

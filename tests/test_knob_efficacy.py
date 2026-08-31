@@ -48,6 +48,21 @@ KNOBS = {
     "return_loss_db": (8.0, {}, {"pfib"}, {"driver"}),
     "echo_delay_ui": (2.5, {}, {"pfib"}, {"driver"}),
     "s2p_text": (DEMO_S2P, {"use_s2p_channel": True}, {"pfib"}, {"driver"}),
+    # PPG / BERT / L2
+    "pattern": ("clock2", {}, {"driver"}, set()),
+    "l2_frame_bytes": (128, {"pattern": "eth"}, {"driver"}, set()),
+    "err_insert_bits": (20, {}, {"driver", "ber"}, set()),
+    # coppia differenziale P/N (post-driver: NON tocca il driver ideale)
+    "pn_skew_ps": (4.0, {}, {"pfib"}, {"driver"}),
+    # il mismatch da solo non tocca il differenziale (fisica: genera solo CM);
+    # l'effetto DM appare con un common-mode presente → prerequisito
+    "pn_gain_mismatch_pct": (10.0, {"vcm_offset_v": 0.15}, {"pfib"}, set()),
+    "vcm_offset_v": (0.2, {"pn_gain_mismatch_pct": 10.0}, {"pfib"}, set()),
+    "vcm_noise_mv": (50.0, {"pn_gain_mismatch_pct": 10.0}, {"pfib"}, set()),
+    # crosstalk e mezzo
+    "xtalk_next_db": (-25.0, {}, {"pfib"}, {"driver"}),
+    "xtalk_fext_db": (-25.0, {}, {"pfib"}, {"driver"}),
+    "link_medium": ("copper", {}, {"vctle"}, {"driver"}),
     # ottica
     "laser_dbm": (5.0, {}, {"pfib"}, {"driver"}),
     "vpi_v": (2.5, {}, {"pfib"}, {"driver"}),
@@ -98,13 +113,15 @@ KNOBS = {
     # metadato puro, dichiarato senza effetto fisico
     "s2p_name": None,
     "use_s2p_channel": None,   # testato insieme a s2p_text
+    "s4p_pairs": None,         # condizionale: testato in test_s4p_mixed_mode
 }
 
 
 def _observe(r):
     return {
         "driver": r.tx.driver_voltage_v,
-        "pfib": r.optical.P_fiber_w,
+        "pfib": (r.optical.P_fiber_w if r.optical is not None
+                 else np.zeros(1)),
         "vctle": r.receiver.v_ctle_v,
         "adc": r.adc.adc_samples_v,
         "ber": (r.ber_post_dfe if r.link_up else None),
