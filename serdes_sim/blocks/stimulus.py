@@ -131,6 +131,33 @@ def generate_stimulus(n_symbols: int, prbs_order: int,
     return symbols_from_bits(bits, spec)
 
 
+def ssprq_like_bits(n_bits: int, spec: ModulationSpec) -> np.ndarray:
+    """Pattern stress 'SSPRQ-like' — DICHIARATO: non è lo SSPRQ di clause.
+
+    Lo Short Stress Pattern Random Quaternary di IEEE 802.3 è costruito da
+    segmenti prescritti di PRBS31Q con seed e inversioni specificati dalla
+    clause; qui ne replichiamo il MECCANISMO di stress (segmenti PRBS31Q,
+    inversioni, run lunghi ai livelli estremi per DC wander e stress del CDR)
+    senza pretendere identità bit-esatta col pattern normativo."""
+    bps = spec.bits_per_symbol
+    base = prbs_bits(31, n_bits + 8 * bps * 64)
+    lo_run = np.tile(np.asarray(spec.bits[0], dtype=np.uint8), 48)
+    hi_run = np.tile(np.asarray(spec.bits[-1], dtype=np.uint8), 48)
+    seg = max(n_bits // 6, bps * 64)
+    chunks = [
+        base[:seg],
+        lo_run,
+        (1 - base[seg:2 * seg]).astype(np.uint8),      # segmento invertito
+        hi_run,
+        base[2 * seg:3 * seg][::-1],                   # segmento riflesso
+        lo_run, hi_run,
+        base[3 * seg:4 * seg],
+    ]
+    out = np.concatenate(chunks)
+    reps = int(np.ceil(n_bits / len(out)))
+    return np.tile(out, reps)[:n_bits]
+
+
 def clock_pattern_bits(n_bits: int, spec: ModulationSpec,
                        half_period_ui: int = 1) -> np.ndarray:
     """Pattern clock da BERT: alterna livello minimo e massimo ogni

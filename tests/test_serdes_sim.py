@@ -531,3 +531,29 @@ def test_livebench_accumulates_and_resets():
     b.set_config(LinkConfig())
     assert b.snapshot()["records"] == 0
     assert b.latest is None
+
+
+# --- SSPRQ-like e CMIS-lite --------------------------------------------------
+
+def test_ssprq_like_pattern_runs_and_stresses():
+    r = simulate(LinkConfig(pattern="ssprq_like"), depth="light")
+    assert r.link_up
+    # il pattern stress non deve essere banale: occupa tutti i livelli
+    assert (r.occupancy > 0).all()
+
+
+def test_ssprq_with_fec_rejected():
+    assert LinkConfig(pattern="ssprq_like", fec_mode="kp4").validate()
+
+
+def test_cmis_states_follow_bench():
+    from labpro.paneldata import cmis_panel
+    up = cmis_panel(simulate(LinkConfig(**GOOD_LINK), depth="light"),
+                    LinkConfig(**GOOD_LINK))
+    assert up["datapath_state"] == "DataPathActivated"
+    assert not up["lane_flags"][0]["rx_lol"]
+    down_cfg = LinkConfig(laser_dbm=-6.0)
+    dn = cmis_panel(simulate(down_cfg, depth="light"), down_cfg)
+    assert dn["datapath_state"] != "DataPathActivated"
+    assert dn["lane_flags"][0]["rx_lol"] or dn["lane_flags"][0]["rx_los"]
+    assert len(up["dom"]) == 5 and len(up["vdm"]) >= 3

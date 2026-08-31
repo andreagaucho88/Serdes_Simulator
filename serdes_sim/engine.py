@@ -170,6 +170,8 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
         if cfg.pattern == "eth":
             bits, _, _ = ethernet.build_stream_bits(n, cfg.l2_frame_bytes)
             return bits
+        if cfg.pattern == "ssprq_like":
+            return stimulus.ssprq_like_bits(n, spec)
         if cfg.pattern == "clock2":
             return stimulus.clock_pattern_bits(n, spec, 1)
         if cfg.pattern == "clock8":

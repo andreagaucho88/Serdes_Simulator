@@ -16,7 +16,7 @@ class LinkConfig:
     analog_sps: int = 16
     n_symbols: int = 8191
     prbs_order: int = 13          # 7, 9, 11, 13, 15, 23, 31
-    pattern: str = "prbs"         # "prbs" | "clock2" | "clock8" | "eth" (frame L2)
+    pattern: str = "prbs"         # prbs | clock2 | clock8 | eth | ssprq_like
     l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
@@ -244,9 +244,9 @@ class LinkConfig:
         if self.rx_ppm_offset != 0 and self.cdr_mode == "oracle":
             problems.append("con rx_ppm_offset l'oracle a fase fissa non è "
                             "definito: usa cdr_mode gardner o mm")
-        if self.pattern not in ("prbs", "clock2", "clock8", "eth"):
-            problems.append("pattern deve essere prbs/clock2/clock8/eth")
-        if self.pattern in ("clock2", "clock8") and self.fec_mode != "none":
+        if self.pattern not in ("prbs", "clock2", "clock8", "eth", "ssprq_like"):
+            problems.append("pattern deve essere prbs/clock2/clock8/eth/ssprq_like")
+        if self.pattern in ("clock2", "clock8", "ssprq_like") and self.fec_mode != "none":
             problems.append("il FEC in-path richiede un payload (prbs o eth)")
         if not (64 <= self.l2_frame_bytes <= 1024):
             problems.append("l2_frame_bytes fuori range [64, 1024]")

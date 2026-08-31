@@ -169,8 +169,8 @@ const PARAMS = {
   fiber_type: { l: "Tipo fibra", type: "select", opts: ["smf", "mmf"], names: { smf: "SMF", mmf: "MMF" } },
   mmf_modal_bw_mhz_km: { l: "BW·km MMF", u: "MHz·km", min: 500, max: 10000, step: 100 },
   n_symbols: { l: "Simboli/record", type: "select", opts: [4095, 6143, 8191, 12287, 16383] },
-  pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "clock2", "clock8", "eth"],
-    names: { prbs: "PRBS", clock2: "clock 0101", clock8: "clock 4+4", eth: "frame Ethernet (L2)" } },
+  pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "ssprq_like", "clock2", "clock8", "eth"],
+    names: { prbs: "PRBS (PRBSnQ per PAM4)", ssprq_like: "SSPRQ-like (stress, non-clause)", clock2: "clock 0101", clock8: "clock 4+4", eth: "Ethernet frames (L2)" } },
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
   link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
     names: { optical: "ottico (MZM+fibra+PD)", copper: "rame (KR/CR/C2M)" } },
@@ -386,7 +386,7 @@ PANEL_DEFS.chain = {
     p.body.innerHTML = "";
     p.svgHost = CE("div");
     p.body.appendChild(p.svgHost);
-    p.body.appendChild(CE("div", "note", "Clicca un blocco per aprire il suo pannello. I blocchi FEC sono attivi solo con FEC in-path (pannello FEC live)."));
+    p.body.appendChild(CE("div", "note", L("Clicca un blocco per aprire il suo pannello. I blocchi FEC sono attivi solo con FEC in-path (pannello FEC live).", "Click a block to open its panel. FEC blocks are active only with in-path FEC (FEC live panel).")));
     this.onConfig(p);
   },
   onConfig(p) {
@@ -469,8 +469,8 @@ PANEL_DEFS.chain = {
       if (!led) { led = CE("div", "chain-led scope-bar"); p.body.insertBefore(led, p.body.lastChild); }
       const n = Object.keys(bad).length;
       led.innerHTML = n
-        ? `<span class="fail">● ${n} blocco/i con checkpoint FAIL (bordo rosso — passaci sopra per il dettaglio)</span>`
-        : `<span class="ok">● tutti i checkpoint della catena PASS</span>`;
+        ? `<span class="fail">● ${n} ${L("blocco/i con checkpoint FAIL (bordo rosso — passaci sopra per il dettaglio)", "block(s) with FAILED checkpoints (red border — hover for details)")}</span>`
+        : `<span class="ok">● ${L("tutti i checkpoint della catena PASS", "all chain checkpoints PASS")}</span>`;
     } catch (e) { /* pannello checks non disponibile: nessun colore */ }
   },
 };
@@ -663,7 +663,7 @@ PANEL_DEFS.scope = {
           }
           ctx.fillStyle = p.maskHits > 0 ? COL.fail : COL.ok;
           ctx.font = "11px IBM Plex Mono";
-          ctx.fillText(`mask: ${p.maskHits} hit su ${p.traces.length} tracce`, 8, H - 8);
+          ctx.fillText(`mask: ${p.maskHits} ${L("hit su", "hits over")} ${p.traces.length} ${L("tracce", "traces")}`, 8, H - 8);
         }
         p.readoutEl.textContent = `redraw ${p.count} · buffer ${p.traces.length} ${L("tracce", "traces")} · 2 UI${p.acqText ? " · " + p.acqText : ""}`;
       }
@@ -720,8 +720,8 @@ PANEL_DEFS.scope = {
       this.maskCount(p);
       const m = d.meas, items = [];
       const eyes = ["basso", "medio", "alto"].slice(0, m.eye_heights.length);
-      items.push({ l: "allineamento", v: d.align, sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: "il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo" });
-      m.eye_heights.forEach((h, i) => items.push({ l: `eye ${eyes[i]} H/W`, v: `${fix(h, 3)} / ${fix(m.eye_widths_ui[i], 2)} UI`, cls: h > 0 ? "" : "fail", title: "height p1–p99 al centro strumento / larghezza a p1-p99 (frazione UI)" }));
+      items.push({ l: "allineamento", v: d.align, sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: L("il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo", "the DCA auto-centers on maximum opening; the offset shows where the CDR samples relative to the optimum") });
+      m.eye_heights.forEach((h, i) => items.push({ l: `eye ${eyes[i]} H/W`, v: `${fix(h, 3)} / ${fix(m.eye_widths_ui[i], 2)} UI`, cls: h > 0 ? "" : "fail", title: L("height p1–p99 al centro strumento / larghezza a p1-p99 (frazione UI)", "p1–p99 height at instrument center / p1–p99 width (UI fraction)") }));
       items.push({ l: "Q per occhio", v: m.q_per_eye.map(q => fix(q, 1)).join(" · ") });
       if (m.t_rise_ps != null) items.push({ l: "rise/fall 20-80", v: `${fix(m.t_rise_ps, 1)} / ${fix(m.t_fall_ps, 1)} ps` });
       if (m.rlm_proxy != null) items.push({ l: "RLM proxy", v: fix(m.rlm_proxy, 3) });
@@ -833,7 +833,7 @@ PANEL_DEFS.feclive = {
     p.body.appendChild(paramsBlock(["fec_mode"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.hist = CE("div", "plot"); p.body.appendChild(p.hist);
-    p.note = CE("div", "note", "I contatori si riempiono record dopo record (acquisizione continua). Cambiare configurazione azzera l'accumulo.");
+    p.note = CE("div", "note", L("I contatori si riempiono record dopo record (acquisizione continua). Cambiare configurazione azzera l'accumulo.", "Counters fill record after record (continuous acquisition). Changing configuration resets the accumulation."));
     p.body.appendChild(p.note);
     this.onTick(p);
   },
@@ -853,11 +853,11 @@ PANEL_DEFS.feclive = {
     }
     const items = [
       { l: "frame accumulati", v: String(f.frames_total), big: true, sub: "solo codeword interamente in validation" },
-      { l: "clean / corretti / persi", v: `${f.frames_clean} / ${f.frames_corrected} / ${f.frames_lost}`, cls: f.frames_lost ? "fail" : "ok" },
+      { l: L("clean / corretti / persi", "clean / corrected / lost"), v: `${f.frames_clean} / ${f.frames_corrected} / ${f.frames_lost}`, cls: f.frames_lost ? "fail" : "ok" },
     ];
     if (f.in_path) items.push(
-      { l: "MISCORRETTI", v: String(f.frames_miscorrected || 0), cls: (f.frames_miscorrected || 0) > 0 ? "fail" : "ok", title: "il decoder ha 'corretto' verso un ALTRO codeword valido: su hardware reale sarebbe invisibile (undetected errors) — qui lo vediamo solo perché conosciamo il TX" },
-      { l: "simboli corretti", v: String(f.symbols_corrected) },
+      { l: "MISCORRETTI", v: String(f.frames_miscorrected || 0), cls: (f.frames_miscorrected || 0) > 0 ? "fail" : "ok", title: L("il decoder ha 'corretto' verso un ALTRO codeword valido: su hardware reale sarebbe invisibile (undetected errors) — qui lo vediamo solo perché conosciamo il TX", "the decoder 'corrected' toward ANOTHER valid codeword: on real hardware this is invisible (undetected errors) — we only see it because the TX is known") },
+      { l: L("simboli corretti", "symbols corrected"), v: String(f.symbols_corrected) },
       { l: "post-FEC BER", v: postTxt, cls: !(post > 0) ? "ok" : "", sub: eng(f.postfec_bits) + "b payload", title: "con zero errori: upper bound 95% ≈ 3/N" });
     items.push({ l: "FLR", v: sci(f.flr), cls: f.flr > 0 ? "fail" : "ok" });
     p.ro.appendChild(readout(items));
@@ -886,7 +886,7 @@ PANEL_DEFS.serpll = {
     p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct",
       "pn_skew_ps", "pn_gain_mismatch_pct", "vcm_offset_v", "vcm_noise_mv", "tx_diff_noise_mv"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
-    p.body.appendChild(CE("div", "note", "Il jitter è iniettato sul time base del serializer/DAC (reference plane: clock TX), un offset per UI. Misuralo nel pannello <b>Jitter · TIE</b>: al driver vedi ciò che hai iniettato + il DDJ del pattern; al CTLE si somma tutto il canale."));
+    p.body.appendChild(CE("div", "note", L("Il jitter è iniettato sul time base del serializer/DAC (reference plane: clock TX), un offset per UI. Misuralo nel pannello <b>Jitter · TIE</b>: al driver vedi ciò che hai iniettato + il DDJ del pattern; al CTLE si somma tutto il canale.", "Jitter is injected on the serializer/DAC time base (reference plane: TX clock), one offset per UI. Measure it in the <b>Jitter · TIE</b> panel: at the driver you see what you injected + pattern DDJ; at the CTLE the whole channel adds up.")));
     this.onConfig(p);
   },
   onConfig(p) {
@@ -1039,7 +1039,7 @@ PANEL_DEFS.tx = {
     });
     p.body.appendChild(p.ffe);
     p.body.appendChild(paramsBlock(["dac_bits", "dac_bw_hz", "dac_full_scale_vpp", "driver_gain_v_per_unit", "driver_bw_hz", "driver_clip_v", "causal_filters"]));
-    p.body.appendChild(CE("div", "note w", "Il clipping del driver è non invertibile: nessun equalizzatore a valle ricostruisce i picchi tagliati."));
+    p.body.appendChild(CE("div", "note w", L("Il clipping del driver è non invertibile: nessun equalizzatore a valle ricostruisce i picchi tagliati.", "Driver clipping is non-invertible: no downstream equalizer can rebuild the clipped peaks.")));
   },
   onConfig(p) { syncParams(p.body);
     for (const w of p.ffe.querySelectorAll("[data-ffe]")) { const i = +w.dataset.ffe; const r = w.querySelector("input");
@@ -1051,7 +1051,7 @@ PANEL_DEFS.channel = {
   make(p) {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["link_medium", "channel_il_nyquist_db", "return_loss_db", "echo_delay_ui", "group_delay_ripple_ps", "xtalk_next_db", "xtalk_fext_db", "s4p_pairs"]));
-    p.body.appendChild(CE("div", "note", "NEXT/FEXT a 0 dB = spenti; valori negativi = accoppiamento dell'aggressore (PRBS indipendente). In modalità <b>rame</b> la catena ottica è bypassata: canale → AFE (profili KR/CR/C2M)."));
+    p.body.appendChild(CE("div", "note", L("NEXT/FEXT a 0 dB = spenti; valori negativi = accoppiamento dell'aggressore (PRBS indipendente). In modalità <b>rame</b> la catena ottica è bypassata: canale → AFE (profili KR/CR/C2M).", "NEXT/FEXT at 0 dB = off; negative values = aggressor coupling (independent PRBS). In <b>copper</b> mode the optical chain is bypassed: channel → AFE (KR/CR/C2M profiles).")));
     p.src = CE("div"); p.body.appendChild(p.src);
     p.plotS = CE("div", "plot"); p.body.appendChild(p.plotS);
     p.plotP = CE("div", "plot"); p.body.appendChild(p.plotP);
@@ -1060,7 +1060,7 @@ PANEL_DEFS.channel = {
     up.innerHTML = `<input type="file" accept=".s2p,.S2P,.txt" style="font-size:11px"> <button class="btn" style="padding:3px 9px">usa S2P nel percorso</button> <button class="btn" style="padding:3px 9px">torna al modello</button>`;
     const [fileEl, btnUse, btnBack] = up.querySelectorAll("input,button");
     btnUse.onclick = async () => {
-      const f = fileEl.files[0]; if (!f) return toast("scegli un file .s2p");
+      const f = fileEl.files[0]; if (!f) return toast(L("scegli un file .s2p", "choose an .s2p file"));
       const text = await f.text();
       POST("/api/s2p", { text, name: f.name, apply: true }).catch(e => toast(e.message));
     };
@@ -1164,7 +1164,7 @@ PANEL_DEFS.timing = {
     if (d.cdr) {
       const c = d.cdr;
       p.ro.appendChild(readout([
-        { l: "CDR " + d.mode, v: c.locked ? "LOCKED" : "UNLOCKED", cls: c.locked ? "ok" : "fail", sub: c.locked ? `lock @ simbolo ${c.lock_symbol}` : c.detail, big: true },
+        { l: "CDR " + d.mode, v: c.locked ? "LOCKED" : "UNLOCKED", cls: c.locked ? "ok" : "fail", sub: c.locked ? `${L("lock @ simbolo", "lock @ symbol")} ${c.lock_symbol}` : c.detail, big: true },
         { l: "pattern lock (BERT)", v: c.pattern_locked ? "SYNC" : "NO SYNC", cls: c.pattern_locked ? "ok" : "fail", sub: c.pattern_lag != null ? `lag ${c.pattern_lag} · |corr| ${fix(Math.abs(c.pattern_corr), 2)}` : "—" },
         { l: "cycle slips", v: String(c.cycle_slips), cls: c.cycle_slips ? "fail" : "ok" },
         { l: "link", v: d.link_up ? "UP" : "DOWN", cls: d.link_up ? "ok" : "fail", sub: c.ppm_set ? `offset impostato ${c.ppm_set} ppm` : "" },
@@ -1178,10 +1178,10 @@ PANEL_DEFS.timing = {
       mergeAxis(l2, "xaxis", { title: { text: "simbolo (×" + c.sub + ")", font: { size: 9 } } });
       mergeAxis(l2, "yaxis", { title: { text: "registro freq [ppm]", font: { size: 9 } } });
       plot(p.plot2, [{ y: c.fppm, line: { color: COL.am, width: 1.2 } }], l2);
-      p.note.innerHTML = "Loop PI del 2° ordine + NCO <b>nel datapath</b>: gli istanti di campionamento di FSE/DFE/BER sono quelli del loop; l'allineamento viene dal pattern lock, non da un oracle. Senza lock il link è DOWN e le metriche non esistono.";
+      p.note.innerHTML = L("Loop PI del 2° ordine + NCO <b>nel datapath</b>: gli istanti di campionamento di FSE/DFE/BER sono quelli del loop; l'allineamento viene dal pattern lock, non da un oracle. Senza lock il link è DOWN e le metriche non esistono.", "2nd-order PI loop + NCO <b>in the datapath</b>: FSE/DFE/BER sampling instants come from the loop; alignment comes from pattern lock, not from an oracle. Without lock the link is DOWN and metrics do not exist.");
     } else if (d.phase_ui) {
       p.ro.appendChild(readout([
-        { l: "modalità", v: "ORACLE (ideale)", cls: "warn", sub: "riferimento dichiarato, non un ricevitore" },
+        { l: "modalità", v: "ORACLE (ideale)", cls: "warn", sub: L("riferimento dichiarato, non un ricevitore", "declared reference, not a receiver") },
         { l: "delay + fase", v: `${d.delay >= 0 ? "+" : ""}${d.delay} UI · ${fix(d.best_phase, 3)}` },
       ]));
       const l1 = PL({ height: 200, showlegend: false, shapes: [vline(d.best_phase, COL.ok)] });
@@ -1189,7 +1189,7 @@ PANEL_DEFS.timing = {
       mergeAxis(l1, "yaxis", { title: { text: "MSE rel [dB]", font: { size: 10 } } });
       plot(p.plot1, [{ x: d.phase_ui, y: d.mse_db, line: { color: COL.dg, width: 2 } }], l1);
       p.plot2.innerHTML = "";
-      p.note.innerHTML = "Acquisition oracle: minimo MSE usando i simboli noti — utile come riferimento ideale.";
+      p.note.innerHTML = L("Acquisition oracle: minimo MSE usando i simboli noti — utile come riferimento ideale.", "Oracle acquisition: MSE minimum using known symbols — useful as an ideal reference.");
     }
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
@@ -1200,7 +1200,7 @@ PANEL_DEFS.eq = {
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["fse_taps", "dfe_taps", "training_start", "training_stop"])); p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1); p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/eq");
-    if (d.link_down) { p.plot1.innerHTML = `<div class="note w">LINK DOWN: nessun equalizzatore adattato.</div>`; p.plot2.innerHTML = ""; return; }
+    if (d.link_down) { p.plot1.innerHTML = `<div class="note w">${L("LINK DOWN: nessun equalizzatore adattato.", "LINK DOWN: no equalizer adapted.")}</div>`; p.plot2.innerHTML = ""; return; }
     const l1 = PL({ height: 190 });
     mergeAxis(l1, "xaxis", { title: { text: "posizione [UI]", font: { size: 10 } } });
     plot(p.plot1, [
@@ -1248,10 +1248,10 @@ PANEL_DEFS.standards = {
       { l: L("famiglia più vicina", "nearest family"), v: d.family ? d.family.split("—")[0] : "—", sub: d.deviation_pct != null ? fix(d.deviation_pct, 1) + "%" : "" },
       { l: L("modello FEC", "FEC model"), v: d.fec_name },
     ];
-    if (!d.link_up) items.push({ l: "confronto", v: "LINK DOWN", cls: "fail", sub: "nessuna BER da confrontare" });
+    if (!d.link_up) items.push({ l: "confronto", v: "LINK DOWN", cls: "fail", sub: L("nessuna BER da confrontare", "no BER to compare") });
     else if (d.threshold) items.push(
-      { l: "soglia pre-FEC (modello iid)", v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
-      { l: "posizione", v: d.below ? "SOTTO la soglia del modello" : "SOPRA la soglia del modello", cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + " dB (non è un margine di conformità)", title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
+      { l: L("soglia pre-FEC (modello iid)", "pre-FEC threshold (iid model)"), v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
+      { l: "posizione", v: d.below ? L("SOTTO la soglia del modello", "BELOW the model threshold") : L("SOPRA la soglia del modello", "ABOVE the model threshold"), cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + " dB (non è un margine di conformità)", title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
     p.host.appendChild(readout(items));
     const manifest = (d.manifest || []).map(r => `<tr>
       <td><b>${r.block}</b></td><td>${r.value}</td>
@@ -1343,7 +1343,7 @@ PANEL_DEFS.checks = {
 
 PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v"])); p.body.appendChild(CE("div", "note", "Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).")); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
   onConfig(p) { syncParams(p.body); },
 };
 
@@ -1437,7 +1437,7 @@ PANEL_DEFS.bert = {
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
     const btn = CE("button", "btn btn-accent", "Inserisci errori");
     btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value })
-      .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `${p.nIns.value} bit invertiti al TX sul prossimo record: guarda mappa errori e contatori FEC.`}</span>`; })
+      .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "bits flipped at TX on the next record: watch the spike in the map and (with FEC) the corrections.")}</span>`}</span>`; })
       .catch(e => toast(e.message));
     btn.textContent = L("Inserisci errori", "Insert errors");
     bar.append(CE("span", "", L("bit da invertire:", "bits to invert:")), p.nIns, btn);
@@ -1543,7 +1543,7 @@ PANEL_DEFS.train = {
   make(p) {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
-    const btn = CE("button", "btn btn-accent", "Avvia training (~10 s)");
+    const btn = CE("button", "btn btn-accent", L("Avvia training (~10 s)", "Start training (~10 s)"));
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "training…";
       try {
@@ -1561,8 +1561,50 @@ PANEL_DEFS.train = {
     bar.append(btn);
     p.body.appendChild(bar);
     p.out = CE("div"); p.body.appendChild(p.out);
-    p.body.appendChild(CE("div", "note", "Fasi: CTLE zero → CTLE gain DC → TX FFE pre → TX FFE post, ognuna valutata end-to-end su 2 seed (i LINK DOWN contano 0.5). NON è l'AN/LT di clause (nessuno scambio di coefficienti col link partner): è un tuning locale onesto. La config migliore viene applicata al banco."));
+    p.body.appendChild(CE("div", "note", L("Fasi: CTLE zero → CTLE gain DC → TX FFE pre → TX FFE post, ognuna valutata end-to-end su 2 seed (i LINK DOWN contano 0.5). NON è l'AN/LT di clause (nessuno scambio di coefficienti col link partner): è un tuning locale onesto. La config migliore viene applicata al banco.", "Phases: CTLE zero → CTLE DC gain → TX FFE pre → TX FFE post, each evaluated end-to-end on 2 seeds (LINK DOWN counts 0.5). This is NOT clause AN/LT (no coefficient exchange with a link partner): it is an honest local tuning. The best config is applied to the bench.")));
   },
+};
+
+
+/* --- CMIS-lite: gestione modulo (DOM/VDM) --- */
+PANEL_DEFS.cmis = {
+  title: "Module · CMIS-lite (DOM/VDM)", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    p.host = CE("div"); p.body.appendChild(p.host);
+    p.note = CE("div", "note", L(
+      "Subset ispirato a CMIS 5.x (MSA pubblico): Module/DataPath state machine, flag di lane e monitor DOM/VDM derivati dal banco reale (LOL dal lock del CDR, potenze da MZM/PD, BER dai contatori). NON è la register map completa: niente pagine/I2C/CDB/firmware — vedi roadmap.",
+      "Subset inspired by CMIS 5.x (public MSA): Module/DataPath state machine, lane flags and DOM/VDM monitors derived from the real bench (LOL from CDR lock, powers from MZM/PD, BER from counters). NOT the full register map: no pages/I2C/CDB/firmware — see roadmap."));
+    p.body.appendChild(p.note);
+    p.lastFetch = 0;
+    this.refetch(p);
+  },
+  async refetch(p) {
+    try {
+      const d = await GET(`/api/panel/cmis?source=${S.running ? "live" : "auto"}`);
+      const lf = d.lane_flags[0];
+      const flag = (on, name) => `<span class="badge ${on ? "fail" : "ok"}">${name}: ${on ? "ON" : "off"}</span>`;
+      const states = ["ModuleLowPwr", "ModuleReady"];
+      const dps = ["DataPathDeinit", "DataPathInit", "DataPathActivated"];
+      const smBox = (list, active) => list.map(x =>
+        `<span class="badge ${x === active ? (active.includes("Activated") || active.includes("Ready") ? "ok" : "warn") : ""}" style="opacity:${x === active ? 1 : 0.4}">${x}</span>`).join(" → ");
+      const domRows = d.dom.map(r =>
+        `<tr><td>${r.name}</td><td>${r.value == null ? "—" : fix(r.value, 2)} ${r.unit}</td><td>${r.warn_lo}…${r.warn_hi}</td><td><span class="badge ${r.status === "ok" ? "ok" : (r.status === "na" ? "" : "warn")}">${r.status.toUpperCase()}</span></td></tr>`).join("");
+      const vdmRows = d.vdm.map(r =>
+        `<tr><td>${r.name}</td><td>${r.value == null ? "—" : (typeof r.value === "number" && r.value !== 0 && Math.abs(r.value) < 1e-2 ? sci(r.value) : fix(r.value, 3))}</td></tr>`).join("");
+      p.host.innerHTML = `
+        <div class="readout">
+          <div class="ro"><label>${L("modulo", "module")}</label><b>${d.module.part}</b><span class="sub">${d.module.form_factor} · ${d.module.media}</span></div>
+          <div class="ro"><label>Module state</label><b>${smBox(states, d.module_state)}</b></div>
+          <div class="ro"><label>DataPath state</label><b>${smBox(dps, d.datapath_state)}</b></div>
+        </div>
+        <div style="margin:6px 0">${flag(lf.rx_los, "RX-LOS")} ${flag(lf.rx_lol, "RX-LOL")} ${flag(lf.tx_fault, "TX-FAULT")}</div>
+        <table class="mini"><tr><th>DOM</th><th>${L("valore", "value")}</th><th>${L("soglie warn", "warn range")}</th><th></th></tr>${domRows}</table>
+        <table class="mini" style="margin-top:6px"><tr><th>VDM</th><th>${L("valore", "value")}</th></tr>${vdmRows}</table>`;
+    } catch (e) { p.host.innerHTML = `<div class="note w">${e.message}</div>`; }
+  },
+  onConfig(p) { this.refetch(p); },
+  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 2500) { p.lastFetch = now; this.refetch(p); } },
 };
 
 /* --- sweep parametrico integrato --- */
@@ -1606,7 +1648,7 @@ PANEL_DEFS.sweep = {
     bar.append(p.fieldSel, CE("span", "", "da"), p.lo, CE("span", "", "a"), p.hi, CE("span", "", "punti"), p.n, btn);
     p.body.appendChild(bar);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
-    p.note = CE("div", "note", "Scegli un parametro e lancia: vedi la BER end-to-end rispondere alla manopola, incluso il punto in cui il link smette di agganciare.");
+    p.note = CE("div", "note", L("Scegli un parametro e lancia: vedi la BER end-to-end rispondere alla manopola, incluso il punto in cui il link smette di agganciare.", "Pick a parameter and run: watch the end-to-end BER respond to the knob, including the point where the link stops locking."));
     p.body.appendChild(p.note);
   },
 };
@@ -1631,7 +1673,7 @@ PANEL_DEFS.jtol = {
         mergeAxis(lay, "xaxis", { type: "log", title: { text: "frequenza PJ [MHz]", font: { size: 10 } } });
         mergeAxis(lay, "yaxis", { title: { text: "ampiezza PJ tollerata [UI pk]", font: { size: 10 } }, range: [0, 0.4] });
         plot(p.plotEl, traces, lay);
-        const rows = d.points.map(q => q.amp_ui == null ? `${q.freq_mhz} MHz: link già KO senza PJ` : `${fix(q.freq_mhz, 0)} MHz: ${fix(q.amp_ui, 3)} UI (${fix(q.amp_ps, 2)} ps)${q.capped ? " ≥cap" : ""}`).join(" · ");
+        const rows = d.points.map(q => q.amp_ui == null ? `${q.freq_mhz} MHz: ${L("link già KO senza PJ", "link already down without PJ")}` : `${fix(q.freq_mhz, 0)} MHz: ${fix(q.amp_ui, 3)} UI (${fix(q.amp_ps, 2)} ps)${q.capped ? " ≥cap" : ""}`).join(" · ");
         const fbw = S.cfg.cdr_bw * S.cfg.symbol_rate_hz / 1e6;
         p.note.innerHTML = `Target BER ${sci(d.target_ber)} — ${rows}.<br>Il <b>minimo vicino a ~${fix(fbw, 0)} MHz</b> (banda del loop) è il <b>jitter peaking</b> del CDR di 2° ordine: prova a cambiare cdr_bw/damping e rifai la misura. Il record (~${fix(S.cfg.n_symbols / (S.cfg.symbol_rate_hz / 1e9), 0)} ns) limita le basse frequenze a ≥3 cicli. <b>NON normativa</b>: le maschere JTOL di clause hanno pattern, durata e procedure prescritte.`;
       } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
@@ -1640,7 +1682,7 @@ PANEL_DEFS.jtol = {
     bar.append(CE("span", "", "freq [MHz]:"), p.freqs, CE("span", "", "target BER:"), p.target, btn);
     p.body.appendChild(bar);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
-    p.note = CE("div", "note", "Bisezione sull'ampiezza del PJ iniettato al TX PLL, per frequenza: la curva che ne esce è la firma della banda del CDR.");
+    p.note = CE("div", "note", L("Bisezione sull'ampiezza del PJ iniettato al TX PLL, per frequenza: la curva che ne esce è la firma della banda del CDR.", "Bisection on the PJ amplitude injected at the TX PLL, per frequency: the resulting curve is the signature of the CDR bandwidth."));
     p.body.appendChild(p.note);
   },
 };
@@ -1673,6 +1715,7 @@ const PALETTE = [
   ["bert", "BERT · Error Detector", "digital", 4, 4],
   ["feclive", L("FEC live (accumulo)", "Live FEC (accumulated)"), "digital", 4, 5],
   ["l2", "Ethernet · Traffic L2", "digital", 4, 6],
+  ["cmis", "Module · CMIS-lite", "optical", 4, 6.5],
   ["sweep", L("Sweep parametrico", "Parametric sweep"), null, 4, 7],
   ["jtol", "JTOL-lite (PJ)", "digital", 4, 8],
   ["train", "Link training", "digital", 4, 9],
@@ -1688,7 +1731,7 @@ const VIEWS = {
   "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "pd", "tia", "agc", "ctle", "adc", "timing", "eq", "decisions", "scope"],
   "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "instruments", "checks"],
-  "BERT e traffico": ["chain", "stimulus", "bert", "l2", "feclive", "berlive", "train"],
+  "BERT e traffico": ["chain", "stimulus", "bert", "l2", "feclive", "berlive", "train", "cmis"],
   "Scope P/N": ["chain", "scope", "scope", "serpll", "jitter", "spectrum"],
   "Academy": ["chain", "education", "standards", "instruments", "scope", "jitter", "bert", "l2"],
 };
@@ -1781,7 +1824,7 @@ function addPanel(type, size) {
   // reset ai default: appare solo nei pannelli con manopole
   if (p.body.querySelector(".param, [data-ffe]")) {
     const btnReset = CE("button", "icon-btn", "↺");
-    btnReset.title = "riporta le manopole di questo pannello ai valori default";
+    btnReset.title = L("riporta le manopole di questo pannello ai valori default", "reset this panel's knobs to their defaults");
     btnReset.onclick = () => {
       const updates = {};
       for (const el of p.body.querySelectorAll(".param")) {

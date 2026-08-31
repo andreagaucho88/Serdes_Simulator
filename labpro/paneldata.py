@@ -676,6 +676,87 @@ def l2_panel(sim, cfg):
     })
 
 
+
+def cmis_panel(sim, cfg):
+    """CMIS-lite: gestione modulo stile QSFP-DD/OSFP (subset dichiarato).
+
+    Ispirato a CMIS 5.x (MSA pubblico): Module State Machine, DataPath state,
+    flag di lane (LOS/LOL/TX fault) e monitor DOM/VDM — tutti DERIVATI dal
+    banco reale (potenze da MZM/PD, LOL dal lock del CDR, BER dai contatori).
+    NON è la register map completa: niente pagine/byte, I2C, CDB, firmware.
+    """
+    optical = sim.optical is not None
+    if optical:
+        tx_power_dbm = float(w_to_dbm(np.mean(sim.optical.P_mzm_w)))
+        rx_power_dbm = float(w_to_dbm(np.mean(sim.optical.P_fiber_w)))
+    else:
+        tx_power_dbm = rx_power_dbm = None
+    # flag di lane derivati dallo stato vero del banco
+    rx_los = (rx_power_dbm is not None and rx_power_dbm < -14.0) or \
+             (not optical and float(np.std(sim.receiver.v_ctle_v)) < 5e-3)
+    rx_lol = (sim.cdr is not None and not sim.cdr.locked)
+    tx_fault = sim.tx.driver_clip_fraction > 0.01
+    dp_state = ("DataPathActivated" if sim.link_up
+                else ("DataPathInit" if not rx_los else "DataPathDeinit"))
+    # DOM: temperatura/Vcc sintetiche ma stabili per seed (dichiarato)
+    rng = np.random.default_rng(sim.seed)
+    temp_c = 42.0 + float(rng.normal(0, 0.4))
+    vcc = 3.28 + float(rng.normal(0, 0.005))
+    laser_mw = (sim.optical.laser_power_w * 1e3 if optical else None)
+    media = ("SMF" if optical and getattr(cfg, "fiber_type", "smf") != "mmf"
+             else ("MMF" if optical else "passive copper"))
+
+    def dom_row(name, value, unit, warn_lo, warn_hi):
+        status = "ok"
+        if value is None:
+            status = "na"
+        elif value < warn_lo or value > warn_hi:
+            status = "warn"
+        return {"name": name, "value": value, "unit": unit,
+                "warn_lo": warn_lo, "warn_hi": warn_hi, "status": status}
+
+    fa = sim.fec
+    fl = sim.fec_link
+    return J({
+        "module": {
+            "vendor": "LABPRO SIM", "part": "LP-1x112-EDU",
+            "media": media, "lanes": 1,
+            "form_factor": "QSFP-DD-like (didattico)",
+            "cmis_note": "subset ispirato a CMIS 5.x — no register map/I2C",
+        },
+        "module_state": "ModuleReady",
+        "datapath_state": dp_state,
+        "lane_flags": [{
+            "lane": 1,
+            "rx_los": bool(rx_los),
+            "rx_lol": bool(rx_lol),
+            "tx_fault": bool(tx_fault),
+            "tx_adaptive_eq_fault": False,
+        }],
+        "dom": [
+            dom_row("Temperatura modulo", temp_c, "°C", 0.0, 70.0),
+            dom_row("Vcc", vcc, "V", 3.14, 3.46),
+            dom_row("TX bias (proxy)",
+                    laser_mw * 12.0 if laser_mw is not None else None,
+                    "mA", 10.0, 120.0),
+            dom_row("TX power", tx_power_dbm, "dBm", -8.0, 6.0),
+            dom_row("RX power", rx_power_dbm, "dBm", -12.0, 5.0),
+        ],
+        "vdm": [
+            {"name": "Pre-FEC BER (record)",
+             "value": (fa.pre_fec_ber if fa is not None else None)},
+            {"name": "Post-FEC BER (record)",
+             "value": (fl.post_fec_ber if fl is not None else None)},
+            {"name": "FERC — frame persi (record)",
+             "value": (fl.frames_uncorrectable if fl is not None else None)},
+            {"name": "SNR slicer [dB]",
+             "value": (sim.snr_dfe["snr_slicer_db"]
+                       if sim.snr_dfe is not None else None)},
+        ],
+        "link_up": bool(sim.link_up),
+    })
+
+
 def stimulus_panel(sim, cfg):
     return J({
         "symbols": sim.pam4_symbols[:64],
@@ -799,6 +880,7 @@ def checks_panel(sim, cfg):
 
 
 PANEL_BUILDERS = {
+    "cmis": cmis_panel,
     "eye": eye_panel,
     "bert": bert_panel,
     "l2": l2_panel,
