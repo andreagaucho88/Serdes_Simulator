@@ -16,9 +16,13 @@ from scipy import signal as sp_signal
 
 from serdes_sim import LinkConfig, simulate
 from serdes_sim.blocks import fec as fec_block
+from serdes_sim.blocks import stimulus
 from serdes_sim.blocks.metrics import eye_density
 from serdes_sim.blocks.receiver import ctle_response, ctle_peaking_db
-from serdes_sim.utils import butterworth_magnitude, db10, db20, w_to_dbm
+from serdes_sim.utils import (apply_frequency_response, butterworth_magnitude,
+                              butterworth_response, db10, db20, rms_ac,
+                              w_to_dbm)
+from labpro.education import TOPICS
 
 
 def J(x):
@@ -60,10 +64,12 @@ NODES = {
     "vn": ("V_n (ramo negativo)", "electrical", "V", "tx"),
     "vdiff": ("V_diff = Vp−Vn", "electrical", "V", "tx"),
     "vcm": ("V_cm (common-mode)", "electrical", "V", "tx"),
+    "drive": ("Ingresso canale selezionato", "electrical", "V", "tx"),
     "chan": ("Uscita canale", "electrical", "V", "rx"),
     "pmzm": ("P ottica MZM", "optical", "mW", "tx"),
     "pfiber": ("P ottica al PD", "optical", "mW", "rx"),
     "vtia": ("Uscita TIA/AFE", "electrical", "V", "rx"),
+    "vagc": ("Uscita AGC", "electrical", "V", "rx"),
     "vctle": ("Uscita CTLE", "electrical", "V", "rx"),
 }
 
@@ -79,6 +85,8 @@ def get_wave(sim, node):
         return sim.tx.v_diff_v
     if node == "vcm":
         return sim.tx.vcm_v
+    if node == "drive":
+        return sim.channel_input_v
     if node == "chan":
         return sim.channel.electrical_waveform_v
     if node in ("pmzm", "pfiber"):
@@ -88,6 +96,8 @@ def get_wave(sim, node):
                 else sim.optical.P_fiber_w) * 1e3
     if node == "vtia":
         return sim.receiver.v_tia_v
+    if node == "vagc":
+        return sim.receiver.v_agc_v
     return sim.receiver.v_ctle_v
 
 
@@ -212,7 +222,9 @@ def eye_measures(sim, cfg, node="vctle"):
             open_phases.append(opening > 0)
         widths.append(float(np.mean(open_phases)))  # frazione UI aperta (p1/p99)
     spacings = np.diff([s["mean"] for s in stats])
-    rlm = float(spacings.min() / spacings.max()) if len(spacings) > 1 else None
+    spacing_den = float(np.max(spacings)) if len(spacings) else 0.0
+    rlm = (float(np.min(spacings) / spacing_den)
+           if len(spacings) > 1 and abs(spacing_den) > 1e-15 else None)
 
     # rise/fall 20-80% sulle transizioni outer (min→max e max→min)
     lo_lv, hi_lv = levels[0], levels[-1]
@@ -270,13 +282,25 @@ def jitter_panel(sim, cfg, node="vctle"):
     h, edges = np.histogram(t.tie_ui, bins=90)
     ui_ps = 1e12 / cfg.symbol_rate_hz
     keep = t.spec_freq_mhz <= cfg.symbol_rate_hz / 2 / 1e6
-    sub = max(1, len(t.tie_ui) // 2500)
+    sub = max(1, int(np.ceil(len(t.tie_ui) / 600)))
+    sf = t.spec_freq_mhz[keep][1:]
+    sm = t.spec_mag_ui[keep][1:]
+    # JSON live compatto senza perdere le righe strette di PJ: per ogni bin
+    # si conserva il massimo, non un semplice downsample che potrebbe saltare
+    # proprio il tono iniettato.
+    if len(sf) > 900:
+        groups = np.array_split(np.arange(len(sf)), 900)
+        pick = np.array([g[np.argmax(sm[g])] for g in groups])
+        sf, sm = sf[pick], sm[pick]
     return J({
         "label": NODES[node][0],
         "edge_sym": t.edge_symbol[::sub], "tie_ui": t.tie_ui[::sub],
         "hist_x_ui": 0.5 * (edges[:-1] + edges[1:]), "hist": h,
-        "spec_f_mhz": t.spec_freq_mhz[keep][1:],
-        "spec_mag_mui": 1e3 * t.spec_mag_ui[keep][1:],
+        "spec_f_mhz": sf,
+        "spec_mag_mui": 1e3 * sm,
+        "bathtub_x_ui": t.bathtub_offset_ui,
+        "bathtub_ber_proxy": t.bathtub_ber_proxy,
+        "bathtub_floor": 0.5 / max(t.n_edges, 1),
         "tie_rms_ps": t.tie_rms_ui * ui_ps,
         "tie_pp_ps": t.tie_pp_ui * ui_ps,
         "rj_est_ps": t.rj_rms_ui_est * ui_ps,
@@ -315,17 +339,19 @@ def spectrum_panel(sim, cfg, node="vctle", nperseg=4096):
 
 def ctle_panel(sim, cfg):
     f = np.linspace(1e7, 80e9, 1200)
-    H = ctle_response(f, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                      cfg.ctle_hf_pole_hz, cfg.ctle_dc_gain_db)
+    zeros = cfg.ctle_zeros_effective_hz
+    poles = cfg.ctle_poles_effective_hz
+    H = ctle_response(f, dc_gain_db=cfg.ctle_dc_gain_db,
+                      zeros_hz=zeros, poles_hz=poles)
     phase = np.unwrap(np.angle(H))
     gd_ps = -np.gradient(phase, 2 * np.pi * f) * 1e12
-    peaking, f_peak = ctle_peaking_db(cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                                      cfg.ctle_hf_pole_hz, cfg.ctle_dc_gain_db)
+    peaking, f_peak = ctle_peaking_db(
+        dc_gain_db=cfg.ctle_dc_gain_db, zeros_hz=zeros, poles_hz=poles)
     mask = (sim.receiver.f_fft_hz >= 1e7) & (sim.receiver.f_fft_hz <= 80e9)
     fch = sim.receiver.f_fft_hz[mask]
     Hch = sim.channel.H_electrical[mask]
-    Hct = ctle_response(fch, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                        cfg.ctle_hf_pole_hz, cfg.ctle_dc_gain_db)
+    Hct = ctle_response(fch, dc_gain_db=cfg.ctle_dc_gain_db,
+                        zeros_hz=zeros, poles_hz=poles)
     order = np.argsort(fch)
     return J({
         "f_ghz": f / 1e9, "mag_db": db20(H), "phase_deg": np.degrees(phase),
@@ -333,23 +359,117 @@ def ctle_panel(sim, cfg):
         "noise_enh_db": sim.receiver.ctle_noise_enhancement_db,
         "fch_ghz": fch[order] / 1e9, "chan_db": db20(Hch[order]),
         "combo_db": db20((Hch * Hct)[order]),
-        "zero_ghz": cfg.ctle_zero_hz / 1e9, "pole_ghz": cfg.ctle_pole_hz / 1e9,
-        "hf_ghz": cfg.ctle_hf_pole_hz / 1e9, "dc_db": cfg.ctle_dc_gain_db,
+        "zeros_ghz": np.asarray(zeros) / 1e9,
+        "poles_ghz": np.asarray(poles) / 1e9,
+        "topology": f"{len(zeros)}Z/{len(poles)}P",
+        "dc_db": cfg.ctle_dc_gain_db,
         "nyquist_ghz": cfg.nyquist_hz / 1e9,
     })
 
 
 def channel_panel(sim, cfg):
     mask = (sim.channel.f_fft_hz >= 0) & (sim.channel.f_fft_hz <= 1.4 * cfg.nyquist_hz)
+    # Pulse response isolata dello stesso Hchannel*Hctle del main path. Non
+    # include AGC/clip (non lineari): i cursor dichiarano quindi il piano.
+    from serdes_sim.blocks.channel import channel_response
+    n_ui = 192
+    pulse_in = np.zeros(n_ui * cfg.analog_sps)
+    k0 = n_ui // 3
+    pulse_in[k0 * cfg.analog_sps:(k0 + 1) * cfg.analog_sps] = 1.0
+    pulse_combo, _, _ = apply_frequency_response(
+        pulse_in, cfg.fs_analog_hz,
+        lambda f: channel_response(f, cfg) * ctle_response(
+            f, dc_gain_db=cfg.ctle_dc_gain_db,
+            zeros_hz=cfg.ctle_zeros_effective_hz,
+            poles_hz=cfg.ctle_poles_effective_hz))
+    main = int(np.argmax(np.abs(pulse_combo)))
+    span = 8 * cfg.analog_sps
+    main = int(np.clip(main, span, len(pulse_combo) - span - 1))
+    pulse_combo_crop = pulse_combo[main - span:main + span]
+    pulse_combo_crop /= max(float(np.max(np.abs(pulse_combo_crop))), 1e-30)
+    cursor_ui = np.arange(-6, 9)
+    cursor_combo = np.array([pulse_combo[main + k * cfg.analog_sps]
+                             for k in cursor_ui])
+    cursor_combo /= max(abs(float(cursor_combo[cursor_ui == 0][0])), 1e-30)
+    isi_rms = float(np.sqrt(np.sum(cursor_combo[cursor_ui != 0] ** 2)))
     return J({
         "f_ghz": sim.channel.f_fft_hz[mask] / 1e9,
         "s21_db": db20(sim.channel.H_electrical[mask]),
         "pulse_t_ui": sim.channel.pulse_time_ui,
         "pulse": sim.channel.pulse_normalized,
+        "pulse_combo": pulse_combo_crop,
         "cursor_ui": sim.channel.cursor_ui,
         "cursor_val": sim.channel.cursor_values,
+        "cursor_combo": cursor_combo,
+        "isi_rms_combo": isi_rms,
+        "pulse_plane": "channel × CTLE (linear, before AGC/clip/ADC)",
         "source": sim.channel.source,
         "nyquist_ghz": cfg.nyquist_hz / 1e9,
+    })
+
+
+def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
+    """Finestra compatta ma temporalmente coerente per i pannelli RX."""
+    a = int(start_ui * cfg.analog_sps)
+    b = min(len(wave), a + int(span_ui * cfg.analog_sps))
+    x = np.asarray(wave[a:b], dtype=float)
+    sub = max(1, int(np.ceil(len(x) / max_points)))
+    return (np.arange(a, b, sub) / cfg.analog_sps, x[::sub])
+
+
+def pd_panel(sim, cfg):
+    if sim.optical is None:
+        return {"inactive": True,
+                "reason": "link_medium=copper: PD bypassato, usa il pannello TIA/AFE"}
+    rx = sim.receiver
+    t_ui, clean = _wave_window(rx.i_pd_signal_a * 1e3, cfg)
+    _, noisy = _wave_window(rx.i_pd_noisy_a * 1e3, cfg)
+    return J({
+        "t_ui": t_ui, "clean_ma": clean, "noisy_ma": noisy,
+        "responsivity_a_w": cfg.pd_responsivity_a_w,
+        "bandwidth_ghz": cfg.pd_bw_hz / 1e9,
+        "mean_ma": 1e3 * float(np.mean(rx.i_pd_signal_a)),
+        "rms_ac_ma": 1e3 * rms_ac(rx.i_pd_signal_a),
+        "saturation_ma": 1e3 * cfg.pd_saturation_a,
+        "sat_pct": 100 * rx.pd_sat_fraction,
+        "noise_psd": {"shot": rx.S_shot_a2_hz,
+                      "RIN": rx.S_rin_a2_hz,
+                      "TIA input": rx.S_tia_a2_hz},
+        "input_dbm": sim.optical.power_budget_dbm["PD input"],
+    })
+
+
+def tia_panel(sim, cfg):
+    rx = sim.receiver
+    t_ui, out = _wave_window(rx.v_tia_v, cfg)
+    f = np.linspace(0, min(cfg.fs_analog_hz / 2, 1.5 * cfg.nyquist_hz), 600)
+    mag = butterworth_magnitude(f, cfg.tia_bw_hz, order=3)
+    return J({
+        "medium": cfg.link_medium,
+        "t_ui": t_ui, "vout": out,
+        "transimpedance_ohm": (cfg.tia_transimpedance_ohm
+                                if cfg.link_medium == "optical" else None),
+        "bandwidth_ghz": cfg.tia_bw_hz / 1e9,
+        "enbw_ghz": rx.tia_enbw_hz / 1e9,
+        "clip_v": cfg.tia_clip_v,
+        "clip_pct": 100 * rx.tia_clip_fraction,
+        "out_rms_v": rms_ac(rx.v_tia_v),
+        "noise_rms": rx.noise_rms_after_tia_a,
+        "f_ghz": f / 1e9, "response_db": db20(np.maximum(mag, 1e-12)),
+    })
+
+
+def agc_panel(sim, cfg):
+    rx = sim.receiver
+    t_ui, vin = _wave_window(rx.v_tia_v - np.mean(rx.v_tia_v), cfg)
+    _, vout = _wave_window(rx.v_agc_v, cfg)
+    return J({
+        "t_ui": t_ui, "vin": vin, "vout": vout,
+        "gain": rx.agc_gain, "gain_db": db20(max(rx.agc_gain, 1e-30)),
+        "input_rms_v": rms_ac(rx.v_tia_v),
+        "target_rms_v": cfg.agc_target_rms_v,
+        "output_rms_v": rms_ac(rx.v_agc_v),
+        "headroom_to_adc_v": cfg.adc_full_scale_vpp / 2 - np.max(np.abs(rx.v_agc_v)),
     })
 
 
@@ -361,14 +481,27 @@ def optical_panel(sim, cfg):
     o = sim.optical
     f = np.linspace(0, 1.5 * cfg.nyquist_hz, 800)
     return J({
+        "modulator": o.modulator,
+        "laser_type": cfg.laser_type,
+        "fiber_type": cfg.fiber_type,
         "v_static": o.v_static, "p_static": o.p_static,
         "drive_peak_v": float(np.max(np.abs(o.mzm_drive_v))),
-        "vpi": cfg.vpi_v,
+        "vpi": cfg.vpi_v if o.modulator == "mzm" else None,
+        "er_set_db": (cfg.eml_er_db if o.modulator == "eml" else
+                      cfg.direct_laser_er_db if o.modulator in ("dml", "vcsel")
+                      else None),
         "fade_f_ghz": f / 1e9,
         "fade_db": db20(np.maximum(np.abs(
             imdd_small_signal_response(cfg, f, alpha=0.0)), 1e-5)),
         "f_null_ghz": (o.f_null_hz / 1e9 if np.isfinite(o.f_null_hz) else None),
         "budget": o.power_budget_dbm,
+        "beta2_s2_m": o.beta2_s2_m,
+        "beta3_s3_m": o.beta3_s3_m,
+        "pmd_dgd_ps": o.pmd_dgd_ps,
+        "modal_bw_ghz": (o.modal_bw_hz / 1e9
+                         if np.isfinite(o.modal_bw_hz) else None),
+        "nonlinear_phase_peak_rad": o.nonlinear_phase_peak_rad,
+        "laser_linewidth_mhz": cfg.laser_linewidth_mhz,
         "nyquist_ghz": cfg.nyquist_hz / 1e9,
     })
 
@@ -491,6 +624,11 @@ def bert_panel(sim, cfg):
     eq = sim.eq
     spec = sim.spec
     decided = hard_slice(eq.dfe_output, spec.levels_array)
+    valid = eq.validation_fse
+    decided_bits = stimulus.symbols_to_bits(decided[valid], spec).reshape(-1, spec.bits_per_symbol)
+    truth_bits = stimulus.symbols_to_bits(eq.d_fse[valid], spec).reshape(-1, spec.bits_per_symbol)
+    bit_err_cols = np.sum(decided_bits != truth_bits, axis=0)
+    symbol_err = np.any(decided_bits != truth_bits, axis=1)
     err_sym = eq.symbol_k_fse[decided != eq.d_fse]
     err_val = err_sym[err_sym >= cfg.training_stop + 200]
     # densità per bin da 256 simboli
@@ -501,6 +639,13 @@ def bert_panel(sim, cfg):
         "hist_x": 0.5 * (edges[:-1] + edges[1:]),
         "hist": hist,
         "n_errors": int(len(err_val)),
+        "n_bits": int(decided_bits.size),
+        "n_symbols": int(len(decided_bits)),
+        "bit_errors": int(np.sum(bit_err_cols)),
+        "symbol_errors": int(np.sum(symbol_err)),
+        "bit_errors_by_lane": bit_err_cols,
+        "ber": float(np.mean(decided_bits != truth_bits)),
+        "ser": float(np.mean(symbol_err)),
         "pattern": cfg.pattern,
         "sync": bool(sim.cdr.pattern_locked) if sim.cdr is not None else True,
         "validation_start": cfg.training_stop + 200,
@@ -544,6 +689,7 @@ def stimulus_panel(sim, cfg):
 
 
 def standards_panel(sim, cfg):
+    from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META
     gbd = cfg.symbol_rate_hz / 1e9
     bps = sim.spec.bits_per_symbol
     fams = [
@@ -556,13 +702,72 @@ def standards_panel(sim, cfg):
     cands = [(abs(f[0] - gbd) / f[0], f) for f in fams if f[1] == cfg.modulation]
     dev, fam = min(cands, key=lambda t: t[0]) if cands else (None, None)
     ber = sim.ber_post_dfe if sim.link_up else None
+    exact = [name for name, item in STANDARD_PROFILES.items() if item[0] == cfg]
+    active_profile = exact[0] if exact else None
+    active_meta = STANDARD_PROFILE_META.get(active_profile, {})
+    tx_arch = (f"{len(cfg.tx_ffe_taps)}-tap FFE · {cfg.dac_bits}-bit DAC · "
+               f"{cfg.electrical_drive_mode}")
+    ctle_arch = (f"{len(cfg.ctle_zeros_effective_hz)}Z/"
+                 f"{len(cfg.ctle_poles_effective_hz)}P · "
+                 f"{cfg.ctle_dc_gain_db:+g} dB DC")
+    manifest = [
+        {"block": "interface / reference plane",
+         "value": (f"{active_meta.get('interface', 'custom')} · "
+                   f"{active_meta.get('plane', 'LabPro internal')}"),
+         "basis": "standard" if active_profile else "custom",
+         "note": "nome, mezzo, reach e piano del profilo pubblico"},
+        {"block": "lane / modulation",
+         "value": f"{gbd:.5g} GBd · {sim.spec.label}",
+         "basis": "profile-anchor" if active_profile else "custom",
+         "note": "valore di corsia usato dal banco"},
+        {"block": "FEC", "value": cfg.fec_mode.upper(),
+         "basis": "standard-context" if active_profile else "custom",
+         "note": active_meta.get("fec", "configurazione utente")},
+        {"block": "TX / serializer", "value": tx_arch,
+         "basis": "LabPro assumption",
+         "note": "IEEE/OIF non prescrivono l'architettura interna del SerDes"},
+        {"block": "channel", "value": (
+            f"{cfg.channel_il_nyquist_db:g} dB @Nyquist · {cfg.link_medium}"),
+         "basis": "representative model",
+         "note": "non e la mask/COM di clause"},
+        {"block": "optical TX", "value": (
+            "bypassed" if cfg.link_medium == "copper" else
+            f"{cfg.laser_type} + {cfg.optical_modulator.upper()} · "
+            f"{cfg.wavelength_nm:g} nm · {cfg.fiber_type.upper()}"),
+         "basis": "LabPro assumption",
+         "note": "il PMD standard non impone MZM vs EML"},
+        {"block": "PD / TIA / AGC", "value": (
+            f"PD {cfg.pd_bw_hz/1e9:g}G · TIA/AFE {cfg.tia_bw_hz/1e9:g}G · "
+            f"AGC {cfg.agc_target_rms_v:g} Vrms"),
+         "basis": "LabPro assumption",
+         "note": "front-end parametrico, non circuit-level compliance"},
+        {"block": "CTLE", "value": ctle_arch,
+         "basis": "LabPro assumption",
+         "note": "tutte le sezioni entrano nel datapath"},
+        {"block": "ADC / timing", "value": (
+            f"{cfg.adc_bits}-bit {cfg.adc_sps} sps · CDR {cfg.cdr_mode} "
+            f"BW={cfg.cdr_bw:g}·baud"),
+         "basis": "LabPro assumption",
+         "note": "architettura RX scelta, non prescritta dall'interfaccia"},
+        {"block": "DSP", "value": f"FSE {cfg.fse_taps} taps · DFE {cfg.dfe_taps} taps",
+         "basis": "LabPro assumption",
+         "note": "reference receiver didattico"},
+    ]
     out = {"gbd": gbd, "lane_gbs": gbd * bps, "modulation": sim.spec.label,
+           "active_profile": active_profile, "manifest": manifest,
            "family": fam[2] if fam else None,
            "family_gbd": fam[0] if fam else None,
            "deviation_pct": 100 * dev if dev is not None else None,
            "ber": ber, "link_up": bool(sim.link_up),
            "families": [{"gbd": f[0], "mod": f[1], "name": f[2]}
-                        for f in fams]}
+                        for f in fams],
+           "profiles": [dict(name=name, description=item[1],
+                             compatible=(item[0].modulation == cfg.modulation
+                                         and item[0].link_medium == cfg.link_medium
+                                         and abs(item[0].symbol_rate_hz
+                                                 - cfg.symbol_rate_hz) < 1.0),
+                             **STANDARD_PROFILE_META.get(name, {}))
+                        for name, item in STANDARD_PROFILES.items()]}
     # il modello segue il FEC realmente attivo nella simulazione; quello di
     # famiglia è solo il default what-if quando non c'è FEC in-path
     if cfg.fec_mode != "none":
@@ -601,6 +806,9 @@ PANEL_BUILDERS = {
     "spectrum": spectrum_panel,
     "ctle": ctle_panel,
     "channel": channel_panel,
+    "pd": pd_panel,
+    "tia": tia_panel,
+    "agc": agc_panel,
     "optical": optical_panel,
     "adc": adc_panel,
     "timing": timing_panel,
@@ -609,4 +817,5 @@ PANEL_BUILDERS = {
     "stimulus": stimulus_panel,
     "standards": standards_panel,
     "checks": checks_panel,
+    "education": lambda sim, cfg: {"topics": TOPICS},
 }

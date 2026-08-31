@@ -84,12 +84,14 @@ def analyze_stream_bits(rx_bits: np.ndarray, frame_bytes: int,
     detected = ok = bad = 0
     seqs = set()
     i = 0
-    sfd = PREAMBLE[-2:]
+    sync = PREAMBLE
     while i < len(data) - body_len - 2:
-        j = data.find(sfd, i)
+        # Delineazione robusta sul preamble completo + SFD, non sui soli
+        # ultimi due byte 55-D5 (che possono comparire casualmente nel payload).
+        j = data.find(sync, i)
         if j < 0:
             break
-        start = j + 2
+        start = j + len(sync)
         if start + body_len > len(data):
             break
         detected += 1

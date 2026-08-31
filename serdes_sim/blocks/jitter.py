@@ -25,6 +25,8 @@ class TieResult:
     # spettro del TIE ricampionato per-UI
     spec_freq_mhz: np.ndarray
     spec_mag_ui: np.ndarray
+    bathtub_offset_ui: np.ndarray
+    bathtub_ber_proxy: np.ndarray
 
 
 def tie_analysis(wave, sps, symbol_rate_hz, threshold=None,
@@ -74,10 +76,23 @@ def tie_analysis(wave, sps, symbol_rate_hz, threshold=None,
     spec = np.abs(np.fft.rfft(series * win)) / max(np.sum(win) / 2, 1)
     freqs = np.fft.rfftfreq(len(series), d=1.0) * symbol_rate_hz  # Hz
 
+    # Bathtub empirica da crossing TIE. Per un sample a fase phi, il bordo
+    # sinistro e pericoloso se arriva oltre phi+0.5 UI e il destro se arriva
+    # prima di phi-0.5 UI. E una proxy data-edge (non una BER normativa), con
+    # floor di osservabilita 0.5/N per evitare uno zero grafico ingannevole.
+    bathtub_x = np.linspace(-0.49, 0.49, 161)
+    floor = 0.5 / max(len(tie_ui), 1)
+    bathtub = np.array([
+        max(0.5 * (np.mean(tie_ui > phi + 0.5)
+                   + np.mean(tie_ui < phi - 0.5)), floor)
+        for phi in bathtub_x
+    ])
+
     return TieResult(
         edge_symbol=t_cross_ui, tie_ui=tie_ui,
         tie_rms_ui=tie_rms, tie_pp_ui=tie_pp,
         rj_rms_ui_est=rj, dj_pp_ui_est=dj_pp,
         n_edges=int(len(tie_ui)),
         spec_freq_mhz=freqs / 1e6, spec_mag_ui=spec,
+        bathtub_offset_ui=bathtub_x, bathtub_ber_proxy=bathtub,
     )

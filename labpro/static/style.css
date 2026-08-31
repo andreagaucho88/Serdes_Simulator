@@ -131,6 +131,9 @@ table.mini { width: 100%; border-collapse: collapse; font-family: var(--mono);
 table.mini th { text-align: left; color: var(--muted); font-weight: 400;
   padding: 3px 6px; border-bottom: 1px solid var(--grid); }
 table.mini td { padding: 3px 6px; border-bottom: 1px solid #131C25; }
+table.mini tr.profile-hit td { background: #3ECF8E0B; border-top: 1px solid #3ECF8E55; }
+table.mini a { color: var(--electrical); text-decoration: none; }
+.sub { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .badge { font-family: var(--mono); font-size: 10px; padding: 1px 8px;
   border-radius: 99px; }
 .badge.ok { background: #3ECF8E1F; } .badge.fail { background: #FF54701F; }
@@ -148,3 +151,20 @@ canvas.scope { width: 100%; display: block; background: #04070A;
 .chain-svg { width: 100%; display: block; }
 .chain-svg a { cursor: pointer; }
 .chain-svg a:hover rect { stroke-width: 2.6; }
+
+/* ---------- Academy / strumenti configurabili ---------- */
+.lesson { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px; margin-top: 8px; }
+.lesson header { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+.lesson h3 { margin: 0; font-family: var(--display); font-size: 20px; }
+.lesson section { background: #080C11; border: 1px solid var(--grid); border-radius: 9px;
+  padding: 10px 12px; }
+.lesson section label { display: block; color: var(--muted); font: 10px var(--mono);
+  letter-spacing: .12em; margin-bottom: 5px; }
+.lesson section p { margin: 0; line-height: 1.45; }
+.lesson .formula code { color: var(--amber); font-size: 13px; white-space: normal; }
+.lesson .limit { border-color: #E8C55A66; }
+.ctle-editor { border: 1px solid var(--grid); border-radius: 9px; padding: 5px 8px;
+  margin-bottom: 8px; background: #080C11; }
+@media (max-width: 760px) { .lesson { grid-template-columns: 1fr; }
+  .lesson header { grid-column: 1; } }

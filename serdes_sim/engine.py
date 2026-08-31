@@ -40,6 +40,7 @@ class SimResult:
     transition_probability: np.ndarray = None
     # stadi
     tx: tx_block.TxResult = None
+    channel_input_v: np.ndarray = None
     channel: channel_block.ChannelResult = None
     optical: optical_block.OpticalResult = None
     receiver: receiver_block.ReceiverResult = None
@@ -98,9 +99,12 @@ class SimResult:
 
     @property
     def timing_is_supervised(self) -> bool:
-        """La fase usata dal DSP viene dall'acquisition supervisionata (che usa
-        la sequenza trasmessa come riferimento), NON dal loop Gardner."""
-        return True
+        """True solo per la modalita oracle idealizzata.
+
+        Gardner/MM usano nel datapath gli istanti decisi da TED+PI+NCO; il
+        pattern noto serve dopo, per il lock/allineamento del BERT.
+        """
+        return self.cfg.cdr_mode == "oracle"
     # bookkeeping
     ledger: list = field(default_factory=list)
     checks: list = field(default_factory=list)
@@ -237,8 +241,25 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
            "Driver non dominato dal clipping",
            f"clip={100 * result.tx.driver_clip_fraction:.3f}%")
 
-    # --- 3. Canale elettrico (ingresso: differenziale P/N) ------------------
-    result.channel = channel_block.run_channel(cfg, result.tx.v_diff_v)
+    # --- 3. Canale elettrico: reference plane selezionabile -----------------
+    # Single-ended P/N non e una mera visualizzazione: include davvero CM,
+    # mismatch e skew del ramo scelto nel segnale che percorre il canale.
+    channel_inputs = {
+        "differential": result.tx.v_diff_v,
+        "single_ended_p": result.tx.vp_v,
+        "single_ended_n": result.tx.vn_v,
+    }
+    result.channel_input_v = channel_inputs[cfg.electrical_drive_mode]
+    _register(result, "vp_v", result.tx.vp_v, "V", "electrical",
+              cfg.fs_analog_hz, "driver P output")
+    _register(result, "vn_v", result.tx.vn_v, "V", "electrical",
+              cfg.fs_analog_hz, "driver N output")
+    _register(result, "vcm_v", result.tx.vcm_v, "V", "common mode",
+              cfg.fs_analog_hz, "driver common-mode")
+    _register(result, "channel_input_v", result.channel_input_v, "V",
+              "electrical", cfg.fs_analog_hz, "channel input",
+              cfg.electrical_drive_mode)
+    result.channel = channel_block.run_channel(cfg, result.channel_input_v)
     _register(result, "electrical_waveform_v", result.channel.electrical_waveform_v,
               "V", "electrical", cfg.fs_analog_hz,
               "channel output", result.channel.source)
@@ -282,14 +303,17 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
 
     # --- 4-5. Mezzo: catena ottica completa oppure link elettrico puro ------
     if cfg.link_medium == "optical":
-        result.optical = optical_block.run_optical(cfg, elec_out)
-        _register(result, "E_mzm", result.optical.E_mzm, "sqrt(W)", "optical field",
-                  cfg.fs_analog_hz, "MZM output", f"alpha={cfg.chirp_alpha:+.2f}")
+        result.optical = optical_block.run_optical(cfg, elec_out, rng=rng)
+        alpha = (cfg.chirp_alpha if cfg.optical_modulator == "mzm"
+                 else cfg.eml_chirp_alpha)
+        _register(result, "E_modulator", result.optical.E_mzm, "sqrt(W)",
+                  "optical field", cfg.fs_analog_hz,
+                  f"{cfg.optical_modulator.upper()} output", f"alpha={alpha:+.2f}")
         _register(result, "E_fiber", result.optical.E_fiber, "sqrt(W)",
                   "optical field", cfg.fs_analog_hz, "fiber output / PD input",
                   f"{cfg.fiber_km:g} km @ {cfg.wavelength_nm:g} nm")
         budget = result.optical.power_budget_dbm
-        _check(result, abs((budget["fiber launch"] - budget["MZM output"])
+        _check(result, abs((budget["fiber launch"] - budget["modulator output"])
                            + cfg.coupling_il_db) < 1e-6,
                "Loss campo/potenza coerente")
         result.receiver = receiver_block.run_receiver(
@@ -618,7 +642,8 @@ def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
     return points
 
 
-def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None):
+def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
+               verification_seeds=(3303, 4404)):
     """Link training didattico: coordinate descent multi-seed su CTLE
     (zero, gain DC) e TX FFE (pre, post). NON è l'AN/LT di clause (nessuno
     scambio di coefficienti col partner): è un tuning locale onesto.
@@ -643,6 +668,11 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None):
             t = c.tx_ffe_taps
             return c.with_updates(tx_ffe_taps=(t[0], t[1], v))
         if field == "ctle_zero_hz":
+            if c.ctle_zeros_hz:
+                z = list(c.ctle_zeros_effective_hz)
+                upper = 0.95 * z[1] if len(z) > 1 else float("inf")
+                z[0] = min(v, upper)
+                return c.with_updates(ctle_zeros_hz=tuple(z))
             v = min(v, 0.85 * c.ctle_pole_hz)
         return c.with_updates(**{field: v})
 
@@ -675,7 +705,62 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None):
         steps.append({"param": label, "field": field, "tried": tried,
                       "chosen": (float(best_v) if best_v is not None else None),
                       "score_after": best_score})
+    # Holdout indipendente: non applicare un tuning che ha semplicemente
+    # overfittato i seed usati dal coordinate descent.
+    def verify(c):
+        vals = []
+        for s in verification_seeds:
+            r = simulate(c, seed=s, depth="light")
+            vals.append(r.ber_post_dfe if r.link_up else 0.5)
+        return float(np.mean(vals))
+
+    holdout_before, holdout_after = verify(cfg), verify(cur)
+    accepted = holdout_after <= holdout_before + 1e-12
+    if not accepted:
+        cur, best_score = cfg, base
+    if steps:
+        steps[-1].update({"verification_before": holdout_before,
+                          "verification_after": holdout_after,
+                          "accepted": accepted,
+                          "verification_seeds": list(verification_seeds)})
     return cur, steps, base, best_score
+
+
+def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),
+                  seed=73001):
+    """Benchmark L2/PHY sulla frame size, ispirato al workflow di un traffic
+    analyzer ma deliberatamente NON chiamato RFC 2544.
+
+    Ogni punto attraversa davvero L2 -> FEC opzionale -> PHY -> ED/FEC -> L2.
+    Non essendoci un DUT packet-switching non esistono forwarding latency,
+    multi-stream, QoS o una ricerca normativa del throughput.
+    """
+    rows = []
+    for size in frame_sizes:
+        size = int(size)
+        if not 64 <= size <= 1024:
+            raise ValueError("frame size fuori range [64, 1024] B")
+        run_cfg = cfg.with_updates(pattern="eth", l2_frame_bytes=size)
+        r = simulate(run_cfg, seed=seed + size, depth="light")
+        l2 = r.l2
+        rows.append({
+            "frame_bytes": size,
+            "link_up": bool(r.link_up),
+            "frames_expected": (l2.frames_expected if l2 else 0),
+            "frames_detected": (l2.frames_detected if l2 else 0),
+            "frames_ok": (l2.frames_ok if l2 else 0),
+            "frames_fcs_bad": (l2.frames_fcs_bad if l2 else 0),
+            "frames_lost": (l2.frames_lost if l2 else 0),
+            "loss_pct": (100 * l2.frames_lost / max(l2.frames_expected, 1)
+                         if l2 else float("nan")),
+            "throughput_gbps": (l2.throughput_gbps if l2 else float("nan")),
+            "line_rate_gbps": (l2.line_rate_gbps if l2 else float("nan")),
+            "payload_efficiency_pct": (
+                100 * l2.throughput_gbps / max(l2.line_rate_gbps, 1e-30)
+                if l2 else float("nan")),
+            "ber": (r.ber_post_dfe if r.link_up else float("nan")),
+        })
+    return rows
 
 
 def sweep(cfg: LinkConfig, field_name: str, values, seed=20240731,

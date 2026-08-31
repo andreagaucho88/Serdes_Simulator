@@ -23,8 +23,8 @@ import tornado.websocket
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
-from serdes_sim.config import STANDARD_PROFILES  # noqa: E402
-from serdes_sim.engine import jitter_tolerance, link_train  # noqa: E402
+from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
+from serdes_sim.engine import jitter_tolerance, link_train, traffic_sweep  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
 
@@ -41,6 +41,9 @@ def load_persisted():
     try:
         d = json.loads(PERSIST.read_text())
         d["cfg"]["tx_ffe_taps"] = tuple(d["cfg"]["tx_ffe_taps"])
+        for name in ("ctle_zeros_hz", "ctle_poles_hz"):
+            if name in d["cfg"]:
+                d["cfg"][name] = tuple(d["cfg"][name])
         BENCH.set_config(LinkConfig(**d["cfg"]))
     except Exception:
         pass
@@ -103,7 +106,8 @@ class ApiState(Base):
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
             "presets": [{"name": k, "desc": v[1]} for k, v in PRESETS.items()],
-            "profiles": [{"name": k, "desc": v[1]}
+            "profiles": [{"name": k, "desc": v[1],
+                          **STANDARD_PROFILE_META.get(k, {})}
                          for k, v in STANDARD_PROFILES.items()],
             "sweepable": {k: {"label": v[0], "lo": v[1], "hi": v[2]}
                           for k, v in SWEEPABLE_FIELDS.items()},
@@ -168,6 +172,9 @@ class ApiConfig(Base):
         try:
             if "tx_ffe_taps" in updates:
                 updates["tx_ffe_taps"] = tuple(updates["tx_ffe_taps"])
+            for name in ("ctle_zeros_hz", "ctle_poles_hz"):
+                if name in updates:
+                    updates[name] = tuple(float(v) for v in updates[name])
             new = cfg.with_updates(**updates)
         except TypeError as exc:
             self.set_status(400)
@@ -265,8 +272,10 @@ class ApiTrain(Base):
         BENCH.stop()
         try:
             new_cfg, steps, base, final = link_train(BENCH.cfg)
-        finally:
-            pass
+        except Exception:
+            if was_running:
+                BENCH.start()
+            raise
         BENCH.set_config(new_cfg)
         persist()
         broadcast({"type": "config", "cfg": new_cfg.to_dict()})
@@ -274,7 +283,31 @@ class ApiTrain(Base):
             BENCH.start()
         self.write_json({"ok": True, "steps": paneldata.J(steps),
                          "score_before": base, "score_after": final,
+                         "verification_before": steps[-1].get("verification_before"),
+                         "verification_after": steps[-1].get("verification_after"),
+                         "accepted": steps[-1].get("accepted", True),
                          "cfg": new_cfg.to_dict()})
+
+
+class ApiTraffic(Base):
+    def post(self):
+        body = self.body_json()
+        sizes = body.get("frame_sizes") or [64, 128, 256, 512, 1024]
+        if not isinstance(sizes, list) or not 1 <= len(sizes) <= 8:
+            self.set_status(400)
+            return self.write_json({"error": "frame_sizes deve contenere 1..8 valori"})
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            rows = traffic_sweep(BENCH.cfg, sizes)
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
+        finally:
+            if was_running:
+                BENCH.start()
+        self.write_json({"ok": True, "kind": "PHY frame-size benchmark",
+                         "normative": False, "rows": paneldata.J(rows)})
 
 
 class ApiPanel(Base):
@@ -283,13 +316,20 @@ class ApiPanel(Base):
         if builder is None:
             self.set_status(404)
             return self.write_json({"error": f"pannello sconosciuto: {name}"})
-        cfg = BENCH.cfg
+        cfg, live_sim, records, _ = BENCH.capture()
         source = self.get_argument("source", "auto")
         # live: ultimo record del bench (nuovo rumore); ref: sim full cache
         sim = None
-        if source in ("auto", "live") and name in ("eye", "spectrum", "jitter"):
-            sim = BENCH.latest
-        if sim is None or sim.cfg != cfg:
+        source_used = "reference"
+        if source in ("auto", "live") and name in (
+                "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical"):
+            sim = live_sim
+            if sim is not None and sim.cfg == cfg:
+                source_used = "live"
+        if name == "education":
+            sim = None  # catalogo statico: nessuna simulazione costosa
+            source_used = "static"
+        elif sim is None or sim.cfg != cfg:
             try:
                 sim = paneldata.ref_sim(cfg)
             except ValueError as exc:
@@ -304,10 +344,51 @@ class ApiPanel(Base):
         if "nperseg" in params:
             kwargs["nperseg"] = int(self.get_argument("nperseg", "4096"))
         try:
-            self.write_json(builder(sim, cfg, **kwargs))
+            payload = builder(sim, cfg, **kwargs)
+            if isinstance(payload, dict):
+                payload["_acquisition"] = {
+                    "seed": (int(sim.seed) if sim is not None else None),
+                    "depth": (sim.depth if sim is not None else None),
+                    "source": source_used,
+                    "records": records,
+                }
+            self.write_json(payload)
         except Exception as exc:
             self.set_status(500)
             self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+
+
+class ApiScope(Base):
+    """Acquisizione DCA coerente: fino a quattro nodi dallo stesso record."""
+    def get(self):
+        requested = [v.strip() for v in self.get_argument(
+            "nodes", "vctle").split(",") if v.strip()]
+        if not requested or len(requested) > 4 or any(
+                n not in paneldata.NODES for n in requested):
+            self.set_status(400)
+            return self.write_json({"error": "nodes richiede 1..4 nodi validi"})
+        cfg, live_sim, records, running = BENCH.capture()
+        source = self.get_argument("source", "auto")
+        sim = live_sim if source in ("auto", "live") else None
+        source_used = "live"
+        if sim is None or sim.cfg != cfg:
+            sim = paneldata.ref_sim(cfg)
+            source_used = "reference"
+        try:
+            channels = [paneldata.eye_panel(sim, cfg, node=n,
+                                             n_traces=min(int(self.get_argument(
+                                                 "n", "600")), 800))
+                        for n in requested]
+        except Exception as exc:
+            self.set_status(400)
+            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+        self.write_json({
+            "channels": channels,
+            "coherent": True,
+            "running": running,
+            "_acquisition": {"seed": int(sim.seed), "depth": sim.depth,
+                             "source": source_used, "records": records},
+        })
 
 
 class WS(tornado.websocket.WebSocketHandler):
@@ -351,7 +432,9 @@ def make_app():
         (r"/api/experiment/sweep", ApiSweep),
         (r"/api/experiment/jtol", ApiJtol),
         (r"/api/experiment/train", ApiTrain),
+        (r"/api/experiment/traffic", ApiTraffic),
         (r"/api/inject", ApiInject),
+        (r"/api/scope", ApiScope),
         (r"/api/panel/(\w+)", ApiPanel),
         (r"/ws", WS),
         (r"/static/(.*)", tornado.web.StaticFileHandler,

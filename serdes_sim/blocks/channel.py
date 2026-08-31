@@ -176,8 +176,8 @@ def parse_touchstone_text(text):
     """Parser Touchstone 1.x generico a n porte (2 o 4).
 
     Ritorna (f_hz, S[punti, n, n], z0, n_ports). Per s4p il port order è
-    quello del file (row-major S11 S12 S13 S14 / S21 ... come da Touchstone
-    1.x per n>2); il mapping fisico P/N è scelto altrove (s4p_pairs)."""
+    quello Touchstone 1.x (column-major: S11 S21 ... SN1, S12 ...); il
+    mapping fisico P/N è scelto altrove (s4p_pairs)."""
     unit_scale = {"HZ": 1.0, "KHZ": 1e3, "MHZ": 1e6, "GHZ": 1e9}
     option = None
     rows = []
@@ -227,7 +227,9 @@ def parse_touchstone_text(text):
     S = np.empty((len(a), n_ports, n_ports), dtype=complex)
     for i in range(n_ports):
         for j in range(n_ports):
-            k = 2 * (i * n_ports + j)
+            # Touchstone 1.x: varia prima la porta di uscita i, poi quella
+            # d'ingresso j: S11,S21,...,SN1,S12,... (column-major).
+            k = 2 * (j * n_ports + i)
             S[:, i, j] = pair(vals[:, k], vals[:, k + 1])
     if n_ports == 2:
         # Touchstone s2p: ordine S11 S21 S12 S22 (non row-major!)

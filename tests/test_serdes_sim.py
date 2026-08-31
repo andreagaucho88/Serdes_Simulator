@@ -284,6 +284,91 @@ def test_tx_rj_degrades_ber():
     assert r1.ber_post_dfe > r0.ber_post_dfe
 
 
+def test_tx_differential_noise_is_real_stimulus_stress():
+    cfg = LinkConfig(link_medium="copper", channel_il_nyquist_db=9.0)
+    r0 = simulate(cfg, seed=19, depth="light")
+    r1 = simulate(cfg.with_updates(tx_diff_noise_mv=80.0), seed=19,
+                  depth="light")
+    assert np.array_equal(r0.tx.driver_voltage_v, r1.tx.driver_voltage_v)
+    assert not np.array_equal(r0.tx.v_diff_v, r1.tx.v_diff_v)
+    assert r1.ber_post_dfe >= r0.ber_post_dfe
+
+
+def test_pn_scope_nodes_obey_differential_definitions():
+    cfg = LinkConfig(pn_gain_mismatch_pct=12.0, pn_skew_ps=1.0,
+                     vcm_offset_v=0.1, vcm_noise_mv=10.0)
+    r = simulate(cfg, seed=23, depth="light")
+    assert np.allclose(r.tx.v_diff_v, r.tx.vp_v - r.tx.vn_v)
+    assert np.allclose(r.tx.vcm_v, 0.5 * (r.tx.vp_v + r.tx.vn_v))
+    # Il mismatch da solo non cambia il differenziale ma genera common-mode.
+    r2 = simulate(LinkConfig(pn_gain_mismatch_pct=12.0), seed=23,
+                  depth="light")
+    assert np.allclose(r2.tx.v_diff_v, r2.tx.driver_voltage_v)
+    assert np.std(r2.tx.vcm_v) > 0
+
+
+def test_single_ended_drive_consumes_branch_and_common_mode():
+    base = LinkConfig(vcm_offset_v=0.12, vcm_noise_mv=8.0,
+                      pn_gain_mismatch_pct=6.0)
+    rd = simulate(base, seed=29, depth="light")
+    rp = simulate(base.with_updates(electrical_drive_mode="single_ended_p"),
+                  seed=29, depth="light")
+    assert np.array_equal(rp.channel_input_v, rp.tx.vp_v)
+    assert np.array_equal(rd.channel_input_v, rd.tx.v_diff_v)
+    assert not np.allclose(rp.channel.electrical_waveform_v,
+                           rd.channel.electrical_waveform_v)
+
+
+def test_eml_is_distinct_large_signal_modulator():
+    cfg = LinkConfig(optical_modulator="eml", laser_type="dfb_eml_integrated",
+                     electrical_drive_mode="single_ended_p",
+                     eml_er_db=5.0, eml_chirp_alpha=2.5)
+    r = simulate(cfg, seed=31, depth="light")
+    assert r.optical.modulator == "eml"
+    assert "EML output" in r.optical.power_budget_dbm
+    assert np.min(r.optical.p_static) > 0
+    assert np.ptp(r.optical.inst_freq_shift_hz) > 0
+
+
+def test_optical_architectures_are_consistent_and_mmf_is_physical():
+    assert LinkConfig(optical_modulator="eml").validate()
+    dml = LinkConfig(optical_modulator="dml", laser_type="dfb_direct",
+                     electrical_drive_mode="single_ended_p")
+    rd = simulate(dml, seed=32, depth="light")
+    assert rd.optical.modulator == "dml"
+    vcsel = LinkConfig(optical_modulator="vcsel", laser_type="vcsel_direct",
+                       electrical_drive_mode="single_ended_p", fiber_type="mmf",
+                       wavelength_nm=850.0, fiber_km=0.1)
+    rv = simulate(vcsel, seed=33, depth="light")
+    assert rv.optical.modulator == "vcsel"
+    assert np.isclose(rv.optical.modal_bw_hz, 47e9)
+    assert rv.optical.beta2_s2_m == 0
+
+
+def test_fiber_cd_slope_pmd_kerr_are_reported():
+    cfg = LinkConfig(fiber_km=5.0, pmd_ps_sqrt_km=0.5,
+                     fiber_gamma_w_inv_km=2.0,
+                     dispersion_slope_ps_nm2_km=0.08)
+    r = simulate(cfg, seed=34, depth="light")
+    assert r.optical.beta2_s2_m != 0 and r.optical.beta3_s3_m != 0
+    assert r.optical.pmd_dgd_ps > 0
+    assert r.optical.nonlinear_phase_peak_rad > 0
+
+
+def test_jitter_panel_has_live_bathtub_and_acquisition_identity():
+    from labpro.paneldata import jitter_panel
+    cfg = LinkConfig(link_medium="copper", channel_il_nyquist_db=6.0,
+                     tx_rj_rms_fs=500.0)
+    r1 = simulate(cfg, seed=501, depth="light")
+    r2 = simulate(cfg, seed=502, depth="light")
+    j1, j2 = jitter_panel(r1, cfg, "driver"), jitter_panel(r2, cfg, "driver")
+    assert len(j1["bathtub_x_ui"]) == len(j1["bathtub_ber_proxy"]) == 161
+    assert min(j1["bathtub_ber_proxy"]) > 0
+    assert j1["tie_rms_ps"] != j2["tie_rms_ps"]
+    assert not r1.timing_is_supervised
+    assert simulate(cfg.with_updates(cdr_mode="oracle"), depth="light").timing_is_supervised
+
+
 def test_tx_jitter_zero_keeps_baseline_bitexact():
     # con jitter a zero non vengono consumati draw rng: baseline identica
     r0 = simulate(LinkConfig(), depth="light")
@@ -313,8 +398,9 @@ def test_s4p_mixed_mode():
         M = np.zeros((4, 4))
         M[1, 0] = 0.5; M[3, 2] = 0.5    # S21, S43
         M[1, 2] = -0.25; M[3, 0] = -0.25  # S23, S41
-        for i in range(4):
-            for j in range(4):
+        # Touchstone 1.x: S11,S21,...,SN1,S12,... (column-major)
+        for j in range(4):
+            for i in range(4):
                 vals += [M[i, j], 0.0]
         rows.append(" ".join(str(v) for v in [f] + vals))
     text = "# GHZ S RI R 50\n" + "\n".join(rows)
@@ -325,6 +411,8 @@ def test_s4p_mixed_mode():
     # il mapping alternativo dà un risultato diverso (porte diverse)
     sdd21b, _ = s4p_mixed_mode_21(fhz, S4, "12_34")
     assert not np.allclose(sdd21, sdd21b)
+    assert np.allclose(S4[:, 1, 0], 0.5)   # S21 non trasposto
+    assert np.allclose(S4[:, 0, 1], 0.0)   # S12 distinto
 
 
 def test_ethernet_roundtrip_and_analyzer():
@@ -337,6 +425,20 @@ def test_ethernet_roundtrip_and_analyzer():
     bad = bits.copy(); bad[3000] ^= 1
     a2 = ethernet.analyze_stream_bits(bad, 256, window_s=1e-6)
     assert a2.frames_fcs_bad >= 1
+    # Un falso 55-D5 nel payload non deve creare un frame fantasma.
+    fake = np.concatenate([bits, ethernet._bytes_to_bits(b"\x55\xd5" + bytes(80))])
+    a3 = ethernet.analyze_stream_bits(fake, 256, window_s=1e-6)
+    assert a3.frames_detected == a.frames_detected
+
+
+def test_traffic_sweep_is_real_l2_phy_path():
+    from serdes_sim.engine import traffic_sweep
+    rows = traffic_sweep(LinkConfig(link_medium="copper",
+                                    channel_il_nyquist_db=6.0,
+                                    fec_mode="kp4"), (64, 256))
+    assert [r["frame_bytes"] for r in rows] == [64, 256]
+    assert all(r["link_up"] and r["frames_detected"] > 0 for r in rows)
+    assert all(0 <= r["payload_efficiency_pct"] <= 100 for r in rows)
 
 
 def test_l2_through_phy_with_fec():
@@ -361,6 +463,29 @@ def test_copper_medium_runs_and_skips_optics():
     assert r.ber_post_dfe < 0.05
 
 
+def test_standard_catalog_is_consistent_and_honest():
+    from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META
+    assert len(STANDARD_PROFILES) >= 12
+    assert set(STANDARD_PROFILES) == set(STANDARD_PROFILE_META)
+    assert not any("802.3by — 25GBASE-LR" in name for name in STANDARD_PROFILES)
+    dj = STANDARD_PROFILES["P802.3dj (draft) — 200G/lane · elettrico C2C"][0]
+    assert dj.fec_mode == "none"
+    assert STANDARD_PROFILE_META[
+        "P802.3dj (draft) — 200G/lane · elettrico C2C"]["status"] == "draft"
+    assert all(not cfg.validate() for cfg, _ in STANDARD_PROFILES.values())
+
+
+def test_education_catalog_is_bilingual_and_covers_chain():
+    from labpro.education import TOPICS_BY_ID
+    required = {"stimulus", "fec", "serpll", "tx", "channel", "optical",
+                "rxfe", "ctle", "adc", "timing", "eq", "scope", "bert",
+                "l2", "standards"}
+    assert required <= set(TOPICS_BY_ID)
+    for topic in TOPICS_BY_ID.values():
+        for field in ("title", "idea", "observe", "experiment", "limits"):
+            assert topic[field]["it"] and topic[field]["en"]
+
+
 def test_pn_skew_degrades_link():
     r0 = simulate(LinkConfig(), depth="light")
     r1 = simulate(LinkConfig(pn_skew_ps=6.0), depth="light")
@@ -373,6 +498,24 @@ def test_link_train_improves_or_keeps():
     new_cfg, steps, base, final = link_train(cfg, seeds=(1101,))
     assert final <= base + 1e-9
     assert len(steps) == 4
+    assert "verification_before" in steps[-1]
+    if not steps[-1]["accepted"]:
+        assert new_cfg == cfg
+
+
+def test_ctle_variable_topology_changes_real_datapath():
+    from serdes_sim.blocks.receiver import ctle_response
+    f = np.array([0.0, 10e9, 40e9])
+    h12 = ctle_response(f, zeros_hz=(8e9,), poles_hz=(24e9, 55e9))
+    h23 = ctle_response(f, zeros_hz=(8e9, 18e9),
+                        poles_hz=(24e9, 45e9, 75e9))
+    assert np.isclose(h12[0], 1.0) and np.isclose(h23[0], 1.0)
+    assert not np.allclose(h12, h23)
+    cfg = LinkConfig(ctle_zeros_hz=(8e9, 18e9),
+                     ctle_poles_hz=(24e9, 45e9, 75e9))
+    assert not cfg.validate()
+    r = simulate(cfg, depth="light")
+    assert r.link_up and np.all(np.isfinite(r.receiver.v_ctle_v))
 
 
 def test_livebench_accumulates_and_resets():
@@ -387,3 +530,4 @@ def test_livebench_accumulates_and_resets():
     assert s["fec"]["in_path"] and s["fec"]["frames_total"] >= 2
     b.set_config(LinkConfig())
     assert b.snapshot()["records"] == 0
+    assert b.latest is None

@@ -109,10 +109,15 @@ def run_differential(cfg, tx: TxResult, rng=None):
     modo differenziale (notch a 1/(2τ)) e lo sbilanciamento ε fa trapelare il
     common-mode nel differenziale. Con tutto a zero: v_diff ≡ v (bit-esatto)."""
     v = tx.driver_voltage_v
+    if cfg.tx_diff_noise_mv > 0 and rng is not None:
+        # Stress source differenziale al reference plane di uscita PPG. Non
+        # modifica il nodo driver ideale a monte, ma entra davvero in P/N e
+        # quindi nel canale, come una voltage-noise addition di un BERT.
+        v = v + rng.normal(0, cfg.tx_diff_noise_mv * 1e-3, len(v))
     skew_on = cfg.pn_skew_ps > 0
     mism_on = cfg.pn_gain_mismatch_pct > 0
     cm_on = cfg.vcm_offset_v != 0 or cfg.vcm_noise_mv > 0
-    if not (skew_on or mism_on or cm_on):
+    if not (skew_on or mism_on or cm_on or cfg.tx_diff_noise_mv > 0):
         tx.vp_v = v / 2
         tx.vn_v = -v / 2
         tx.vcm_v = np.zeros_like(v)
@@ -132,5 +137,8 @@ def run_differential(cfg, tx: TxResult, rng=None):
     eps = cfg.pn_gain_mismatch_pct / 100
     tx.vp_v = (1 + eps / 2) * (v / 2 + vcm)
     tx.vn_v = (1 - eps / 2) * (-v_n_arm / 2 + vcm)
-    tx.vcm_v = vcm
+    # I nodi scope devono rispettare la definizione elettrica, non mostrare
+    # solo la sorgente CM iniettata: il mismatch genera common-mode anche con
+    # vcm sorgente nullo, e skew/mismatch ne rendono il contenuto data-dependent.
+    tx.vcm_v = 0.5 * (tx.vp_v + tx.vn_v)
     tx.v_diff_v = tx.vp_v - tx.vn_v

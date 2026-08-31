@@ -34,6 +34,10 @@ class LiveBench:
 
     # ------------------------------------------------------------------ state
     def _reset_locked(self):
+        # Non lasciare esposta una waveform appartenente alla configurazione
+        # precedente: i pannelli live devono dichiarare/far vedere il record
+        # che stanno realmente misurando.
+        self.latest = None
         self.records = 0
         self.bits_total = 0
         self.bit_errors_total = 0
@@ -48,6 +52,7 @@ class LiveBench:
         self.link_down_records = 0
         # L2 (pattern eth)
         self.l2_expected = 0
+        self.l2_detected = 0
         self.l2_ok = 0
         self.l2_fcs_bad = 0
         self.l2_lost = 0
@@ -177,6 +182,7 @@ class LiveBench:
                               np.minimum(fa.errors_per_frame, 40), 1)
                 if r.l2 is not None:
                     self.l2_expected += r.l2.frames_expected
+                    self.l2_detected += r.l2.frames_detected
                     self.l2_ok += r.l2.frames_ok
                     self.l2_fcs_bad += r.l2.frames_fcs_bad
                     self.l2_lost += r.l2.frames_lost
@@ -244,6 +250,7 @@ class LiveBench:
             "l2": {
                 "active": bool(self._cfg.pattern == "eth"),
                 "frames_expected": self.l2_expected,
+                "frames_detected": self.l2_detected,
                 "frames_ok": self.l2_ok,
                 "frames_fcs_bad": self.l2_fcs_bad,
                 "frames_lost": self.l2_lost,
@@ -254,6 +261,8 @@ class LiveBench:
                 "frame_bytes": self._cfg.l2_frame_bytes,
             },
             "last": {
+                "seed": (int(r.seed) if r is not None else None),
+                "depth": (r.depth if r is not None else None),
                 "link_up": bool(r is not None and r.link_up),
                 "cdr_locked": bool(r is not None and (
                     r.cdr.locked if r.cdr is not None else r.link_up)),
@@ -277,3 +286,13 @@ class LiveBench:
     def snapshot(self):
         with self._lock:
             return self._snapshot_locked()
+
+    def capture(self):
+        """Snapshot atomico del reference plane live.
+
+        Tutti i canali di uno scope devono puntare allo stesso SimResult e allo
+        stesso record counter; leggere cfg/latest/records separatamente poteva
+        associare una waveform vecchia alla configurazione nuova.
+        """
+        with self._lock:
+            return self._cfg, self.latest, self.records, self._running

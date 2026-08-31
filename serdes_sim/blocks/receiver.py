@@ -12,19 +12,35 @@ from ..utils import (Q_E_C, apply_frequency_response, butterworth_magnitude,
                      white_noise_from_one_sided_psd)
 
 
-def ctle_response(f_hz, zero_hz, pole_hz, high_pole_hz, dc_gain_db=0.0):
-    if not (0 < zero_hz < pole_hz < high_pole_hz):
-        raise ValueError("richiesto 0 < fz < fp < fh")
+def ctle_response(f_hz, zero_hz=None, pole_hz=None, high_pole_hz=None,
+                  dc_gain_db=0.0, *, zeros_hz=None, poles_hz=None):
+    """Risposta CTLE a topologia arbitraria come prodotto di sezioni reali.
+
+    La firma scalare storica resta supportata (1 zero, 2 poli). Le keyword
+    ``zeros_hz``/``poles_hz`` permettono 1..4 zeri e 1..5 poli.
+    """
+    zeros = tuple(zeros_hz) if zeros_hz is not None else (zero_hz,)
+    poles = (tuple(poles_hz) if poles_hz is not None
+             else (pole_hz, high_pole_hz))
+    if not zeros or not poles or any(v is None or v <= 0 for v in zeros + poles):
+        raise ValueError("CTLE richiede frequenze positive per zeri e poli")
     s = 1j * np.asarray(f_hz)
     g_dc = 10 ** (dc_gain_db / 20)
-    return g_dc * ((1 + s / zero_hz) / (1 + s / pole_hz)) / (1 + s / high_pole_hz)
+    H = np.full(np.shape(s), g_dc, dtype=complex)
+    for fz in zeros:
+        H *= 1 + s / fz
+    for fp in poles:
+        H /= 1 + s / fp
+    return H
 
 
-def ctle_peaking_db(zero_hz, pole_hz, high_pole_hz, dc_gain_db=0.0,
-                    f_max_hz=80e9):
+def ctle_peaking_db(zero_hz=None, pole_hz=None, high_pole_hz=None,
+                    dc_gain_db=0.0, f_max_hz=80e9, *, zeros_hz=None,
+                    poles_hz=None):
     """Peaking = max|H| − |H(DC)| in dB (indicatore del boost alle alte)."""
     f = np.linspace(1e6, f_max_hz, 4001)
-    H = ctle_response(f, zero_hz, pole_hz, high_pole_hz, dc_gain_db)
+    H = ctle_response(f, zero_hz, pole_hz, high_pole_hz, dc_gain_db,
+                      zeros_hz=zeros_hz, poles_hz=poles_hz)
     mag_db = 20 * np.log10(np.abs(H))
     return float(mag_db.max() - dc_gain_db), float(f[np.argmax(mag_db)])
 
@@ -78,11 +94,14 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
     dc_gain_db = getattr(cfg, "ctle_dc_gain_db", 0.0)
     v_ctle_v, H_ctle, f_fft_hz = apply_frequency_response(
         v_agc_v, cfg.fs_analog_hz,
-        lambda f: ctle_response(f, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                                cfg.ctle_hf_pole_hz, dc_gain_db))
+        lambda f: ctle_response(
+            f, dc_gain_db=dc_gain_db,
+            zeros_hz=cfg.ctle_zeros_effective_hz,
+            poles_hz=cfg.ctle_poles_effective_hz))
     f_noise_hz = np.linspace(0, cfg.fs_analog_hz / 2, 100_001)
-    Hct = ctle_response(f_noise_hz, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                        cfg.ctle_hf_pole_hz, dc_gain_db)
+    Hct = ctle_response(f_noise_hz, dc_gain_db=dc_gain_db,
+                        zeros_hz=cfg.ctle_zeros_effective_hz,
+                        poles_hz=cfg.ctle_poles_effective_hz)
     noise_enh_db = float(db10(np.trapz(np.abs(Hct) ** 2, f_noise_hz)
                               / (f_noise_hz[-1] - f_noise_hz[0])))
     zeros = np.zeros(n)
@@ -150,12 +169,15 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     dc_gain_db = getattr(cfg, "ctle_dc_gain_db", 0.0)
     v_ctle_v, H_ctle, f_fft_hz = apply_frequency_response(
         v_agc_v, cfg.fs_analog_hz,
-        lambda f: ctle_response(f, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                                cfg.ctle_hf_pole_hz, dc_gain_db))
+        lambda f: ctle_response(
+            f, dc_gain_db=dc_gain_db,
+            zeros_hz=cfg.ctle_zeros_effective_hz,
+            poles_hz=cfg.ctle_poles_effective_hz))
 
     f_noise_hz = np.linspace(0, cfg.fs_analog_hz / 2, 100_001)
-    Hct_pos = ctle_response(f_noise_hz, cfg.ctle_zero_hz, cfg.ctle_pole_hz,
-                            cfg.ctle_hf_pole_hz, dc_gain_db)
+    Hct_pos = ctle_response(f_noise_hz, dc_gain_db=dc_gain_db,
+                            zeros_hz=cfg.ctle_zeros_effective_hz,
+                            poles_hz=cfg.ctle_poles_effective_hz)
     ctle_noise_enhancement_db = float(db10(
         np.trapz(np.abs(Hct_pos) ** 2, f_noise_hz) / (f_noise_hz[-1] - f_noise_hz[0])))
 

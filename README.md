@@ -11,8 +11,9 @@ Laboratorio interattivo 112G-class PAM4: il segnale dal bit al BER, senza salti.
 > sono etichettate come tali: NON è uno strumento di conformità IEEE/OIF.
 > Roadmap e limiti in `HANDOFF_CODEX.md`.
 
-**bit → PAM4 → TX FFE → DAC/driver → canale elettrico → MZM → fibra →
-PD/TIA/CTLE → ADC 2 sps → CDR → FSE/DFE → LLR, BER, GMI.**
+**bit → NRZ/PAM4 → TX FFE → DAC/driver P/N → canale →
+MZM/EML/DML/VCSEL → SMF/MMF → PD/TIA/AGC/CTLE → ADC → CDR →
+FSE/DFE → LLR, BER, GMI/FEC/L2.**
 
 La fisica è quella (verificata) del notebook v7 del corso
 (`codice/build_serdes_course_framework_v7.py`), riorganizzata in un motore
@@ -43,9 +44,22 @@ Frontend custom (Tornado + WebSocket + canvas/plotly locale, niente CDN):
 - **FEC nel percorso**: encoder RS prima del mapper e decoder dopo lo slicer
   (KP4 RS(544,514) o KR4 RS(528,514), entrambi codec algebrici reali);
 - **pannello CTLE dedicato**: zero/poli/gain DC, Bode + group delay, peaking
-  e noise enhancement;
-- **DCA con misure**: eye a persistenza con overlay di livelli e soglie,
-  height/width per occhio, Q, RLM, OMA/ER sui nodi ottici;
+  e noise enhancement; topologia realmente variabile (1..4 zeri, 1..5 poli)
+  con preset 1Z/1P, 1Z/2P e 2Z/3P;
+- **DCA multicanale coerente**: fino a quattro eye dallo stesso record,
+  quick-set P/N/differenziale/common-mode, eye a persistenza con overlay,
+  height/width per occhio, Q, RLM, OMA/ER sui nodi ottici; TIE live con seed,
+  trend, spettro e bathtub empirica;
+- **BERT + traffic analyzer**: PPG/ED con stress RJ/PJ/DCD/rumore
+  differenziale, BER/SER MSB-LSB, error insertion; frame Ethernet L2 reali e
+  benchmark end-to-end della frame size (dichiarato non RFC 2544);
+- **ottica configurabile e coerente**: CW-DFB+MZM, DFB-EML, DFB-DML e
+  VCSEL/MMF; CD beta2, slope/beta3, linewidth, PMD, Kerr e modal bandwidth;
+- **pannelli PD/TIA/AGC e pulse response**: waveform live, noise/ENBW,
+  overload/headroom, impulso e cursor prima/dopo CTLE;
+- **Academy IT/EN**: schede collegate a ogni blocco con fisica, formula,
+  osservabili, esperimento e limite; catalogo di 17 contesti IEEE/OIF con
+  manifest `standard / assumption / unsupported`;
 - ogni modifica di parametro azzera l'accumulo e si propaga a tutti i
   pannelli via WebSocket (config versionata, hash in basso a destra).
 
@@ -67,7 +81,8 @@ plotly.
 ## Struttura
 
 - `serdes_sim/` — motore fisico puro (nessuna dipendenza dalla GUI):
-  - `config.py`: `LinkConfig` (immutabile) + 6 preset didattici;
+  - `config.py`: `LinkConfig` (immutabile), preset didattici e 17 profili
+    IEEE/OIF dichiarati come contesti, non test di compliance;
   - `blocks/`: stimolo, TX, canale, ottica, ricevitore, ADC, DSP, metriche,
     **FEC RS(544,514) reale** su GF(2¹⁰);
   - `engine.py`: `simulate(cfg, seed, depth)` e `sweep(...)`;
@@ -112,6 +127,8 @@ Funzionalità principali:
 4. **Sweep parametrico** e **JTOL-lite** trasformano una manopola in una
    curva end-to-end (compresi i punti LINK DOWN).
 5. Le **viste** nel topbar caricano layout ordinati per flusso del segnale.
+6. Il pulsante **?** apre la scheda Academy del blocco; **IT/EN** cambia lingua
+   e la scelta resta persistente nel browser.
 
 > Confine di validità: framework system-level per l'apprendimento e la
 > sensitivity analysis. Non è un tester TDECQ/SECQ/COM conforme; ogni metrica
@@ -121,4 +138,5 @@ Funzionalità principali:
 
 - La fonte di verità della fisica resta il builder v7: non modificare i modelli
   senza confronto.
-- Stato del progetto ed estensioni pianificate: `HANDOFF_CODEX.md`.
+- Stato del progetto: `HANDOFF_CODEX.md`; review severa e roadmap pronta per
+  il prossimo agente: `HANDOFF_CLAUDE.md`.

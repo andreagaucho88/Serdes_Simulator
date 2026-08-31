@@ -6,7 +6,7 @@
 <title>SerDes Optical Lab Pro</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=11">
 <script src="/static/plotly.min.js"></script>
 </head>
 <body>
@@ -35,6 +35,7 @@
     <span class="chip" id="chip-mod">—</span>
     <span class="chip chip-fec" id="chip-fec">—</span>
     <select id="view-select" title="Viste predefinite (layout ordinato per flusso del segnale)"></select>
+    <button id="btn-lang" class="btn" title="Language / Lingua">EN</button>
     <div class="dropdown">
       <button class="btn btn-accent" id="btn-add">＋ Pannello</button>
       <div class="dropdown-menu" id="panel-menu"></div>
@@ -46,11 +47,11 @@
 <main id="workbench"></main>
 
 <footer id="statusbar">
-  <span id="sb-note">Laboratorio didattico con proxy dichiarati — le metriche
-  post-DSP usano la fase dell'acquisition supervisionata (v. pannello Timing).</span>
+  <span id="sb-note">Laboratorio didattico con proxy dichiarati — Gardner/MM
+  guidano il datapath; oracle resta un riferimento ideale dichiarato.</span>
   <span id="sb-cfg-hash"></span>
 </footer>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>
