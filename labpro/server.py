@@ -22,7 +22,8 @@ import tornado.websocket
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from serdes_sim import LinkConfig, PRESETS  # noqa: E402
+from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
+from serdes_sim.engine import jitter_tolerance  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
 
@@ -96,11 +97,65 @@ class ApiState(Base):
         cfg = BENCH.cfg
         self.write_json({
             "cfg": cfg.to_dict(),
+            "defaults": LinkConfig().to_dict(),
             "problems": cfg.validate(),
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
             "presets": [{"name": k, "desc": v[1]} for k, v in PRESETS.items()],
+            "sweepable": {k: {"label": v[0], "lo": v[1], "hi": v[2]}
+                          for k, v in SWEEPABLE_FIELDS.items()},
         })
+
+
+class ApiSweep(Base):
+    def post(self):
+        body = self.body_json()
+        field = body.get("field")
+        if field not in SWEEPABLE_FIELDS:
+            self.set_status(400)
+            return self.write_json({"error": f"campo non sweepable: {field}"})
+        lo = float(body.get("lo", SWEEPABLE_FIELDS[field][1]))
+        hi = float(body.get("hi", SWEEPABLE_FIELDS[field][2]))
+        n = max(3, min(int(body.get("n", 9)), 15))
+        import numpy as np
+        was_running = BENCH.running
+        BENCH.stop()          # niente contesa CPU durante lo sweep
+        try:
+            rows = sweep(BENCH.cfg, field, np.linspace(lo, hi, n))
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
+        finally:
+            if was_running:
+                BENCH.start()
+        self.write_json({"ok": True, "field": field,
+                         "label": SWEEPABLE_FIELDS[field][0],
+                         "rows": paneldata.J(rows)})
+
+
+class ApiJtol(Base):
+    def post(self):
+        body = self.body_json()
+        freqs = body.get("freqs_mhz") or [50, 200, 800, 2000]
+        # sotto ~3 cicli per record la "tolleranza" misurerebbe solo un offset
+        # quasi statico: il record è troppo corto (limite dichiarato)
+        record_s = BENCH.cfg.n_symbols / BENCH.cfg.symbol_rate_hz
+        f_min_mhz = 3.0 / record_s / 1e6
+        freqs = [max(float(f), f_min_mhz) for f in freqs][:6]
+        target = float(body.get("target_ber", 4e-2))
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            points = jitter_tolerance(BENCH.cfg, freqs, target_ber=target)
+        finally:
+            if was_running:
+                BENCH.start()
+        ui_ps = 1e12 / BENCH.cfg.symbol_rate_hz
+        for pt in points:
+            pt["amp_ps"] = (pt["amp_ui"] * ui_ps
+                            if pt.get("amp_ui") is not None else None)
+        self.write_json({"ok": True, "target_ber": target,
+                         "ui_ps": ui_ps, "points": paneldata.J(points)})
 
 
 class ApiConfig(Base):
@@ -246,6 +301,8 @@ def make_app():
         (r"/api/run", ApiRun),
         (r"/api/reset", ApiReset),
         (r"/api/s2p", ApiS2P),
+        (r"/api/experiment/sweep", ApiSweep),
+        (r"/api/experiment/jtol", ApiJtol),
         (r"/api/panel/(\w+)", ApiPanel),
         (r"/ws", WS),
         (r"/static/(.*)", tornado.web.StaticFileHandler,

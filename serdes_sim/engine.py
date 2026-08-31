@@ -458,7 +458,59 @@ SWEEPABLE_FIELDS = {
     "chirp_alpha": ("Chirp α", -1.5, 1.5),
     "adc_bits": ("Bit ADC", 4, 10),
     "dispersion_ps_nm_km": ("D [ps/(nm·km)]", -20.0, 20.0),
+    "tx_pj_amp_ui": ("PJ TX ampiezza [UI pk]", 0.0, 0.3),
+    "tx_rj_rms_fs": ("RJ TX [fs rms]", 0.0, 1200.0),
+    "cdr_bw": ("Banda loop CDR [·f_baud]", 0.0004, 0.005),
+    "rx_ppm_offset": ("Offset clock RX [ppm]", -300.0, 300.0),
+    "mzm_bias_rad": ("Bias MZM [rad]", 0.9, 2.2),
 }
+
+
+def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
+                     amp_max_ui=0.35, iters=6, seed=20240731,
+                     progress_callback=None):
+    """JTOL-lite (dichiaratamente NON normativa): per ogni frequenza di PJ,
+    bisezione sull'ampiezza per trovare la massima con BER ≤ target e link UP.
+
+    Un punto è None se il link fallisce già senza PJ aggiunto."""
+    def passes(amp, f_mhz):
+        r = simulate(cfg.with_updates(tx_pj_amp_ui=float(amp),
+                                      tx_pj_freq_mhz=float(f_mhz)),
+                     seed=seed, depth="light")
+        return bool(r.link_up and r.ber_post_dfe <= target_ber)
+
+    points = []
+    total = len(freqs_mhz) * (iters + 2)
+    done = 0
+    for f_mhz in freqs_mhz:
+        if not passes(0.0, f_mhz):
+            points.append({"freq_mhz": float(f_mhz), "amp_ui": None})
+            done += iters + 2
+            if progress_callback:
+                progress_callback(done / total)
+            continue
+        lo, hi = 0.0, amp_max_ui
+        done += 1
+        if passes(hi, f_mhz):
+            points.append({"freq_mhz": float(f_mhz), "amp_ui": float(hi),
+                           "capped": True})
+            done += iters + 1
+            if progress_callback:
+                progress_callback(done / total)
+            continue
+        done += 1
+        for _ in range(iters):
+            mid = 0.5 * (lo + hi)
+            if passes(mid, f_mhz):
+                lo = mid
+            else:
+                hi = mid
+            done += 1
+            if progress_callback:
+                progress_callback(done / total)
+        points.append({"freq_mhz": float(f_mhz), "amp_ui": float(lo),
+                       "capped": False})
+    return points
 
 
 def sweep(cfg: LinkConfig, field_name: str, values, seed=20240731,

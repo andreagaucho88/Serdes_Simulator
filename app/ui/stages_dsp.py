@@ -10,7 +10,8 @@ from serdes_sim.utils import db10
 
 from .. import common, content, diagrams, plots
 from .. import theme as T
-from ..state import get_cfg, run_sim, param_int_slider, param_slider
+from ..state import (get_cfg, run_sim, param_int_slider,
+                     param_select, param_slider)
 
 
 def page_timing():
@@ -20,6 +21,23 @@ def page_timing():
                        "acquisition dai campioni ADC, poi il TED.")
     with st.expander("Teoria — acquisition, TED, S-curve"):
         st.markdown(content.TIMING_THEORY)
+
+    with st.container(border=True):
+        st.markdown("**Parametri CDR (nel datapath)**")
+        t1, t2, t3, t4 = st.columns(4)
+        with t1:
+            param_select("Modo", "cdr_mode", ["gardner", "mm", "oracle"],
+                         format_func=lambda m: {"gardner": "Gardner",
+                                                "mm": "Mueller-Müller",
+                                                "oracle": "oracle (ideale)"}[m])
+        with t2:
+            param_slider("Banda loop [·f_baud]", "cdr_bw", 0.0004, 0.005,
+                         0.0002, fmt="%.4f")
+        with t3:
+            param_slider("Damping ζ", "cdr_damping", 0.5, 2.0, 0.1)
+        with t4:
+            param_slider("Offset clock RX [ppm]", "rx_ppm_offset",
+                         -300.0, 300.0, 10.0)
 
     sim = run_sim()
     cfg_now = get_cfg()

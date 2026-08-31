@@ -16,7 +16,8 @@ PD/TIA/CTLE → ADC 2 sps → CDR → FSE/DFE → LLR, BER, GMI.**
 
 La fisica è quella (verificata) del notebook v7 del corso
 (`codice/build_serdes_course_framework_v7.py`), riorganizzata in un motore
-modulare (`serdes_sim/`) con una GUI Streamlit (`app/`).
+modulare (`serdes_sim/`). L'interfaccia attiva è **Lab PRO** (`labpro/`);
+la GUI Streamlit (`app/`) è legacy congelata.
 
 ## Due interfacce
 
@@ -48,14 +49,16 @@ Frontend custom (Tornado + WebSocket + canvas/plotly locale, niente CDN):
 - ogni modifica di parametro azzera l'accumulo e si propaga a tutti i
   pannelli via WebSocket (config versionata, hash in basso a destra).
 
-### Interfaccia didattica Streamlit (pagine guidate con teoria)
+### [LEGACY] Interfaccia Streamlit — congelata, non più sviluppata
 
 Doppio click su `avvia_simulatore.command`, oppure:
 
+L'interfaccia attiva e mantenuta è **Lab PRO** (sopra). La UI Streamlit
+resta nel repo come riferimento didattico (teoria per stadio, esercizi
+guidati) ma non riceve nuove funzionalità:
+
 ```bash
-cd simulatore
-python -m streamlit run app/main.py
-# → http://localhost:8501
+python -m streamlit run app/main.py  # legacy
 ```
 
 Dipendenze (già presenti in anaconda3): numpy, scipy, pandas, streamlit ≥1.45,
@@ -98,14 +101,17 @@ Funzionalità principali:
   (AMI_Init/AMI_GetWave) e un modello demo in C compilabile al volo.
 - Pacchetti di supporto installati: scikit-rf, serdespy (riferimento).
 
-## Uso didattico
+## Uso didattico (Lab PRO)
 
-1. Scegli un **preset** nella sidebar (default: 112G, 2 km @1550 nm).
-2. Pagina **Catena completa**: KPI, signal ledger, checkpoint.
-3. Pagine **stadio**: teoria, parametri, osservabili. Ogni modifica riesegue
-   l'intera catena (cache: ~0.5 s).
-4. **Esperimenti**: sweep end-to-end (BER/GMI vs parametro).
-5. **Note e glossario**: metodo delle sette domande, confini di validità.
+1. Scegli un **preset** e premi **RUN**: l'acquisizione continua parte e i
+   contatori (bit, BER±IC, frame FEC) si riempiono nel tempo.
+2. La **catena** in alto è cliccabile e mostra la salute dei blocchi: un
+   checkpoint FAIL accende in rosso il blocco responsabile.
+3. Ogni pannello ha le sue manopole (con **↺** per tornare ai default): ogni
+   modifica azzera l'accumulo e si propaga a tutti i pannelli via WebSocket.
+4. **Sweep parametrico** e **JTOL-lite** trasformano una manopola in una
+   curva end-to-end (compresi i punti LINK DOWN).
+5. Le **viste** nel topbar caricano layout ordinati per flusso del segnale.
 
 > Confine di validità: framework system-level per l'apprendimento e la
 > sensitivity analysis. Non è un tester TDECQ/SECQ/COM conforme; ogni metrica

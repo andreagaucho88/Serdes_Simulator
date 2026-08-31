@@ -141,6 +141,10 @@ const PARAMS = {
   dispersion_ps_nm_km: { l: "D", u: "ps/nm·km", min: -25, max: 25, step: 0.5 },
   wavelength_nm: { l: "λ", u: "nm", min: 1260, max: 1610, step: 5 },
   fiber_loss_db_km: { l: "Loss fibra", u: "dB/km", min: 0.1, max: 0.6, step: 0.01 },
+  n_symbols: { l: "Simboli/record", type: "select", opts: [4095, 6143, 8191, 12287, 16383] },
+  training_start: { l: "Inizio training", u: "simboli", min: 100, max: 2500, step: 50 },
+  pd_dark_current_a: { l: "Dark current", u: "nA", min: 0, max: 100, step: 1, scale: 1e-9 },
+  pd_saturation_a: { l: "Saturazione PD", u: "mA", min: 0.05, max: 3, step: 0.05, scale: 1e-3 },
   pd_responsivity_a_w: { l: "Responsivity", u: "A/W", min: 0.3, max: 1.1, step: 0.05 },
   pd_bw_hz: { l: "Banda PD", u: "GHz", min: 20, max: 70, step: 1, scale: 1e9 },
   rin_db_hz: { l: "RIN", u: "dB/Hz", min: -160, max: -125, step: 1 },
@@ -287,7 +291,7 @@ PANEL_DEFS.chain = {
       row.forEach(([id, label, dom, target], i) => {
         const x = X0 + i * (W + G), y = Y[ri], c = cmap[dom];
         svg += `<a data-target="${target}"><g opacity="${dom === "off" ? 0.45 : 1}">
-          <rect x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="rgba(255,255,255,0.03)" stroke="${c}" stroke-width="1.3"/>
+          <rect data-b="${id}" x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="rgba(255,255,255,0.03)" stroke="${c}" stroke-width="1.3"><title></title></rect>
           <text x="${x + W / 2}" y="${y + H / 2 + 4}" text-anchor="middle" fill="${COL.ink}" font-size="11.5">${label}</text></g></a>`;
         if (i < row.length - 1) {
           const nc = cmap[row[i + 1][2]];
@@ -306,6 +310,42 @@ PANEL_DEFS.chain = {
     svg += `</svg>`;
     p.svgHost.innerHTML = svg;
     for (const a of p.svgHost.querySelectorAll("a")) a.onclick = () => addPanel(a.dataset.target);
+    this.health(p);
+  },
+  async health(p) {
+    // salute dei blocchi: i checkpoint FAIL accendono in rosso il blocco
+    // responsabile (l'effetto di ogni manopola diventa visibile in catena)
+    const MAP = [["Driver non dominato", "drv"], ["Photodiode fuori", "pd"],
+      ["TIA fuori overload", "tia"], ["ADC non dominato", "adc"],
+      ["CDR ", "cdr"], ["Pattern lock", "cdr"], ["Occupazione", "stim"],
+      ["FSE migliora", "fse"], ["DFE non degrada", "dfe"],
+      ["nel percorso: post-FEC", "fdec"], ["LINK DOWN", "slc"],
+      ["GMI", "slc"]];
+    try {
+      const d = await GET("/api/panel/checks");
+      const bad = {};
+      for (const c of d.checks) {
+        if (c.status !== "FAIL") continue;
+        for (const [pat, blk] of MAP) if (c.check.includes(pat)) {
+          bad[blk] = (bad[blk] ? bad[blk] + " · " : "") + c.check;
+        }
+      }
+      for (const r of p.svgHost.querySelectorAll("rect[data-b]")) {
+        const msg = bad[r.dataset.b];
+        if (msg) {
+          r.setAttribute("stroke", COL.fail);
+          r.setAttribute("stroke-width", "2.6");
+          r.setAttribute("fill", "rgba(255,84,112,0.10)");
+          r.querySelector("title").textContent = "CHECKPOINT FAIL: " + msg;
+        }
+      }
+      let led = p.body.querySelector(".chain-led");
+      if (!led) { led = CE("div", "chain-led scope-bar"); p.body.insertBefore(led, p.body.lastChild); }
+      const n = Object.keys(bad).length;
+      led.innerHTML = n
+        ? `<span class="fail">● ${n} blocco/i con checkpoint FAIL (bordo rosso — passaci sopra per il dettaglio)</span>`
+        : `<span class="ok">● tutti i checkpoint della catena PASS</span>`;
+    } catch (e) { /* pannello checks non disponibile: nessun colore */ }
   },
 };
 
@@ -714,7 +754,7 @@ PANEL_DEFS.berlive = {
 /* --- pannelli parametrici + plot --- */
 PANEL_DEFS.stimulus = {
   title: "Stimolo — PRBS e modulazione", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "prbs_order", "modulation", "pam4_mapping"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "prbs_order", "modulation", "pam4_mapping", "n_symbols"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/stimulus");
     const lay = PL({ height: 210, showlegend: false });
@@ -883,7 +923,7 @@ PANEL_DEFS.timing = {
 
 PANEL_DEFS.eq = {
   title: "Equalizzazione — FSE + DFE", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["fse_taps", "dfe_taps", "training_stop"])); p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1); p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2); this.refetch(p); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["fse_taps", "dfe_taps", "training_start", "training_stop"])); p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1); p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/eq");
     if (d.link_down) { p.plot1.innerHTML = `<div class="note w">LINK DOWN: nessun equalizzatore adattato.</div>`; p.plot2.innerHTML = ""; return; }
@@ -957,8 +997,88 @@ PANEL_DEFS.checks = {
 
 PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_bw_hz", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v"])); p.body.appendChild(CE("div", "note", "Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint.")); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v"])); p.body.appendChild(CE("div", "note", "Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).")); },
   onConfig(p) { syncParams(p.body); },
+};
+
+/* --- sweep parametrico integrato --- */
+PANEL_DEFS.sweep = {
+  title: "Sweep parametrico (end-to-end)", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    p.fieldSel = CE("select");
+    for (const [k, v] of Object.entries(S.sweepable || {})) {
+      const o = CE("option"); o.value = k; o.textContent = v.label; p.fieldSel.appendChild(o);
+    }
+    p.lo = CE("input"); p.lo.type = "number"; p.lo.style.width = "90px";
+    p.hi = CE("input"); p.hi.type = "number"; p.hi.style.width = "90px";
+    p.n = CE("input"); p.n.type = "number"; p.n.value = 9; p.n.min = 3; p.n.max = 15; p.n.style.width = "56px";
+    const syncRange = () => { const d = S.sweepable[p.fieldSel.value]; p.lo.value = d.lo; p.hi.value = d.hi; };
+    p.fieldSel.onchange = syncRange;
+    if (S.sweepable && Object.keys(S.sweepable).length) syncRange();
+    const btn = CE("button", "btn btn-accent", "Esegui");
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "sweep…";
+      try {
+        const d = await POST("/api/experiment/sweep", { field: p.fieldSel.value, lo: +p.lo.value, hi: +p.hi.value, n: +p.n.value });
+        const xs = d.rows.map(r => r[d.field]);
+        const floor = 0.5 / Math.max(...d.rows.map(r => r.val_bits || 1), 1);
+        const cl = v => (v == null || v <= 0) ? floor : v;
+        const downs = d.rows.filter(r => !r.link_up);
+        const traces = [
+          { x: xs, y: d.rows.map(r => cl(r.BER_pre_EQ)), name: "pre-EQ", line: { color: COL.muted }, mode: "lines+markers" },
+          { x: xs, y: d.rows.map(r => cl(r.BER_FSE_DFE)), name: "FSE+DFE", line: { color: COL.ok, width: 2 }, mode: "lines+markers" },
+        ];
+        if (downs.length) traces.push({ x: downs.map(r => r[d.field]), y: downs.map(() => 0.5), name: "LINK DOWN", mode: "markers", marker: { color: COL.fail, symbol: "x", size: 11 } });
+        const lay = PL({ height: 280, shapes: [hline(floor, COL.muted, "dot")] });
+        mergeAxis(lay, "xaxis", { title: { text: d.label, font: { size: 10 } } });
+        mergeAxis(lay, "yaxis", { type: "log", title: { text: "BER (validation)", font: { size: 10 } } });
+        plot(p.plotEl, traces, lay);
+        p.note.innerHTML = `Ogni punto è una run end-to-end completa (nuovo canale/rumore ricalcolati). Le "✗" sono punti LINK DOWN: il CDR o il pattern lock non agganciano — su un banco reale il BERT mostrerebbe loss-of-sync, non una BER.`;
+      } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
+      btn.disabled = false; btn.textContent = "Esegui";
+    };
+    bar.append(p.fieldSel, CE("span", "", "da"), p.lo, CE("span", "", "a"), p.hi, CE("span", "", "punti"), p.n, btn);
+    p.body.appendChild(bar);
+    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
+    p.note = CE("div", "note", "Scegli un parametro e lancia: vedi la BER end-to-end rispondere alla manopola, incluso il punto in cui il link smette di agganciare.");
+    p.body.appendChild(p.note);
+  },
+};
+
+/* --- JTOL-lite (tolleranza al jitter) --- */
+PANEL_DEFS.jtol = {
+  title: "JTOL-lite — tolleranza al PJ", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    p.freqs = CE("input"); p.freqs.type = "text"; p.freqs.value = "50, 200, 800, 2000"; p.freqs.style.width = "150px";
+    p.target = CE("input"); p.target.type = "text"; p.target.value = "4e-2"; p.target.style.width = "70px";
+    const btn = CE("button", "btn btn-accent", "Misura JTOL");
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "bisezione… (~10 s)";
+      try {
+        const freqs = p.freqs.value.split(",").map(Number).filter(v => v > 0);
+        const d = await POST("/api/experiment/jtol", { freqs_mhz: freqs, target_ber: Number(p.target.value) });
+        const ok = d.points.filter(q => q.amp_ui != null);
+        const traces = [{ x: ok.map(q => q.freq_mhz), y: ok.map(q => q.amp_ui), mode: "lines+markers", name: "tolleranza", line: { color: COL.dg, width: 2 }, marker: { size: 8, symbol: ok.map(q => q.capped ? "triangle-up" : "circle") } }];
+        const lay = PL({ height: 270, showlegend: false });
+        mergeAxis(lay, "xaxis", { type: "log", title: { text: "frequenza PJ [MHz]", font: { size: 10 } } });
+        mergeAxis(lay, "yaxis", { title: { text: "ampiezza PJ tollerata [UI pk]", font: { size: 10 } }, range: [0, 0.4] });
+        plot(p.plotEl, traces, lay);
+        const rows = d.points.map(q => q.amp_ui == null ? `${q.freq_mhz} MHz: link già KO senza PJ` : `${fix(q.freq_mhz, 0)} MHz: ${fix(q.amp_ui, 3)} UI (${fix(q.amp_ps, 2)} ps)${q.capped ? " ≥cap" : ""}`).join(" · ");
+        const fbw = S.cfg.cdr_bw * S.cfg.symbol_rate_hz / 1e6;
+        p.note.innerHTML = `Target BER ${sci(d.target_ber)} — ${rows}.<br>Il <b>minimo vicino a ~${fix(fbw, 0)} MHz</b> (banda del loop) è il <b>jitter peaking</b> del CDR di 2° ordine: prova a cambiare cdr_bw/damping e rifai la misura. Il record (~${fix(S.cfg.n_symbols / (S.cfg.symbol_rate_hz / 1e9), 0)} ns) limita le basse frequenze a ≥3 cicli. <b>NON normativa</b>: le maschere JTOL di clause hanno pattern, durata e procedure prescritte.`;
+      } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
+      btn.disabled = false; btn.textContent = "Misura JTOL";
+    };
+    bar.append(CE("span", "", "freq [MHz]:"), p.freqs, CE("span", "", "target BER:"), p.target, btn);
+    p.body.appendChild(bar);
+    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
+    p.note = CE("div", "note", "Bisezione sull'ampiezza del PJ iniettato al TX PLL, per frequenza: la curva che ne esce è la firma della banda del CDR.");
+    p.body.appendChild(p.note);
+  },
 };
 
 /* ---------------- workbench a sezioni (ordinato per flusso del segnale) --- */
@@ -983,16 +1103,18 @@ const PALETTE = [
   ["spectrum", "Spectrum analyzer", "electrical", 4, 2],
   ["berlive", "BER live (accumulo)", "digital", 4, 3],
   ["feclive", "FEC live (accumulo)", "digital", 4, 4],
-  ["standards", "Standard IEEE/OIF", null, 4, 5],
-  ["checks", "Checkpoint & ledger", null, 4, 6],
+  ["sweep", "Sweep parametrico", null, 4, 5],
+  ["jtol", "JTOL-lite (PJ)", "digital", 4, 6],
+  ["standards", "Standard IEEE/OIF", null, 4, 7],
+  ["checks", "Checkpoint & ledger", null, 4, 8],
 ];
 const VIEWS = {
-  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "ctle", "timing", "eq", "decisions", "spectrum", "checks"],
+  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks"],
   "Essenziale": ["chain", "scope", "berlive", "feclive"],
   "Sorgente e TX": ["chain", "stimulus", "serpll", "tx", "scope", "jitter"],
   "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "rxfe", "ctle", "adc", "timing", "eq", "decisions", "scope"],
-  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "standards", "checks"],
+  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "checks"],
 };
 let PANEL_SEQ = 0;
 const SIZES = ["s4", "s6", "s8", "s12"];
@@ -1050,6 +1172,22 @@ function addPanel(type, size) {
   grid.insertBefore(p.el, next || null);
   S.panels.push(p);
   try { def.make(p); } catch (e) { p.body.innerHTML = `<div class="note w">${e.message}</div>`; console.error(e); }
+  // reset ai default: appare solo nei pannelli con manopole
+  if (p.body.querySelector(".param, [data-ffe]")) {
+    const btnReset = CE("button", "icon-btn", "↺");
+    btnReset.title = "riporta le manopole di questo pannello ai valori default";
+    btnReset.onclick = () => {
+      const updates = {};
+      for (const el of p.body.querySelectorAll(".param")) {
+        const f = el.dataset.field;
+        if (f && S.defaults[f] !== undefined) updates[f] = S.defaults[f];
+      }
+      if (p.body.querySelector("[data-ffe]") && S.defaults.tx_ffe_taps)
+        updates.tx_ffe_taps = S.defaults.tx_ffe_taps;
+      if (Object.keys(updates).length) postConfig(updates);
+    };
+    p.head.insertBefore(btnReset, btnSize);
+  }
   saveLayout();
   return p;
 }
@@ -1073,6 +1211,7 @@ function loadLayout() {
 async function boot() {
   const st = await GET("/api/state");
   S.cfg = st.cfg; S.acc = st.acc; S.running = st.running; S.presets = st.presets;
+  S.defaults = st.defaults || {}; S.sweepable = st.sweepable || {};
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— preset —</option>`;
   for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; ps.appendChild(o); }

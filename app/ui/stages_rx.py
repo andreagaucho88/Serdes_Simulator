@@ -31,6 +31,16 @@ def page_receiver():
             param_slider("Responsivity [A/W]", "pd_responsivity_a_w", 0.3, 1.1, 0.05)
         with c2:
             param_slider("Banda PD [GHz]", "pd_bw_hz", 20.0, 70.0, 1.0, scale=1e9)
+        c1b, c2b = st.columns(4)[:2]
+        with c1b:
+            param_slider("Dark current [nA]", "pd_dark_current_a", 0.0, 100.0,
+                         1.0, scale=1e-9,
+                         help="Somma alla fotocorrente ed entra nello shot noise")
+        with c2b:
+            param_slider("Saturazione PD [mA]", "pd_saturation_a", 0.05, 3.0,
+                         0.05, scale=1e-3,
+                         help="Sotto il picco di fotocorrente il PD comprime: "
+                              "non recuperabile")
         with c3:
             param_slider("RIN [dB/Hz]", "rin_db_hz", -160.0, -125.0, 1.0)
         with c4:

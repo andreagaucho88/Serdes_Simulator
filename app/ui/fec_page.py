@@ -10,7 +10,7 @@ from serdes_sim.blocks import fec
 
 from .. import common, plots
 from .. import theme as T
-from ..state import run_sim
+from ..state import param_select, run_sim
 
 THEORY = r"""
 **Che cosa è implementato davvero** (identico al notebook v7):
@@ -46,10 +46,28 @@ def page_fec():
     with st.expander("Teoria — codec, iid vs burst, cosa è proxy"):
         st.markdown(THEORY)
 
+    with st.container(border=True):
+        param_select("FEC nel percorso", "fec_mode", ["none", "kp4", "kr4"],
+                     format_func=lambda m: {"none": "nessuno (analisi what-if)",
+                                            "kp4": "KP4 RS(544,514) in-path",
+                                            "kr4": "KR4 RS(528,514) in-path"}[m],
+                     help="Con kp4/kr4 l'encoder è prima del mapper e il "
+                          "decoder dopo lo slicer: FEC reale nel percorso")
+
     sim = run_sim()
     if not common.require_link(sim):
         return
     fa = sim.fec
+
+    if sim.fec_link is not None:
+        fl = sim.fec_link
+        st.markdown(T.note(
+            f"<b>FEC in-path attivo ({fl.codec_name})</b> — frame decodati "
+            f"{fl.n_frames} (solo validation): {fl.frames_clean} clean, "
+            f"{fl.frames_corrected} corretti ({fl.symbols_corrected} simboli), "
+            f"{fl.frames_uncorrectable} persi, {fl.frames_miscorrected} "
+            f"miscorretti · pre-FEC {fl.pre_fec_ber:.2e} → post-FEC "
+            f"{fl.post_fec_ber:.2e}"), unsafe_allow_html=True)
 
     # --- KPI dal link -------------------------------------------------------
     k1, k2, k3, k4, k5 = st.columns(5)

@@ -117,6 +117,16 @@ def page_tx():
             param_slider("Banda DAC [GHz]", "dac_bw_hz", 15.0, 60.0, 1.0, scale=1e9)
         with c3:
             param_slider("Banda driver [GHz]", "driver_bw_hz", 15.0, 60.0, 1.0, scale=1e9)
+        st.markdown("**Serializer · TX PLL (iniezione jitter sul clock)**")
+        j1, j2, j3, j4 = st.columns(4)
+        with j1:
+            param_slider("RJ clock TX [fs]", "tx_rj_rms_fs", 0.0, 1500.0, 25.0)
+        with j2:
+            param_slider("PJ ampiezza [UI]", "tx_pj_amp_ui", 0.0, 0.3, 0.005)
+        with j3:
+            param_slider("PJ freq [MHz]", "tx_pj_freq_mhz", 10.0, 3000.0, 10.0)
+        with j4:
+            param_slider("DCD [%UI]", "tx_dcd_pct", 0.0, 25.0, 0.5)
         c4, c5, c6 = st.columns(3)
         with c4:
             param_slider("Full scale DAC [Vpp]", "dac_full_scale_vpp", 1.0, 4.0, 0.1)
