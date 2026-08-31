@@ -386,6 +386,22 @@ def test_livebench_epf_hist_accumulates():
     assert len(hist) == 41 and sum(hist) == s["fec"]["frames_total"] > 0
 
 
+def test_livebench_hist_strips_and_rate():
+    import time
+    from serdes_sim.livebench import LiveBench
+    b = LiveBench(LinkConfig(**GOOD_LINK))
+    b.start(); time.sleep(2.0); b.stop()
+    s = b.snapshot()
+    h = s["hist"]
+    assert s["records"] > 0
+    # un punto per record, per ogni strip
+    for key in ("ber", "snr_db", "f_ppm", "tau_rms_ui", "q_min", "errors"):
+        assert len(h[key]) == min(s["records"], 240), key
+    assert all(v is None or v > 0 for v in h["snr_db"])
+    if s["records"] >= 2:
+        assert s["records_per_s"] and s["records_per_s"] > 0
+
+
 def test_s4p_mixed_mode():
     # s4p sintetico: solo trasmissione differenziale ideale fra le coppie
     # (1,3)→(2,4): S21=S43=0.5, S23=S41=-0.25 → SDD21=0.75, SCD21=0.25? no:
@@ -518,18 +534,62 @@ def test_jitter_transfer_tracks_low_freq():
 
 def test_anlt_resolution_and_lt_protocol():
     from serdes_sim.engine import anlt_session
-    out = anlt_session(LinkConfig(**GOOD_LINK), lt_rounds=2)
+    out = anlt_session(LinkConfig(**GOOD_LINK), lt_rounds=2, lt_step=0.03)
     res = out["an"]["resolution"]
     assert res["hcd"] == "A18"          # 112G/lane PAM4 → 400GBASE-KR4/CR4
     assert "RS(544,514)" in res["fec"]
     states = [t["state"] for t in out["an"]["timeline"]]
     assert states[0] == "AN_ENABLE" and states[-1] == "AN_GOOD"
     lt = out["lt"]
-    assert lt["frames"][0]["request"] == "preset 1"
+    # rigore: il verdetto esiste solo con CDR agganciato e occhio aperto
+    assert lt["cdr_locked"] and lt["eye_open"]
+    assert lt["q_after"] > 0
+    assert lt["frames"][0]["request"].startswith("preset 1")
     assert lt["frames"][-1]["request"] == "local receiver ready"
-    assert lt["snr_after_db"] >= lt["snr_before_db"] - 1e-9
-    assert all(f["status"] in ("updated", "not_updated", "at_limit", "ready")
-               for f in lt["frames"])
+    assert all(f["status"] in ("updated", "not_updated", "at_limit",
+                               "ready", "no lock") for f in lt["frames"])
+    assert len(lt["taps_after"]) == 5   # il training lavora sul FIR a 5 tap
+
+
+def test_anlt_brings_up_dead_link():
+    """Config reale trovata sul banco: IL 20 dB + CTLE spenta = CDR mai
+    agganciato. L'LT rigoroso (preset 2/3 a 5 tap + metrica di apertura)
+    deve fare il bring-up: CDR LOCKED e occhio aperto."""
+    from serdes_sim.engine import anlt_session
+    dead = LinkConfig(tx_ffe_taps=(-0.08, 1.0, -0.08),
+                      channel_il_nyquist_db=20.0, return_loss_db=12.0,
+                      ctle_zeros_hz=(), ctle_poles_hz=())
+    assert not simulate(dead, seed=1101, depth="light").link_up
+    out = anlt_session(dead, lt_rounds=2, lt_step=0.03)
+    lt = out["lt"]
+    assert lt["cdr_locked"] and lt["eye_open"]
+    assert out["cfg_after"].validate() == []
+
+
+def test_tx_fir_five_taps_valid_and_effective():
+    c3 = LinkConfig(**GOOD_LINK)
+    c5 = c3.with_updates(tx_ffe_taps=(0.0, -0.08, 1.0, -0.08, 0.0))
+    assert c5.validate() == []
+    assert LinkConfig(tx_ffe_taps=(1.0, 0.0)).validate() != []
+    r3 = simulate(c3, seed=7, depth="light")
+    r5 = simulate(c5, seed=7, depth="light")
+    # stesso FIR imbottito di zeri = stessa risposta (main resta centrato)
+    assert abs(r3.ber_post_dfe - r5.ber_post_dfe) < 1e-12
+
+
+def test_eye_measures_eh_at_ber_and_jitter_tailfit():
+    from labpro import paneldata
+    cfg = LinkConfig(**GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    m = paneldata.eye_measures(sim, cfg, node="vctle")
+    assert "eh_at_ber" in m and len(m["eh_at_ber"]["2.4e-4"]) == 3
+    # l'EH estrapolata a BER più severa è sempre più piccola
+    for h4, h6 in zip(m["eh_at_ber"]["2.4e-4"], m["eh_at_ber"]["1e-6"]):
+        assert h6 < h4
+    jp = paneldata.jitter_panel(sim, cfg, node="vctle")
+    tf = jp["tail_fit"]
+    assert tf is not None and tf["rj_ps"] >= 0
+    assert tf["tj_1e12_ps"] >= tf["tj_2p4e4_ps"]
 
 
 def test_anlt_no_common_ability():

@@ -143,7 +143,7 @@ function hashCfg(cfg) {
 
 function tickTopbar() {
   const a = S.acc; if (!a) return;
-  $("#tb-records").textContent = a.records;
+  $("#tb-records").textContent = a.records + (S.running && a.records_per_s ? " · " + fix(a.records_per_s, 1) + "/s" : "");
   $("#tb-bits").textContent = eng(a.bits_total) + "b";
   const ci = a.ber_ci95 || [null, null];
   $("#tb-ber").textContent = a.bits_total ? sci(a.ber_cum) : "—";
@@ -174,6 +174,26 @@ function connectWS() {
     if (m.type === "run") { S.running = m.running; tickTopbar(); }
   };
   ws.onclose = () => { $("#conn-banner").classList.remove("hidden"); setTimeout(connectWS, 1500); };
+}
+// in RUN i pannelli si aggiornano a cadenza record (~0.9 s), da fermi
+// restano alla cadenza lenta originale (nessun lavoro inutile)
+function throttled(p, ms) {
+  const now = Date.now();
+  const lim = S.running ? Math.min(ms, 900) : ms;
+  if (now - (p.lastFetch || 0) > lim) { p.lastFetch = now; return true; }
+  return false;
+}
+// badge LIVE/REF nell'header del pannello: dichiara da quale record arrivano i dati
+function acqBadge(p, d) {
+  const a2 = d && d._acquisition; if (!a2 || !p.head) return;
+  if (!p.acqEl) {
+    p.acqEl = CE("span", "acq-badge");
+    const sp = p.head.querySelector(".spacer");
+    if (sp) p.head.insertBefore(p.acqEl, sp); else p.head.appendChild(p.acqEl);
+  }
+  const live = a2.source === "live";
+  p.acqEl.textContent = live ? `LIVE #${a2.records}` : (a2.source === "static" ? "" : "REF");
+  p.acqEl.classList.toggle("on", live);
 }
 function notify(kind) {
   for (const p of S.panels) {
@@ -514,7 +534,7 @@ PANEL_DEFS.chain = {
       ["nel percorso: post-FEC", "fdec"], ["LINK DOWN", "slc"],
       ["GMI", "slc"]];
     try {
-      const d = await GET("/api/panel/checks");
+      const d = await GET("/api/panel/checks"); acqBadge(p, d);
       const bad = {};
       for (const c of d.checks) {
         if (c.status !== "FAIL") continue;
@@ -539,6 +559,7 @@ PANEL_DEFS.chain = {
         : `<span class="ok">● ${L("tutti i checkpoint della catena PASS", "all chain checkpoints PASS")}</span>`;
     } catch (e) { /* pannello checks non disponibile: nessun colore */ }
   },
+  onTick(p) { if (throttled(p, 2000)) this.refetch(p); },
 };
 
 /* --- scope DCA --- */
@@ -788,6 +809,7 @@ PANEL_DEFS.scope = {
       const eyes = ["basso", "medio", "alto"].slice(0, m.eye_heights.length);
       items.push({ l: L("allineamento", "alignment"), v: tr(d.align), sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: L("il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo", "the DCA auto-centers on maximum opening; the offset shows where the CDR samples relative to the optimum") });
       m.eye_heights.forEach((h, i) => items.push({ l: `eye ${eyes[i]} H/W`, v: `${fix(h, 3)} / ${fix(m.eye_widths_ui[i], 2)} UI`, cls: h > 0 ? "" : "fail", title: L("height p1–p99 al centro strumento / larghezza a p1-p99 (frazione UI)", "p1–p99 height at instrument center / p1–p99 width (UI fraction)") }));
+      if (m.eh_at_ber) items.push({ l: "EH@2.4e-4", v: m.eh_at_ber["2.4e-4"].map(h => fix(h, 3)).join(" · "), cls: Math.min(...m.eh_at_ber["2.4e-4"]) > 0 ? "" : "fail", sub: `EH@1e-6 ${m.eh_at_ber["1e-6"].map(h => fix(h, 3)).join(" · ")}`, title: L("eye height estrapolata a BER target con code gaussiane (Q-scale, come l'eye mode di un DCA); l'ISI multimodale può chiudere prima", "eye height extrapolated to target BER with Gaussian tails (Q-scale, like a DCA eye mode); multimodal ISI may close earlier") });
       items.push({ l: "Q per occhio", v: m.q_per_eye.map(q => fix(q, 1)).join(" · ") });
       if (m.t_rise_ps != null) items.push({ l: "rise/fall 20-80", v: `${fix(m.t_rise_ps, 1)} / ${fix(m.t_fall_ps, 1)} ps` });
       if (m.rlm_proxy != null) items.push({ l: "RLM proxy", v: fix(m.rlm_proxy, 3) });
@@ -807,6 +829,7 @@ PANEL_DEFS.scope = {
       m.eye_widths_ui.forEach((w2, i) => track("W " + eyesN[i], w2));
       m.q_per_eye.forEach((q, i) => track("Q " + eyesN[i], q));
       if (m.t_rise_ps != null) { track("rise ps", m.t_rise_ps); track("fall ps", m.t_fall_ps); }
+      if (m.eh_at_ber) m.eh_at_ber["2.4e-4"].forEach((h, i) => track("EH@2.4e-4 " + eyesN[i], h));
       const srows = Object.entries(p.stats).map(([k2, st]) => {
         const mean = st.sum / st.n, sd = Math.sqrt(Math.max(st.sum2 / st.n - mean * mean, 0));
         return `<tr><td>${k2}</td><td>${fix(st.cur, 3)}</td><td>${fix(st.min, 3)}</td><td>${fix(st.max, 3)}</td><td>${fix(mean, 3)}</td><td>${fix(sd, 4)}</td><td>${st.n}</td></tr>`;
@@ -817,7 +840,7 @@ PANEL_DEFS.scope = {
     } catch (e) { p.measHost.innerHTML = `<div class="note w">${e.message}</div>`; }
   },
   onConfig(p) { if (p.fillAux) p.fillAux(); this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 1800) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1800)) this.refetch(p); },
 };
 
 /* --- spettro --- */
@@ -832,7 +855,7 @@ PANEL_DEFS.spectrum = {
   },
   async refetch(p) {
     if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
-    const d = await GET(`/api/panel/spectrum?node=${p.node}&source=${S.running ? "live" : "auto"}`);
+    const d = await GET(`/api/panel/spectrum?node=${p.node}&source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
     const traces = [{ x: d.f_ghz, y: d.psd_db, name: d.label, line: { color: COL.el, width: 1.2 } }];
     if (d.model_db) traces.push({ x: d.f_ghz, y: d.model_db, name: "floor noise budget", line: { color: COL.am, dash: "dash", width: 1.6 } });
     const layout = PL({ height: 280, shapes: [vline(d.nyquist_ghz)] });
@@ -842,7 +865,7 @@ PANEL_DEFS.spectrum = {
     p.info.textContent = `Welch/Hann · RBW ${fix(d.rbw_mhz, 1)} MHz · PSD one-sided`;
   },
   onConfig(p) { this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 2500) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 2500)) this.refetch(p); },
 };
 
 /* --- CTLE dedicato --- */
@@ -887,7 +910,7 @@ PANEL_DEFS.ctle = {
     this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET("/api/panel/ctle");
+    const d = await GET("/api/panel/ctle"); acqBadge(p, d);
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
       { l: "peaking", v: fix(d.peaking_db, 1) + " dB", sub: "@ " + fix(d.f_peak_ghz, 0) + " GHz" },
@@ -1013,7 +1036,7 @@ PANEL_DEFS.jitter = {
     try {
       if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
       const requestSeq = ++p.fetchSeq;
-      const d = await GET(`/api/panel/jitter?node=${p.node}&source=${S.running ? "live" : "auto"}&_=${Date.now()}`);
+      const d = await GET(`/api/panel/jitter?node=${p.node}&source=${S.running ? "live" : "auto"}&_=${Date.now()}`); acqBadge(p, d);
       if (requestSeq !== p.fetchSeq || !p.el.isConnected) return;
       const aq = d._acquisition || {};
       if (aq.seed !== p.lastSeed) {
@@ -1031,6 +1054,12 @@ PANEL_DEFS.jitter = {
         { l: "TIE pk-pk", v: fix(d.tie_pp_ps, 2) + " ps" },
         { l: "RJ est.", v: fix(d.rj_est_ps, 2) + " ps", sub: "iniettato " + fix(d.injected.rj_fs / 1000, 2) + " ps", title: "stima dual-Dirac grezza: include il DDJ del pattern" },
         { l: "DJ est.", v: fix(d.dj_est_ps, 2) + " ps pp", sub: "PJ inj " + fix(d.injected.pj_ui * d.ui_ps, 2) + " ps · DCD " + fix(d.injected.dcd_pct / 100 * d.ui_ps, 2) + " ps" },
+        ...(d.tail_fit ? [
+          { l: "RJ tail-fit", v: fix(d.tail_fit.rj_ps, 3) + " ps", sub: `σL ${fix(d.tail_fit.sigma_left_ps, 3)} · σR ${fix(d.tail_fit.sigma_right_ps, 3)}`, title: L("fit Q-scale delle code della CDF del TIE (dual-Dirac): pendenza = σ del RJ", "Q-scale fit of the TIE CDF tails (dual-Dirac): slope = RJ σ") },
+          { l: "DJ(δδ)", v: fix(d.tail_fit.dj_dd_ps, 2) + " ps", sub: "dual-Dirac", title: L("distanza fra le due Dirac equivalenti (intercette del fit)", "distance between the two equivalent Diracs (fit intercepts)") },
+          { l: "TJ@1e-12", v: fix(d.tail_fit.tj_1e12_ps, 2) + " ps", sub: `TJ@2.4e-4 ${fix(d.tail_fit.tj_2p4e4_ps, 2)} ps`, title: "TJ(BER) = DJ(δδ) + 2·Q(BER)·RJ" },
+          { l: "EW@2.4e-4", v: fix(d.tail_fit.ew_2p4e4_ui, 3) + " UI", cls: d.tail_fit.ew_2p4e4_ui > 0 ? "" : "fail", sub: L("apertura orizzontale alla soglia FEC", "horizontal opening at the FEC threshold") },
+        ] : []),
       ]));
       const lw = PL({ height: 145, showlegend: false });
       mergeAxis(lw, "xaxis", { title: { text: L("posizione crossing [UI]", "crossing position [UI]"), font: { size: 9 } } });
@@ -1065,7 +1094,7 @@ PANEL_DEFS.jitter = {
     } catch (e) { p.note.innerHTML = e.message; }
   },
   onConfig(p) { p.history = []; p.lastSeed = null; this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 1200) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1200)) this.refetch(p); },
 };
 
 /* --- BER live --- */
@@ -1094,7 +1123,11 @@ PANEL_DEFS.berlive = {
     const lay = PL({ height: 150, showlegend: false });
     mergeAxis(lay, "yaxis", { type: "log", title: { text: "BER cum.", font: { size: 9 } } });
     mergeAxis(lay, "xaxis", { title: { text: "record", font: { size: 9 } } });
-    plot(p.trend, [{ y: a.ber_history, line: { color: COL.dg, width: 1.5 } }], lay);
+    const hb = (a.hist && a.hist.ber) || [];
+    plot(p.trend, [
+      { y: a.ber_history, name: "cum", line: { color: COL.dg, width: 1.5 } },
+      { y: hb, name: "inst", mode: "markers", marker: { color: COL.am, size: 3 } },
+    ], lay);
   },
 };
 
@@ -1103,7 +1136,7 @@ PANEL_DEFS.stimulus = {
   title: "PPG — pattern e modulazione", size: "s6",
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/stimulus");
+    const d = await GET("/api/panel/stimulus"); acqBadge(p, d);
     const lay = PL({ height: 210, showlegend: false });
     mergeAxis(lay, "xaxis", { title: { text: "simbolo", font: { size: 10 } } });
     plot(p.plotEl, [{ y: d.symbols, line: { shape: "hv", color: COL.dg } }], lay);
@@ -1116,20 +1149,37 @@ PANEL_DEFS.tx = {
   make(p) {
     p.body.innerHTML = "";
     p.ffe = CE("div", "params");
-    ["pre", "main", "post"].forEach((name, i) => {
-      const w = CE("div", "param"); w.dataset.ffe = i;
-      const lims = [[-0.35, 0], [0.5, 1.2], [-0.35, 0]][i];
-      const lab = CE("label", "", `<span>FFE ${name}</span><b>${fix(S.cfg.tx_ffe_taps[i], 2)}</b>`);
-      const rng = CE("input"); rng.type = "range"; rng.min = lims[0]; rng.max = lims[1]; rng.step = 0.01; rng.value = S.cfg.tx_ffe_taps[i];
-      rng.oninput = () => { lab.querySelector("b").textContent = fix(+rng.value, 2);
-        const taps = [...S.cfg.tx_ffe_taps]; taps[i] = +rng.value; postConfig({ tx_ffe_taps: taps }); };
-      w.append(lab, rng); p.ffe.appendChild(w);
-    });
+    // FIR TX a N tap (3/5/7, main al centro): la stessa struttura che il
+    // link training negozia via richieste inc/dec (Clause 72/136)
+    p.buildFfe = () => {
+      p.ffe.innerHTML = "";
+      const taps = S.cfg.tx_ffe_taps, main = (taps.length - 1) / 2;
+      taps.forEach((v, i) => {
+        const w = CE("div", "param"); w.dataset.ffe = i;
+        const name = i === main ? "c(0) main" : `c(${i - main > 0 ? "+" : ""}${i - main})`;
+        const lims = i === main ? [0.5, 1.2] : [-0.35, 0.15];
+        const lab = CE("label", "", `<span>TX FIR ${name}</span><b>${fix(v, 2)}</b>`);
+        const rng = CE("input"); rng.type = "range"; rng.min = lims[0]; rng.max = lims[1]; rng.step = 0.01; rng.value = v;
+        rng.oninput = () => { lab.querySelector("b").textContent = fix(+rng.value, 2);
+          const t2 = [...S.cfg.tx_ffe_taps]; t2[i] = +rng.value; postConfig({ tx_ffe_taps: t2 }); };
+        w.append(lab, rng); p.ffe.appendChild(w);
+      });
+      const w2 = CE("div", "param");
+      const tog = CE("button", "btn", taps.length === 3 ? "3 → 5 tap (c±2)" : "5 → 3 tap");
+      tog.title = L("numero di tap del FIR TX: a 5 tap l'LT può equalizzare canali più duri", "TX FIR tap count: with 5 taps LT can equalize harder channels");
+      tog.onclick = () => {
+        const t2 = [...S.cfg.tx_ffe_taps];
+        postConfig({ tx_ffe_taps: t2.length === 3 ? [0, t2[0], t2[1], t2[2], 0] : [t2[1], t2[2], t2[3]] });
+      };
+      w2.appendChild(tog); p.ffe.appendChild(w2);
+    };
+    p.buildFfe();
     p.body.appendChild(p.ffe);
     p.body.appendChild(paramsBlock(["dac_bits", "dac_bw_hz", "dac_full_scale_vpp", "driver_gain_v_per_unit", "driver_bw_hz", "driver_clip_v", "causal_filters"]));
     p.body.appendChild(CE("div", "note w", L("Il clipping del driver è non invertibile: nessun equalizzatore a valle ricostruisce i picchi tagliati.", "Driver clipping is non-invertible: no downstream equalizer can rebuild the clipped peaks.")));
   },
   onConfig(p) { syncParams(p.body);
+    if (p.ffe.querySelectorAll("[data-ffe]").length !== S.cfg.tx_ffe_taps.length) { p.buildFfe(); return; }
     for (const w of p.ffe.querySelectorAll("[data-ffe]")) { const i = +w.dataset.ffe; const r = w.querySelector("input");
       if (document.activeElement !== r) { r.value = S.cfg.tx_ffe_taps[i]; w.querySelector("label b").textContent = fix(S.cfg.tx_ffe_taps[i], 2); } } },
 };
@@ -1157,7 +1207,7 @@ PANEL_DEFS.channel = {
     this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET("/api/panel/channel");
+    const d = await GET("/api/panel/channel"); acqBadge(p, d);
     p.src.innerHTML = `<div class="note">Canale attivo: <b>${d.source}</b></div>`;
     const l1 = PL({ height: 190, showlegend: false, shapes: [vline(d.nyquist_ghz)] });
     mergeAxis(l1, "xaxis", { title: { text: "GHz", font: { size: 10 } } });
@@ -1195,7 +1245,7 @@ PANEL_DEFS.optical = {
     this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET(`/api/panel/optical?source=${S.running ? "live" : "auto"}`);
+    const d = await GET(`/api/panel/optical?source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
     if (d.inactive) { p.ro.innerHTML = `<div class="note w">${d.reason}</div>`; p.plot1.innerHTML = p.plot2.innerHTML = p.plot3.innerHTML = p.plot4.innerHTML = ""; p.note.innerHTML = ""; return; }
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
@@ -1252,13 +1302,14 @@ PANEL_DEFS.optical = {
     plot(p.plot4, tr4, l4);
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.adc = {
   title: "ADC interleaved", size: "s6",
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); p.tbl = CE("div"); p.body.appendChild(p.tbl); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/adc");
+    const d = await GET("/api/panel/adc"); acqBadge(p, d);
     if (d.tone_f_ghz) {
       const lay = PL({ height: 220, shapes: (d.lines_ghz || []).map(x => vline(x, COL.fail, "dot")) });
       mergeAxis(lay, "yaxis", { range: [-110, 5], title: { text: "dBFS", font: { size: 10 } } });
@@ -1286,6 +1337,7 @@ PANEL_DEFS.timing = {
     p.plot3 = CE("div", "plot"); p.plot4 = CE("div", "plot");
     g.append(p.plot1, p.plot2, p.plot3, p.plot4);
     p.body.appendChild(g);
+    p.strip = CE("div", "plot"); p.body.appendChild(p.strip);
     const bar = CE("div", "scope-bar");
     const btnJtf = CE("button", "btn btn-accent", L("Misura jitter transfer (~3 s)", "Measure jitter transfer (~3 s)"));
     btnJtf.onclick = async () => {
@@ -1307,7 +1359,7 @@ PANEL_DEFS.timing = {
     this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET("/api/panel/timing");
+    const d = await GET("/api/panel/timing"); acqBadge(p, d);
     p.ro.innerHTML = "";
     if (d.cdr) {
       const c = d.cdr;
@@ -1364,30 +1416,43 @@ PANEL_DEFS.timing = {
     }
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
+  drawStrip(p) {
+    const a = S.acc; if (!a || !a.hist || !p.strip) return;
+    const lay = PL({ height: 130, showlegend: false, yaxis2: { overlaying: "y", side: "right", title: { text: "\u03c3(\u03c4) [mUI]", font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+    mergeAxis(lay, "xaxis", { title: { text: L("record \u2014 CDR nel tempo (acquisizione)", "record \u2014 CDR over time (acquisition)"), font: { size: 9 } } });
+    mergeAxis(lay, "yaxis", { title: { text: "\u0394f [ppm]", font: { size: 9 } } });
+    plot(p.strip, [
+      { y: a.hist.f_ppm, name: "\u0394f", line: { color: COL.am, width: 1.2 } },
+      { y: a.hist.tau_rms_ui.map(v => v == null ? null : v * 1000), name: "\u03c3(\u03c4)", yaxis: "y2", line: { color: COL.dg, width: 1.2 } },
+    ], lay);
+  },
+  onTick(p) { this.drawStrip(p); if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.eq = {
-  title: "Equalizzazione — FSE + DFE", size: "s6",
+  title: "Equalizzazione — RX FFE (FSE T/2) + DFE", size: "s6",
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["fse_taps", "dfe_taps", "training_start", "training_stop"])); p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1); p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/eq");
+    const d = await GET("/api/panel/eq"); acqBadge(p, d);
     if (d.link_down) { p.plot1.innerHTML = `<div class="note w">${L("LINK DOWN: nessun equalizzatore adattato.", "LINK DOWN: no equalizer adapted.")}</div>`; p.plot2.innerHTML = ""; return; }
     const l1 = PL({ height: 190 });
     mergeAxis(l1, "xaxis", { title: { text: "posizione [UI]", font: { size: 10 } } });
     plot(p.plot1, [
-      { x: d.fse_pos_ui, y: d.fse_taps, name: "FSE (0.5 UI)", type: "bar", marker: { color: COL.dg } },
+      { x: d.fse_pos_ui, y: d.fse_taps, name: "RX FFE · FSE T/2", type: "bar", marker: { color: COL.dg } },
       { x: d.dfe_taps.map((_, i) => i + 1), y: d.dfe_taps, name: "DFE postcursor", type: "bar", marker: { color: COL.am } }], l1);
     const rows = d.ber_rows.map(r => `<tr><td>${r.stage}</td><td>${sci(r.BER)}</td><td>${r.bit_errors}/${r.bits}</td></tr>`).join("");
-    p.plot2.innerHTML = `<table class="mini"><tr><th>stadio</th><th>BER</th><th>errori</th></tr>${rows}</table>`;
+    p.plot2.innerHTML = `<table class="mini"><tr><th>stadio</th><th>BER</th><th>errori</th></tr>${rows}</table>` +
+      `<div class="note">${L("Partizione classica dell'equalizzazione SerDes: <b>TX FIR</b> (pre-enfasi, negoziata dall'LT) → CTLE analogica → <b>RX FFE</b> = questo FSE T/2 adattato NLMS (ISI pre-cursore, amplifica anche il rumore) → <b>DFE</b> (post-cursore dai simboli decisi, senza noise enhancement ma con error propagation).", "The classic SerDes equalization split: <b>TX FIR</b> (pre-emphasis, negotiated by LT) → analog CTLE → <b>RX FFE</b> = this NLMS-adapted T/2 FSE (pre-cursor ISI, also amplifies noise) → <b>DFE</b> (post-cursor from decided symbols, no noise enhancement but error propagation).")}</div>`;
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.decisions = {
   title: "Decisioni — istogrammi e confusion", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.ro = CE("div"); p.body.appendChild(p.ro); p.plotH = CE("div", "plot"); p.body.appendChild(p.plotH); p.plotC = CE("div", "plot"); p.body.appendChild(p.plotC); this.refetch(p); },
+  make(p) { p.body.innerHTML = ""; p.ro = CE("div"); p.body.appendChild(p.ro); p.strip = CE("div", "plot"); p.body.appendChild(p.strip); p.plotH = CE("div", "plot"); p.body.appendChild(p.plotH); p.plotC = CE("div", "plot"); p.body.appendChild(p.plotC); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/decisions");
+    const d = await GET("/api/panel/decisions"); acqBadge(p, d);
     if (d.link_down) { p.ro.innerHTML = ""; p.ro.appendChild(readout([{ l: "LINK", v: "DOWN", cls: "fail", big: true, sub: "nessuna decisione senza lock" }])); p.plotH.innerHTML = ""; p.plotC.innerHTML = ""; return; }
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
@@ -1406,13 +1471,24 @@ PANEL_DEFS.decisions = {
     plot(p.plotC, [{ z: d.confusion.map(r => r.map(v => Math.log10(Math.max(v, 0.5)))), x: d.levels.map(v => fix(v, 2)), y: d.levels.map(v => fix(v, 2)), type: "heatmap", colorscale: [[0, "#0B1117"], [1, COL.fail]], showscale: false }], l2);
   },
   onConfig(p) { this.refetch(p); },
+  drawStrip(p) {
+    const a = S.acc; if (!a || !a.hist || !p.strip) return;
+    const lay = PL({ height: 130, showlegend: false, yaxis2: { overlaying: "y", side: "right", title: { text: "Q min", font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+    mergeAxis(lay, "xaxis", { title: { text: L("record \u2014 SNR nel tempo (acquisizione)", "record \u2014 SNR over time (acquisition)"), font: { size: 9 } } });
+    mergeAxis(lay, "yaxis", { title: { text: "SNR slicer [dB]", font: { size: 9 } } });
+    plot(p.strip, [
+      { y: a.hist.snr_db, name: "SNR", line: { color: COL.dg, width: 1.2 } },
+      { y: a.hist.q_min, name: "Q min", yaxis: "y2", line: { color: COL.am, width: 1.2 } },
+    ], lay);
+  },
+  onTick(p) { this.drawStrip(p); if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.standards = {
   title: "Standard IEEE / OIF", size: "s8",
   make(p) { p.body.innerHTML = ""; p.host = CE("div"); p.body.appendChild(p.host); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/standards");
+    const d = await GET("/api/panel/standards"); acqBadge(p, d);
     p.host.innerHTML = "";
     const items = [
       { l: L("corsia", "lane"), v: fix(d.gbd, 3) + " GBd", sub: d.modulation + " · " + fix(d.lane_gbs, 1) + " Gb/s" },
@@ -1472,7 +1548,7 @@ PANEL_DEFS.education = {
     this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET("/api/panel/education");
+    const d = await GET("/api/panel/education"); acqBadge(p, d);
     p.topics = d.topics || [];
     p.sel.innerHTML = "";
     for (const t of p.topics) { const o = CE("option"); o.value = t.id; o.textContent = t.title[LANG] || t.title.it; p.sel.appendChild(o); }
@@ -1505,11 +1581,12 @@ PANEL_DEFS.checks = {
   title: "Checkpoint & ledger", size: "s4",
   make(p) { p.body.innerHTML = ""; p.host = CE("div"); p.body.appendChild(p.host); this.refetch(p); },
   async refetch(p) {
-    const d = await GET("/api/panel/checks");
+    const d = await GET("/api/panel/checks"); acqBadge(p, d);
     const rows = d.checks.map(c => `<tr><td><span class="badge ${c.status === "PASS" ? "ok" : "fail"}">${c.status === "PASS" ? "✓" : "✗"}</span></td><td>${tr(c.check)}<br><span style="color:var(--muted)">${tr(c.detail || "")}</span></td></tr>`).join("");
     p.host.innerHTML = `<table class="mini">${rows}</table>`;
   },
   onConfig(p) { this.refetch(p); },
+  onTick(p) { if (throttled(p, 2500)) this.refetch(p); },
 };
 
 PANEL_DEFS.rxfe = {
@@ -1526,7 +1603,7 @@ PANEL_DEFS.pd = {
     p.ro = CE("div"); p.plotEl = CE("div", "plot"); p.body.append(p.ro, p.plotEl); this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET(`/api/panel/pd?source=${S.running ? "live" : "auto"}`); p.ro.innerHTML = "";
+    const d = await GET(`/api/panel/pd?source=${S.running ? "live" : "auto"}`); acqBadge(p, d); p.ro.innerHTML = "";
     if (d.inactive) { p.ro.appendChild(CE("div", "note w", d.reason)); p.plotEl.innerHTML = ""; return; }
     p.ro.appendChild(readout([
       { l: "P input", v: fix(d.input_dbm, 2) + " dBm" },
@@ -1542,7 +1619,7 @@ PANEL_DEFS.pd = {
       { x: d.t_ui, y: d.noisy_ma, name: L("segnale + rumore", "signal + noise"), line: { color: COL.el, width: 1 } }], lay);
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - (p.lastFetch || 0) > 1600) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.tia = {
@@ -1553,7 +1630,7 @@ PANEL_DEFS.tia = {
     p.ro = CE("div"); p.plotT = CE("div", "plot"); p.plotH = CE("div", "plot"); p.body.append(p.ro, p.plotT, p.plotH); this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET(`/api/panel/tia?source=${S.running ? "live" : "auto"}`); p.ro.innerHTML = "";
+    const d = await GET(`/api/panel/tia?source=${S.running ? "live" : "auto"}`); acqBadge(p, d); p.ro.innerHTML = "";
     p.ro.appendChild(readout([
       { l: d.medium === "optical" ? "TIA ZT" : "AFE", v: d.transimpedance_ohm ? eng(d.transimpedance_ohm) + "Ω" : L("voltage input", "voltage input") },
       { l: "BW / ENBW", v: `${fix(d.bandwidth_ghz, 1)} / ${fix(d.enbw_ghz, 1)} GHz` },
@@ -1570,7 +1647,7 @@ PANEL_DEFS.tia = {
     plot(p.plotH, [{ x: d.f_ghz, y: d.response_db, line: { color: COL.am } }], lh);
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - (p.lastFetch || 0) > 1600) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.agc = {
@@ -1580,7 +1657,7 @@ PANEL_DEFS.agc = {
     p.ro = CE("div"); p.plotEl = CE("div", "plot"); p.body.append(p.ro, p.plotEl); this.refetch(p);
   },
   async refetch(p) {
-    const d = await GET(`/api/panel/agc?source=${S.running ? "live" : "auto"}`); p.ro.innerHTML = "";
+    const d = await GET(`/api/panel/agc?source=${S.running ? "live" : "auto"}`); acqBadge(p, d); p.ro.innerHTML = "";
     p.ro.appendChild(readout([
       { l: "gain", v: fix(d.gain_db, 2) + " dB", sub: "×" + fix(d.gain, 2) },
       { l: "RMS in → out", v: `${fix(d.input_rms_v, 3)} → ${fix(d.output_rms_v, 3)} V`, sub: `target ${fix(d.target_rms_v, 3)} V` },
@@ -1594,7 +1671,7 @@ PANEL_DEFS.agc = {
       { x: d.t_ui, y: d.vout, name: L("uscita AGC", "AGC output"), line: { color: COL.ok } }], lay);
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - (p.lastFetch || 0) > 1600) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 /* --- BERT: error detector + error insertion --- */
@@ -1629,7 +1706,23 @@ PANEL_DEFS.bert = {
       }
     };
     gbar.append(p.gateBtn, CE("span", "", L("target BER:", "target BER:")), p.targetBer, p.gateInfo);
+    // auto-search stile MP1900A: trova la fase di campionamento a BER minima
+    p.autoBtn = CE("button", "btn", L("Auto search fase (~5 s)", "Phase auto search (~5 s)"));
+    p.autoBtn.onclick = async () => {
+      p.autoBtn.disabled = true; p.autoBtn.textContent = L("ricerca…", "searching…");
+      try {
+        const d = await POST("/api/experiment/sweep", { field: "adc_phase_ui", lo: -0.3, hi: 0.3, n: 9 });
+        const ok = d.rows.filter(r => r.link_up);
+        if (!ok.length) throw new Error(L("nessuna fase con link UP", "no phase with link UP"));
+        const best = ok.reduce((a2, b) => (b.BER_FSE_DFE < a2.BER_FSE_DFE ? b : a2));
+        await postConfig({ adc_phase_ui: best.adc_phase_ui });
+        toast(`${L("fase ottima", "best phase")}: ${fix(best.adc_phase_ui, 2)} UI · BER ${sci(best.BER_FSE_DFE)}`);
+      } catch (e) { toast(e.message); }
+      p.autoBtn.disabled = false; p.autoBtn.textContent = L("Auto search fase (~5 s)", "Phase auto search (~5 s)");
+    };
+    gbar.appendChild(p.autoBtn);
     p.body.appendChild(gbar);
+    p.errAn = CE("div"); p.body.appendChild(p.errAn);
     p.body.appendChild(bar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
@@ -1658,6 +1751,11 @@ PANEL_DEFS.bert = {
         p.gateInfo.innerHTML = `${p.gate ? "⏺" : "⏹"} ${eng(g.bits)}b · ${g.errs} err · BER ${g.ber == null ? "—" : sci(g.ber)} · ${fix(g.secs, 0)}s · CL(BER<${sci(g.target, 0)}) ${fix(Math.min(g.cl, 99.9), 1)}%`;
       }
       const d = await GET(`/api/panel/bert?source=${S.running ? "live" : "auto"}`);
+      if (p.errAn && d.error_analysis) {
+        const ea = d.error_analysis;
+        p.errAn.innerHTML = `<table class="mini"><tr><th>${L("analisi errori (ED)", "error analysis (ED)")}</th><th>burst</th><th>${L("isolati", "isolated")}</th><th>max burst</th><th>% in burst</th><th>EFI min/mean</th></tr>` +
+          `<tr><td>${L("gap ≤", "gap ≤")} ${ea.burst_gap_sym} sym</td><td>${ea.n_bursts}</td><td>${ea.n_isolated}</td><td>${ea.max_burst}</td><td>${ea.burst_err_pct == null ? "—" : fix(ea.burst_err_pct, 1)}</td><td>${ea.efi_min_sym ?? "—"} / ${ea.efi_mean_sym == null ? "—" : fix(ea.efi_mean_sym, 0)}</td></tr></table>`;
+      } acqBadge(p, d);
       p.ro.innerHTML = "";
       if (d.link_down) { p.ro.appendChild(readout([{ l: "SYNC", v: "LOSS", cls: "fail", big: true, sub: "pattern lock perso: l'ED non conta" }])); return; }
       const a = S.acc || {};
@@ -1679,7 +1777,7 @@ PANEL_DEFS.bert = {
     } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 1800) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 1800)) this.refetch(p); },
 };
 
 /* --- Ethernet L2 (traffic analyzer) --- */
@@ -1770,11 +1868,11 @@ PANEL_DEFS.anlt = {
   make(p) {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
-    const btn = CE("button", "btn btn-accent", L("Avvia AN + LT (~10 s)", "Run AN + LT (~10 s)"));
+    const btn = CE("button", "btn btn-accent", L("Avvia AN + LT (~15 s)", "Run AN + LT (~15 s)"));
     p.applyChk = CE("input"); p.applyChk.type = "checkbox";
     const lab = CE("label", "", ""); lab.append(p.applyChk, document.createTextNode(L(" applica i tap negoziati", " apply negotiated taps")));
     btn.onclick = async () => {
-      btn.disabled = true; btn.textContent = L("negoziazione…", "negotiating…");
+      btn.disabled = true; btn.textContent = L("negoziazione + training…", "negotiating + training…");
       try {
         const d = await POST("/api/experiment/anlt", { apply: p.applyChk.checked });
         const res = d.an.resolution;
@@ -1783,7 +1881,7 @@ PANEL_DEFS.anlt = {
           { l: "HCD", v: res.hcd_name, big: true, cls: "ok", sub: `${res.lanes}×${res.lane_gbps} Gb/s ${res.modulation}` },
           { l: "FEC", v: tr(res.fec).split(" — ")[0], sub: tr(res.fec) },
           { l: L("abilità comuni", "common abilities"), v: String(res.common.length), sub: res.common.join(" ") },
-          { l: "LT", v: `${fix(d.lt.snr_before_db, 1)}→${fix(d.lt.snr_after_db, 1)} dB`, cls: d.lt.snr_after_db > d.lt.snr_before_db ? "ok" : "", sub: `${d.lt.exchanges} exchange · ${fix(d.lt.duration_us, 0)} µs` + (d.applied ? L(" · applicato", " · applied") : "") },
+          { l: L("LT · occhio", "LT · eye"), v: d.lt.cdr_locked ? `Q ${fix(d.lt.q_after, 2)} σ` : "NO LOCK", cls: d.lt.eye_open ? (d.lt.q_after >= 3 ? "ok" : "warn") : "fail", sub: (d.lt.eye_open ? L("aperto", "open") + (d.lt.q_after < 3 ? L(" (marginale)", " (marginal)") : "") : L("chiuso", "closed")) + ` · BER ${sci(d.lt.ber_after)} · ${d.lt.exchanges} exch · ${fix(d.lt.duration_us, 0)} µs` + (d.applied ? L(" · applicato", " · applied") : ""), title: L("metrica di training: Q minimo fra gli occhi allo slicer (apertura in unità σ), valida solo con CDR agganciato", "training metric: minimum eye Q at the slicer (opening in σ units), valid only with CDR locked") },
         ] : [{ l: "HCD", v: "—", cls: "fail", big: true, sub: tr(res.parallel_detect) }]));
         // pagine base
         const pg = d.an.pages;
@@ -1798,12 +1896,13 @@ PANEL_DEFS.anlt = {
         const fr = d.lt.frames;
         const lay = PL({ height: 190, showlegend: false });
         mergeAxis(lay, "xaxis", { title: { text: L("tempo di training [µs]", "training time [µs]"), font: { size: 9 } } });
-        mergeAxis(lay, "yaxis", { title: { text: "SNR slicer [dB]", font: { size: 9 } } });
-        plot(p.ltPlot, [{ x: fr.map(f => f.t_us), y: fr.map(f => f.snr_db), mode: "lines+markers", line: { color: COL.dg, width: 2, shape: "hv" } }], lay);
-        p.ltTable.innerHTML = `<table class="mini"><tr><th>t [µs]</th><th>coeff</th><th>request</th><th>status</th><th>c(-1)</th><th>c0</th><th>c(+1)</th></tr>` +
-          fr.map(f => `<tr><td>${fix(f.t_us, 0)}</td><td>${f.coeff}</td><td>${f.request}</td><td class="${f.status === "updated" || f.status === "ready" ? "ok" : ""}">${f.status}</td><td>${fix(f.taps[0], 2)}</td><td>${fix(f.taps[1], 2)}</td><td>${fix(f.taps[2], 2)}</td></tr>`).join("") + `</table>`;
+        mergeAxis(lay, "yaxis", { title: { text: L("Q min (apertura occhio) [σ]", "min eye Q [σ]"), font: { size: 9 } } });
+        plot(p.ltPlot, [{ x: fr.map(f => f.t_us), y: fr.map(f => f.q), mode: "lines+markers", line: { color: COL.dg, width: 2, shape: "hv" } }], lay);
+        if (d.lt.rx_notes && d.lt.rx_notes.length) p.ltPlot.insertAdjacentHTML("beforeend", `<div class="note">${d.lt.rx_notes.join(" · ")}</div>`);
+        p.ltTable.innerHTML = `<table class="mini"><tr><th>t [µs]</th><th>coeff</th><th>request</th><th>status</th><th>Q</th><th>taps</th></tr>` +
+          fr.map(f => `<tr><td>${fix(f.t_us, 0)}</td><td>${f.coeff}</td><td>${f.request}</td><td class="${f.status === "updated" || f.status === "ready" ? "ok" : ""}">${f.status}</td><td>${f.q == null ? "—" : fix(f.q, 2)}</td><td>${f.taps.map(t2 => fix(t2, 2)).join(" ")}</td></tr>`).join("") + `</table>`;
       } catch (e) { toast(e.message); }
-      btn.disabled = false; btn.textContent = L("Avvia AN + LT (~10 s)", "Run AN + LT (~10 s)");
+      btn.disabled = false; btn.textContent = L("Avvia AN + LT (~15 s)", "Run AN + LT (~15 s)");
     };
     bar.append(btn, lab);
     p.body.appendChild(bar);
@@ -1862,7 +1961,7 @@ PANEL_DEFS.cmis = {
   },
   async refetch(p) {
     try {
-      const d = await GET(`/api/panel/cmis?source=${S.running ? "live" : "auto"}`);
+      const d = await GET(`/api/panel/cmis?source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
       const lf = d.lane_flags[0];
       const flag = (on, name) => `<span class="badge ${on ? "fail" : "ok"}">${name}: ${on ? "ON" : "off"}</span>`;
       const states = ["ModuleLowPwr", "ModuleReady"];
@@ -1885,7 +1984,7 @@ PANEL_DEFS.cmis = {
     } catch (e) { p.host.innerHTML = `<div class="note w">${e.message}</div>`; }
   },
   onConfig(p) { this.refetch(p); },
-  onTick(p) { const now = Date.now(); if (now - p.lastFetch > 2500) { p.lastFetch = now; this.refetch(p); } },
+  onTick(p) { if (throttled(p, 2500)) this.refetch(p); },
 };
 
 /* --- sweep parametrico integrato --- */
@@ -1987,7 +2086,7 @@ const PALETTE = [
   ["ctle", L("CTLE configurabile", "Configurable CTLE"), "electrical", 3, 4],
   ["adc", "ADC interleaved", "digital", 3, 5],
   ["timing", L("Timing · CDR", "Timing · CDR"), "digital", 3, 6],
-  ["eq", "FSE + DFE", "digital", 3, 7],
+  ["eq", "RX FFE (FSE) + DFE", "digital", 3, 7],
   ["decisions", L("Decisioni · slicer", "Decisions · slicer"), "digital", 3, 8],
   ["scope", "Scope · DCA", "electrical", 4, 0],
   ["jitter", "Jitter · TIE", "digital", 4, 1],
@@ -2028,7 +2127,7 @@ const PANEL_EN = {
   optical: "Optics · MZM / EML · fiber", rxfe: "RX front-end · PD · TIA · AGC",
   pd: "Photodiode · PD", tia: "TIA / electrical AFE", agc: "AGC · gain and headroom",
   ctle: "CTLE · configurable sections", adc: "Interleaved ADC", timing: "Timing · CDR",
-  eq: "FSE + DFE", decisions: "Decisions · slicer", scope: "Scope · DCA",
+  eq: "RX FFE (T/2 FSE) + DFE", decisions: "Decisions · slicer", scope: "Scope · DCA",
   jitter: "Jitter · TIE", spectrum: "Spectrum analyzer", berlive: "Live BER · accumulated",
   bert: "BERT · Error Detector", feclive: "Live FEC · accumulated",
   l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",

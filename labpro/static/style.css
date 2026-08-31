@@ -168,3 +168,7 @@ canvas.scope { width: 100%; display: block; background: #04070A;
   margin-bottom: 8px; background: #080C11; }
 @media (max-width: 760px) { .lesson { grid-template-columns: 1fr; }
   .lesson header { grid-column: 1; } }
+
+.acq-badge { font: 500 9px "IBM Plex Mono", monospace; color: var(--muted, #7e93a2);
+  border: 1px solid rgba(126,147,162,.35); border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
+.acq-badge.on { color: #3ecf8e; border-color: rgba(62,207,142,.5); }

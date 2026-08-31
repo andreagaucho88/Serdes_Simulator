@@ -71,7 +71,8 @@ def broadcast(payload: dict):
 
 def on_record(snapshot):
     if MAIN_LOOP is not None:
-        MAIN_LOOP.add_callback(broadcast, {"type": "tick", "acc": snapshot})
+        MAIN_LOOP.add_callback(broadcast,
+                               {"type": "tick", "acc": paneldata.J(snapshot)})
 
 
 BENCH.on_record = on_record
@@ -292,7 +293,8 @@ class ApiAnlt(Base):
         try:
             out = anlt_session(BENCH.cfg,
                                partner_abilities=body.get("partner_abilities"),
-                               lt_rounds=int(body.get("lt_rounds", 6)))
+                               lt_rounds=int(body.get("lt_rounds", 4)),
+                               lt_step=float(body.get("lt_step", 0.03)))
         finally:
             if was_running and not body.get("apply"):
                 BENCH.start()
@@ -389,7 +391,8 @@ class ApiPanel(Base):
         sim = None
         source_used = "reference"
         if source in ("auto", "live") and name in (
-                "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical"):
+                "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical",
+                "timing", "eq", "decisions", "bert", "checks"):
             sim = live_sim
             if sim is not None and sim.cfg == cfg:
                 source_used = "live"

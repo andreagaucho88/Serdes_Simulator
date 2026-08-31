@@ -69,7 +69,39 @@ class LiveBench:
         # errors (bin 0..40, l'ultimo è overflow ">40") — cresce nel tempo
         self.epf_hist = np.zeros(41, dtype=np.int64)
         self.ber_history = []          # BER cumulativa nel tempo (cap 600)
+        # strip-chart di acquisizione: un punto per record (None = LINK DOWN,
+        # così i pannelli mostrano il buco invece di interpolare)
+        self.hist = {"ber": [], "errors": [], "snr_db": [], "q_min": [],
+                     "f_ppm": [], "tau_rms_ui": []}
+        self._rec_t = []               # timestamp degli ultimi record (rate)
         self.started_at = time.time()
+
+    def _hist_push(self, r, row):
+        h = self.hist
+        if r is None or not r.link_up:
+            for k in h:
+                h[k].append(None)
+        else:
+            h["ber"].append(row["bit_errors"] / max(row["bits"], 1))
+            h["errors"].append(int(row["bit_errors"]))
+            h["snr_db"].append(float(r.snr_dfe["snr_slicer_db"])
+                               if r.snr_dfe else None)
+            h["q_min"].append(float(r.snr_dfe["q_min"])
+                              if r.snr_dfe else None)
+            if r.cdr is not None and len(r.cdr.freq_trace_ppm) > 8:
+                f = np.asarray(r.cdr.freq_trace_ppm, dtype=float)
+                h["f_ppm"].append(float(np.mean(f[-len(f) // 4:])))
+                tau = np.asarray(r.cdr.tau_trace_ui, dtype=float)
+                x = np.arange(len(tau))
+                fit = np.polyval(np.polyfit(x, tau, 1), x)
+                h["tau_rms_ui"].append(float(np.std(tau - fit)))
+            else:
+                h["f_ppm"].append(None)
+                h["tau_rms_ui"].append(None)
+        for k in h:
+            del h[k][:-400]
+        self._rec_t.append(time.time())
+        del self._rec_t[:-30]
 
     def reset_stats(self):
         with self._lock:
@@ -145,6 +177,7 @@ class LiveBench:
                 if not r.link_up:
                     # niente lock CDR/pattern: il record non produce bit validi
                     self.link_down_records += 1
+                    self._hist_push(r, None)
                     snap = self._snapshot_locked()
                     if self.on_record:
                         try:
@@ -194,6 +227,7 @@ class LiveBench:
                     self.l2_records += 1
                 self.ber_history.append(self.ber_cum)
                 del self.ber_history[:-600]
+                self._hist_push(r, row)
                 snap = self._snapshot_locked()
             if self.on_record:
                 try:
@@ -230,6 +264,11 @@ class LiveBench:
             "ser_cum": (self.sym_errors_total / self.sym_total
                         if self.sym_total else float("nan")),
             "ber_history": list(self.ber_history[-240:]),
+            "hist": {k: list(v[-240:]) for k, v in self.hist.items()},
+            "records_per_s": (
+                (len(self._rec_t) - 1) / (self._rec_t[-1] - self._rec_t[0])
+                if len(self._rec_t) >= 2
+                and self._rec_t[-1] > self._rec_t[0] else None),
             "fec": {
                 "in_path": bool(r is not None and r.fec_link is not None),
                 "codec": (r.fec_codec_name if r is not None else ""),

@@ -252,7 +252,20 @@ def eye_measures(sim, cfg, node="vctle"):
 
     ui_ps = 1e12 / cfg.symbol_rate_hz
     tr, tf = edge_time(True), edge_time(False)
+
+    # EH estrapolata a BER target (Q-scale come su un DCA in eye mode):
+    # EH@BER = (μ_b − Q·σ_b) − (μ_a + Q·σ_a) con Q = Φ⁻¹(1−BER).
+    # DICHIARATO: estrapolazione con code gaussiane dei cluster misurati —
+    # l'ISI multimodale reale può chiudere l'occhio prima.
+    from scipy.stats import norm as sp_norm
+    eh_at_ber = {}
+    for blabel, btarget in (("2.4e-4", 2.4e-4), ("1e-6", 1e-6)):
+        qv = float(sp_norm.isf(btarget))
+        eh_at_ber[blabel] = [
+            float((b["mean"] - qv * b["sigma"]) - (a["mean"] + qv * a["sigma"]))
+            for a, b in zip(stats[:-1], stats[1:])]
     out = {"levels": stats, "eye_heights": heights,
+           "eh_at_ber": eh_at_ber,
            "eye_widths_ui": widths, "q_per_eye": qs,
            "thresholds": thresholds, "rlm_proxy": rlm,
            "t_rise_ps": tr * ui_ps if tr else None,
@@ -271,6 +284,39 @@ def eye_measures(sim, cfg, node="vctle"):
 # ---------------------------------------------------------------------------
 # Altri pannelli
 # ---------------------------------------------------------------------------
+
+def _tie_tail_fit(tie_ui, ui_ps):
+    """Tail-fit Q-scale dual-Dirac (come il jitter mode di un DCA):
+    CDF empirica del TIE → asse Q gaussiano → fit lineare delle due code.
+    Pendenza = σ (RJ), intercette = posizione delle due Dirac (DJ δδ).
+    TJ@BER = DJ(δδ) + 2·Q(BER)·RJ. DICHIARATO: servono code campionate
+    (≥400 edge) e il fit assume code gaussiane oltre l'ultimo percentile."""
+    from scipy.stats import norm as sp_norm
+    x = np.sort(np.asarray(tie_ui, dtype=float))
+    n = len(x)
+    if n < 400:
+        return None
+    pcs = (np.arange(n) + 0.5) / n
+    qgrid = sp_norm.ppf(pcs)
+    lo = (pcs > 2.0 / n) & (pcs < 0.08)
+    hi = (pcs > 0.92) & (pcs < 1 - 2.0 / n)
+    if lo.sum() < 12 or hi.sum() < 12:
+        return None
+    sig_l, mu_l = np.polyfit(qgrid[lo], x[lo], 1)
+    sig_r, mu_r = np.polyfit(qgrid[hi], x[hi], 1)
+    rj = 0.5 * (abs(float(sig_l)) + abs(float(sig_r)))
+    dj = max(float(mu_r) - float(mu_l), 0.0)
+    q12 = float(sp_norm.isf(1e-12))
+    q4 = float(sp_norm.isf(2.4e-4))
+    return {
+        "rj_ps": rj * ui_ps, "dj_dd_ps": dj * ui_ps,
+        "sigma_left_ps": abs(float(sig_l)) * ui_ps,
+        "sigma_right_ps": abs(float(sig_r)) * ui_ps,
+        "tj_1e12_ps": (dj + 2 * q12 * rj) * ui_ps,
+        "tj_2p4e4_ps": (dj + 2 * q4 * rj) * ui_ps,
+        "ew_2p4e4_ui": 1.0 - (dj + 2 * q4 * rj),
+    }
+
 
 def jitter_panel(sim, cfg, node="vctle"):
     """TIE ai crossing della soglia media + istogramma + spettro + stime RJ/DJ."""
@@ -305,6 +351,7 @@ def jitter_panel(sim, cfg, node="vctle"):
         "tie_pp_ps": t.tie_pp_ui * ui_ps,
         "rj_est_ps": t.rj_rms_ui_est * ui_ps,
         "dj_est_ps": t.dj_pp_ui_est * ui_ps,
+        "tail_fit": _tie_tail_fit(t.tie_ui, ui_ps),
         "n_edges": t.n_edges,
         "injected": {
             "rj_fs": cfg.tx_rj_rms_fs,
@@ -665,6 +712,37 @@ def decisions_panel(sim, cfg):
     return J(out)
 
 
+def _error_analysis(err_sym):
+    """Analisi errori stile ED (Anritsu): burst vs isolati (gap ≤ 8 simboli
+    = stesso burst, tipico del DFE), error-free intervals."""
+    err = np.sort(np.asarray(err_sym))
+    if len(err) == 0:
+        return {"n_bursts": 0, "n_isolated": 0, "max_burst": 0,
+                "burst_gap_sym": 8, "efi_mean_sym": None, "efi_min_sym": None}
+    gaps = np.diff(err)
+    burst_gap = 8
+    lengths = []
+    cur = 1
+    for g in gaps:
+        if g <= burst_gap:
+            cur += 1
+        else:
+            lengths.append(cur)
+            cur = 1
+    lengths.append(cur)
+    efi = gaps[gaps > burst_gap]
+    return {
+        "burst_gap_sym": burst_gap,
+        "n_bursts": int(sum(1 for v in lengths if v >= 2)),
+        "n_isolated": int(sum(1 for v in lengths if v == 1)),
+        "max_burst": int(max(lengths)),
+        "burst_err_pct": (100.0 * sum(v for v in lengths if v >= 2)
+                          / max(len(err), 1)),
+        "efi_mean_sym": (float(np.mean(efi)) if len(efi) else None),
+        "efi_min_sym": (int(np.min(efi)) if len(efi) else None),
+    }
+
+
 def bert_panel(sim, cfg):
     """Error detector: mappa degli errori sulla validation + inserzioni."""
     if not sim.link_up:
@@ -696,6 +774,7 @@ def bert_panel(sim, cfg):
         "ber": float(np.mean(decided_bits != truth_bits)),
         "ser": float(np.mean(symbol_err)),
         "pattern": cfg.pattern,
+        "error_analysis": _error_analysis(err_val),
         "sync": bool(sim.cdr.pattern_locked) if sim.cdr is not None else True,
         "validation_start": cfg.training_stop + 200,
         "inserted": (sim.err_positions // spec.bits_per_symbol

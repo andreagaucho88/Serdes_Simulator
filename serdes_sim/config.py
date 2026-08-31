@@ -195,6 +195,9 @@ class LinkConfig:
             problems.append("pam4_mapping deve essere gray o binary")
         if self.fec_mode not in ("none", "kp4", "kr4"):
             problems.append("fec_mode deve essere none/kp4/kr4")
+        if len(self.tx_ffe_taps) not in (3, 5, 7):
+            problems.append("tx_ffe_taps: FIR TX a 3, 5 o 7 tap "
+                            "(main cursor al centro)")
         if self.use_s2p_channel and not self.s2p_text.strip():
             problems.append("use_s2p_channel richiede un file S2P caricato")
         zeros = self.ctle_zeros_effective_hz
