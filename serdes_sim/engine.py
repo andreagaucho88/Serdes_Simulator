@@ -976,7 +976,29 @@ def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
     cur = fwd.pop("cfg_final")
     rev.pop("cfg_final")
     rev.pop("frames")               # nel report basta il riassunto
+
+    # HOLDOUT su seed indipendente: il training su un solo seed può
+    # overfittare (osservato: preset 2 vinceva al seed di training e
+    # peggiorava la BER vera del profilo). Come un PHY reale che dopo il
+    # training ri-verifica il frame lock, i coefficienti si accettano solo
+    # se sul seed di verifica non peggiorano la configurazione di partenza.
+    def q_holdout(c):
+        r = simulate(c, seed=seed + 31337, depth="light")
+        locked = r.link_up and (r.cdr is None or r.cdr.locked)
+        return (float(r.snr_dfe["q_min"])
+                if locked and r.snr_dfe is not None else None)
+    q_new = q_holdout(cur)
+    q_old = q_holdout(cfg)
+    holdout_ok = (q_new is not None
+                  and (q_old is None or q_new >= q_old - 0.1))
+    if not holdout_ok:
+        cur = cfg                    # si tengono i valori correnti
+    holdout = {"accepted": bool(holdout_ok),
+               "q_trained": q_new, "q_current": q_old,
+               "verify_seed_note": "seed indipendente dal training"}
+
     lt = {"metric": "q_min (apertura occhio, unità σ)",
+          "holdout": holdout,
           "q_preset": fwd["frames"][0]["q"],
           "taps_before": list(fwd["frames"][0]["taps"]),
           **fwd,

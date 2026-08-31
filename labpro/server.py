@@ -446,9 +446,11 @@ class ApiScope(Base):
             sim = paneldata.ref_sim(cfg)
             source_used = "reference"
         try:
+            rf = self.get_argument("rf", "")
             channels = [paneldata.eye_panel(sim, cfg, node=n,
                                              n_traces=min(int(self.get_argument(
-                                                 "n", "600")), 800))
+                                                 "n", "600")), 800),
+                                             ref_filter=rf)
                         for n in requested]
         except Exception as exc:
             self.set_status(400)

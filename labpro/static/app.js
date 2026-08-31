@@ -613,6 +613,7 @@ PANEL_DEFS.scope = {
       <label><input type="checkbox" data-k="overlay" checked> livelli/soglie</label>
       <label><input type="checkbox" data-k="cursor"> cursore</label>
       <input type="range" min="-90" max="90" value="0" data-k="curpos" style="width:90px" disabled>
+      <select data-k="rf" title="Filtro di misura Bessel-Thomson 4° ordine (ricevitore di riferimento 802.3; TDECQ usa 0.5·Bd)"><option value="">Ref RX off</option><option value="bt4_075">BT4 0.75·Bd</option><option value="bt4_05">BT4 0.5·Bd</option></select>
       <label><input type="checkbox" data-k="mask"> mask</label>
       <input type="range" min="5" max="70" value="30" data-k="maskw" style="width:60px" title="larghezza mask %UI" disabled>
       <input type="range" min="5" max="80" value="40" data-k="maskh" style="width:60px" title="altezza mask %eye" disabled>
@@ -628,6 +629,7 @@ PANEL_DEFS.scope = {
     q("mask").onchange = e => { p.maskOn = e.target.checked; q("maskw").disabled = q("maskh").disabled = !p.maskOn; this.maskCount(p); };
     q("maskw").oninput = e => { p.maskW = +e.target.value; this.maskCount(p); };
     q("maskh").oninput = e => { p.maskH = +e.target.value; this.maskCount(p); };
+    q("rf").onchange = e => { p.refFilter = e.target.value; p.acc.fill(0); this.refetch(p); };
     p.readoutEl = q("readout");
     p.body.appendChild(bar);
     const multi = CE("div", "scope-bar scope-channels");
@@ -859,7 +861,7 @@ PANEL_DEFS.scope = {
       const requestSeq = (p.fetchSeq || 0) + 1; p.fetchSeq = requestSeq;
       if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
       const nodes = [p.node, ...(p.auxNodes || []).filter(Boolean)];
-      const pack = await GET(`/api/scope?nodes=${encodeURIComponent(nodes.join(","))}&n=600&source=${S.running ? "live" : "auto"}&_=${Date.now()}`);
+      const pack = await GET(`/api/scope?nodes=${encodeURIComponent(nodes.join(","))}&n=600&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}&_=${Date.now()}`);
       if (requestSeq !== p.fetchSeq || !p.el.isConnected) return;
       const d = pack.channels[0], aq = pack._acquisition || {};
       p.acqText = `${aq.source || "—"} #${aq.records ?? "—"} seed ${aq.seed ?? "—"} · ${pack.coherent ? "COHERENT" : ""}`;
@@ -889,6 +891,8 @@ PANEL_DEFS.scope = {
       items.push({ l: "Q per occhio", v: m.q_per_eye.map(q => fix(q, 1)).join(" · ") });
       if (m.t_rise_ps != null) items.push({ l: "rise/fall 20-80", v: `${fix(m.t_rise_ps, 1)} / ${fix(m.t_fall_ps, 1)} ps` });
       if (m.rlm_proxy != null) items.push({ l: "RLM proxy", v: fix(m.rlm_proxy, 3) });
+      if (m.sndr_db != null) items.push({ l: "SNDR", v: fix(m.sndr_db, 1) + " dB", sub: L("fit lineare del pulse (stile 120D/162)", "linear pulse fit (120D/162-style)"), title: L("SNDR = p_max²/σ²residuo dopo fit lineare ai centri simbolo: esclude l'ISI lineare come la procedura di clause (spec TX ck ≈ 32.5 dB al driver)", "SNDR = p_max²/σ²residual after a linear fit at symbol centers: excludes linear ISI like the clause procedure (ck TX spec ≈ 32.5 dB at the driver)") });
+      if (m.p_levels_dbm) items.push({ l: "P0..P3", v: m.p_levels_dbm.map(v => fix(v, 1)).join(" · ") + " dBm", sub: `avg ${fix(m.p_avg_dbm, 2)} dBm` });
       if (m.oma_outer_mw != null) { items.push({ l: "OMA outer", v: fix(m.oma_outer_mw, 3) + " mW", cls: "warn" }); items.push({ l: "ER", v: fix(m.er_db, 2) + " dB", cls: "warn" }); }
       // statistiche di misura per acquisizione, stile DCA reale
       const skey = p.node + "|" + hashCfg(S.cfg);
@@ -906,6 +910,7 @@ PANEL_DEFS.scope = {
       m.q_per_eye.forEach((q, i) => track("Q " + eyesN[i], q));
       if (m.t_rise_ps != null) { track("rise ps", m.t_rise_ps); track("fall ps", m.t_fall_ps); }
       if (m.eh_at_ber) m.eh_at_ber["2.4e-4"].forEach((h, i) => track("EH@2.4e-4 " + eyesN[i], h));
+      if (m.sndr_db != null) track("SNDR dB", m.sndr_db);
       const srows = Object.entries(p.stats).map(([k2, st]) => {
         const mean = st.sum / st.n, sd = Math.sqrt(Math.max(st.sum2 / st.n - mean * mean, 0));
         return `<tr><td>${k2}</td><td>${fix(st.cur, 3)}</td><td>${fix(st.min, 3)}</td><td>${fix(st.max, 3)}</td><td>${fix(mean, 3)}</td><td>${fix(sd, 4)}</td><td>${st.n}</td></tr>`;
@@ -1643,11 +1648,11 @@ PANEL_DEFS.instruments = {
     const rows = [
       ["Keysight FlexDCA", "SE P/N + differential/common-mode, simultaneous waveforms", L("implementato: CH A-D coerenti; quick-set P/N/Diff/CM", "implemented: coherent CH A-D; P/N/Diff/CM quick-set"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Channels/channel-elect-diff-setup.htm"],
       ["Keysight FlexDCA", "color-grade eye, mask, levels, rise/fall", L("implementato come misura/proxy LabPro", "implemented as a LabPro measurement/proxy"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Eye-Mask-Mode/Advanced-Eye/a_adv_eye_toolbar.htm"],
-      ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("parziale: TIE, spettro, bathtub empirica; decomposizione avanzata non normativa", "partial: TIE, spectrum, empirical bathtub; advanced decomposition is non-normative"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
-      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("implementato nel path; manca SSPRQ/QPRBS e gating hardware", "implemented in-path; SSPRQ/QPRBS and hardware gating are missing"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
-      ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ/DCD e rumore CM/differenziale implementati; BUJ/SSC mancanti", "RJ/PJ/DCD plus CM/differential noise implemented; BUJ/SSC missing"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
-      ["Xena Valkyrie", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence/size sweep/throughput/loss reali; multi-stream, rate scheduler e latency mancanti", "real frame/FCS/sequence/size sweep/throughput/loss; multi-stream, rate scheduling, and latency missing"), "warn", "https://docs.xenanetworks.com/projects/tdl-xoa-driver/en/latest/api_ref/lli/submodules/ps_commands.html"],
-      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("catalogo e preset contestuali; COM, TDECQ e procedure di clause non implementati", "context catalog and presets; COM, TDECQ, and clause procedures are not implemented"), "fail", "https://www.ieee802.org/3/"],
+      ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4; mancano Jn (J2/J9), decomposizione interferenze e de-embedding", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX; missing Jn (J2/J9), interference decomposition, de-embedding"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
+      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, error analysis burst/EFI; mancano pattern editor e SSPRQ bit-esatto di clause", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, burst/EFI error analysis; missing pattern editor and bit-exact clause SSPRQ"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
+      ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit: RJ 1005/1000 fs, SSC −24.1/−24.1 ppm); rumore CM/differenziale presente; manca la calibrazione assoluta da strumento", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (audit: RJ 1005/1000 fs, SSC −24.1/−24.1 ppm); CM/differential noise present; missing instrument-grade absolute calibration"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
+      ["Xena Valkyrie", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler per stream e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduling, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/tdl-xoa-driver/en/latest/api_ref/lli/submodules/ps_commands.html"],
+      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4 (0.75/0.5·Bd), EH/EW@BER, SNDR con fit lineare, 17 profili verificati (link su e FEC che corregge su tutti); COM e TDECQ con procedura di clause restano non implementati", "BT4 Ref RX (0.75/0.5·Bd), EH/EW@BER, linear-fit SNDR, 17 verified profiles (link up and FEC correcting on all); clause-procedure COM and TDECQ remain unimplemented"), "warn", "https://www.ieee802.org/3/"],
     ];
     p.body.innerHTML = `<div class="note">${L("Matrice derivata dalla documentazione ufficiale. 'Implementato' significa workflow equivalente nel modello LabPro, non emulazione del firmware o certificazione dello strumento.", "Matrix derived from official documentation. 'Implemented' means an equivalent LabPro model workflow, not firmware emulation or instrument certification.")}</div>
       <table class="mini"><tr><th>${L("riferimento", "reference")}</th><th>${L("funzione manuale", "manual workflow")}</th><th>LabPro</th></tr>
@@ -2027,6 +2032,7 @@ PANEL_DEFS.anlt = {
           { l: "HCD", v: res.hcd_name, big: true, cls: "ok", sub: `${res.lanes}×${res.lane_gbps} Gb/s ${res.modulation}` },
           { l: "FEC", v: tr(res.fec).split(" — ")[0], sub: tr(res.fec) },
           { l: L("abilità comuni", "common abilities"), v: String(res.common.length), sub: res.common.join(" ") },
+          ...(d.lt.holdout ? [{ l: "holdout", v: d.lt.holdout.accepted ? "OK" : L("RIFIUTATO", "REJECTED"), cls: d.lt.holdout.accepted ? "ok" : "warn", sub: `Q train ${d.lt.holdout.q_trained == null ? "—" : fix(d.lt.holdout.q_trained, 2)} vs cur ${d.lt.holdout.q_current == null ? "—" : fix(d.lt.holdout.q_current, 2)}`, title: L("verifica su seed indipendente dal training: i coefficienti si applicano solo se non peggiorano — l'LT su un solo seed può overfittare", "verification on a seed independent of training: coefficients apply only if they do not regress — single-seed LT can overfit") }] : []),
           ...(d.lt.reverse ? [{ l: L("LT inverso", "reverse LT"), v: d.lt.reverse.ready ? `Q ${fix(d.lt.reverse.q_after, 2)} σ` : "NO LOCK", cls: d.lt.reverse.ready ? "ok" : "fail", sub: (d.lt.both_ready ? "both_ready ✓" : L("solo una direzione pronta", "only one direction ready")) + ` · ${d.lt.reverse.exchanges} exch`, title: L("direzione partner→locale: il partner allena il proprio TX guidato dal nostro ricevitore — canale dichiarato simmetrico, rumore indipendente. In Clause 72/136 il link è UP solo con both_ready.", "partner→local direction: the partner trains its own TX driven by our receiver — channel declared symmetric, independent noise. In Clause 72/136 the link is UP only with both_ready.") }] : []),
           { l: L("LT · occhio", "LT · eye"), v: d.lt.cdr_locked ? `Q ${fix(d.lt.q_after, 2)} σ` : "NO LOCK", cls: d.lt.eye_open ? (d.lt.q_after >= 3 ? "ok" : "warn") : "fail", sub: (d.lt.eye_open ? L("aperto", "open") + (d.lt.q_after < 3 ? L(" (marginale)", " (marginal)") : "") : L("chiuso", "closed")) + ` · BER ${sci(d.lt.ber_after)} · ${d.lt.exchanges} exch · ${fix(d.lt.duration_us, 0)} µs` + (d.applied ? L(" · applicato", " · applied") : ""), title: L("metrica di training: Q minimo fra gli occhi allo slicer (apertura in unità σ), valida solo con CDR agganciato", "training metric: minimum eye Q at the slicer (opening in σ units), valid only with CDR locked") },
         ] : [{ l: "HCD", v: "—", cls: "fail", big: true, sub: tr(res.parallel_detect) }]));

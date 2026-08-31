@@ -114,9 +114,25 @@ def _node_delay_ui(sim, node):
 # Eye + misure da strumento
 # ---------------------------------------------------------------------------
 
-def eye_panel(sim, cfg, node="vctle", n_traces=500):
+def _bt4_reference(wave, cfg, ref):
+    """Filtro di misura Bessel-Thomson 4° ordine come da 802.3 (ricevitore
+    di riferimento: 0.75·baud per le maschere NRZ, 0.5·baud per TDECQ PAM4).
+    DICHIARATO: applicato zero-fase (magnitudine BT4, allineamento
+    preservato), coerente con la scelta di fase del v7."""
+    if not ref or ref == "off":
+        return wave, ""
+    frac = 0.5 if ref == "bt4_05" else 0.75
+    fc = frac * cfg.symbol_rate_hz
+    wn = min(fc / (cfg.fs_analog_hz / 2), 0.99)
+    b, a2 = sp_signal.bessel(4, wn, btype="low", norm="mag")
+    return sp_signal.filtfilt(b, a2, np.asarray(wave, float)), \
+        f"BT4 {frac:g}·Bd"
+
+
+def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter=""):
     wave = np.asarray(get_wave(sim, node), dtype=float)
-    meas = eye_measures(sim, cfg, node)
+    wave, ref_label = _bt4_reference(wave, cfg, ref_filter)
+    meas = eye_measures(sim, cfg, node, ref_filter=ref_filter)
     if meas.get("inverted"):
         # funzione "invert" da scope: tracce e misure nello stesso dominio
         wave = -wave
@@ -135,17 +151,19 @@ def eye_panel(sim, cfg, node="vctle", n_traces=500):
         "node": node, "label": label, "domain": domain, "unit": unit,
         "sps": sps, "traces": np.round(traces, 5),
         "align": ("ritardo CDR" if side == "rx" else "centro nominale TX")
-                 + (" · INV" if meas.get("inverted") else ""),
+                 + (" · INV" if meas.get("inverted") else "")
+                 + (f" · {ref_label}" if ref_label else ""),
         "meas": meas,
     })
 
 
-def eye_measures(sim, cfg, node="vctle"):
+def eye_measures(sim, cfg, node="vctle", ref_filter=""):
     """Misure per occhio: livelli μ/σ, height 3σ, width alla soglia, Q, RLM.
 
     Proxy dichiarati: allineamento dal timing dell'acquisition, niente filtro
     di riferimento né procedure di clause (non è TDECQ)."""
     wave = np.asarray(get_wave(sim, node), dtype=float)
+    wave, _ref_label = _bt4_reference(wave, cfg, ref_filter)
     sps = cfg.analog_sps
     spec = sim.spec
     levels = spec.levels_array
@@ -286,7 +304,24 @@ def eye_measures(sim, cfg, node="vctle"):
         eh_at_ber[blabel] = [
             float((b["mean"] - qv * b["sigma"]) - (a["mean"] + qv * a["sigma"]))
             for a, b in zip(stats[:-1], stats[1:])]
+    # SNDR stile 802.3 (120D.3.1/162): fit LINEARE del pulse ai centri
+    # simbolo (y ≈ Σ h_k·x[n−k]) e SNDR = p_max²/σ²_residuo — così l'ISI
+    # lineare è esclusa come nella procedura di clause. DICHIARATO: fit a
+    # 8 tap ai soli centri simbolo, non il pattern completo di clause.
+    Nf = min(len(truth), 6000)
+    lags = range(-3, 5)
+    X = np.stack([np.roll(truth[:Nf], -k) for k in lags], axis=1)
+    Xv, yv = X[8:-8], y[:Nf][8:-8]
+    try:
+        h_fit, *_ = np.linalg.lstsq(Xv, yv, rcond=None)
+        resid = yv - Xv @ h_fit
+        p_max = float(np.max(np.abs(h_fit)))
+        sndr_db = float(10 * np.log10(p_max ** 2
+                                      / max(float(np.var(resid)), 1e-30)))
+    except np.linalg.LinAlgError:
+        sndr_db = None
     out = {"levels": stats, "eye_heights": heights,
+           "sndr_db": sndr_db,
            "eh_at_ber": eh_at_ber,
            "eye_widths_ui": widths, "q_per_eye": qs,
            "thresholds": thresholds, "rlm_proxy": rlm,
@@ -300,6 +335,13 @@ def eye_measures(sim, cfg, node="vctle"):
         out["oma_outer_mw"] = 1e3 * ol["oma_outer_w"]
         out["er_db"] = ol["extinction_ratio_db"]
         out["p_avg_dbm"] = float(w_to_dbm(ol["p_avg_w"]))
+        # livelli ottici P0..P3 in dBm dai cluster misurati (mW al nodo);
+        # se la misura ha raddrizzato la polarità, si torna al segno fisico
+        means_mw = [st["mean"] for st in stats]
+        if inverted:
+            means_mw = [-v for v in means_mw][::-1]
+        out["p_levels_dbm"] = [
+            float(10 * np.log10(max(v, 1e-9))) for v in means_mw]
     return out
 
 

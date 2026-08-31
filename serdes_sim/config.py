@@ -455,10 +455,14 @@ STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
         "53.125 GBd PAM4 · O-band 2 km · RS(544,514) — pubblicato."),
     "IEEE 802.3cu — 100GBASE-LR1 · PMD ottico 10 km": (
         LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   optical_modulator="eml", laser_type="dfb_eml_integrated",
+                   electrical_drive_mode="single_ended_p",
+                   eml_bw_hz=42e9, eml_er_db=6.0, eml_il_db=3.0,
                    wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
                    fiber_km=10.0, fiber_loss_db_km=0.35,
-                   channel_il_nyquist_db=8.0, laser_dbm=4.5),
-        "53.125 GBd PAM4 · O-band 10 km · RS(544,514) — pubblicato."),
+                   channel_il_nyquist_db=8.0, laser_dbm=6.0),
+        "53.125 GBd PAM4 · EML O-band 10 km (come i moduli reali) · "
+        "RS(544,514) — pubblicato."),
     "IEEE 802.3db — 100GBASE-SR1 · PAM4 MMF 100 m": (
         LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
                    optical_modulator="vcsel", laser_type="vcsel_direct",
@@ -482,6 +486,9 @@ STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
         "COM di clause) · KP4 — pubblicato."),
     "IEEE 802.3df — 800GBASE-DR8 · 8×100G ottico 500 m": (
         LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
+                   optical_modulator="eml", laser_type="dfb_eml_integrated",
+                   electrical_drive_mode="single_ended_p",
+                   eml_bw_hz=42e9, eml_er_db=5.0, eml_il_db=3.0,
                    wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
                    fiber_km=0.5, fiber_loss_db_km=0.35,
                    channel_il_nyquist_db=8.0, laser_dbm=3.0),
@@ -497,12 +504,16 @@ STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
         "56 GBd PAM4 very-short-reach · rame · IA OIF-CEI-5.3; FEC esterno."),
     "OIF CEI-224G-LR · interfaccia elettrica": (
         LinkConfig(symbol_rate_hz=106.25e9, fec_mode="none",
-                   link_medium="copper", channel_il_nyquist_db=18.0,
+                   link_medium="copper", channel_il_nyquist_db=16.0,
                    return_loss_db=10.0, dac_bw_hz=60e9, driver_bw_hz=70e9,
-                   tia_bw_hz=60e9, ctle_pole_hz=45e9,
-                   ctle_hf_pole_hz=90e9, adc_bits=8, fse_taps=25,
-                   dfe_taps=8),
-        "106.25 GBd PAM4 electrical LR · CEI-224G; FEC fuori dalla CEI."),
+                   tia_bw_hz=60e9,
+                   tx_ffe_taps=(0.0, -0.10, 1.0, -0.22, 0.0),
+                   ctle_zeros_hz=(14e9, 26e9),
+                   ctle_poles_hz=(22e9, 44e9, 80e9),
+                   adc_bits=8, fse_taps=25, dfe_taps=8),
+        "106.25 GBd PAM4 electrical LR · CEI-224G draft: TX FIR 5 tap + "
+        "CTLE 2Z/3P; pre-FEC ~3e-3 = regime del FEC concatenato di "
+        "P802.3dj (soglia ~5e-3), FEC fuori dalla CEI."),
     "P802.3dj (draft) — 200G/lane · elettrico C2C": (
         LinkConfig(symbol_rate_hz=106.25e9, fec_mode="none",
                    link_medium="copper", channel_il_nyquist_db=12.0,

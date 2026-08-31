@@ -154,7 +154,19 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     i_pd_noisy_a = i_pd_signal_a + shot_white_a + tia_white_a + rin_white_a
 
     # --- TIA + AGC ----------------------------------------------------------
-    v_tia_unfiltered_v = cfg.tia_transimpedance_ohm * i_pd_noisy_a
+    # Transimpedenza VARIABILE come nelle ROSA reali: se l'uscita nominale
+    # supererebbe ~70% delle rail (link corto/alta potenza), il VGA del TIA
+    # riduce Z_T invece di lasciar clippare l'ampiezza — senza questo, un
+    # profilo DR/FR con potenza da clause schiaccia il livello PAM4 alto
+    # (visto sul banco: q dell'occhio superiore 0.2 con Z_T fissa).
+    # Il range del VGA è limitato (~10 dB di attenuazione, come nei chip
+    # veri): oltre, l'overload clippa davvero contro le rail.
+    zt_ohm = float(cfg.tia_transimpedance_ohm)
+    v_pk_nominal = float(np.percentile(np.abs(zt_ohm * i_pd_noisy_a), 99.5))
+    if v_pk_nominal > 0.7 * cfg.tia_clip_v:
+        atten = 0.7 * cfg.tia_clip_v / v_pk_nominal
+        zt_ohm *= max(atten, 10 ** (-10 / 20))
+    v_tia_unfiltered_v = zt_ohm * i_pd_noisy_a
     v_tia_filtered_v, _, _ = apply_frequency_response(
         v_tia_unfiltered_v, cfg.fs_analog_hz,
         lambda f: butterworth_response(f, cfg.tia_bw_hz, order=3,

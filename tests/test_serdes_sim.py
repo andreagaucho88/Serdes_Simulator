@@ -653,6 +653,113 @@ def test_education_cards_are_substantive():
         assert len(t["actions"]) >= 2, t["id"]
 
 
+def test_all_standard_profiles_represent_working_links():
+    """Un profilo di standard PUBBLICATO deve rappresentare un link che
+    funziona: link su, e FEC che corregge (o BER bassa dove il FEC è
+    esterno). Audit richiesto dall'utente: prima di questo test 6 profili
+    su 17 giravano sopra soglia (TIA a Z_T fissa che schiacciava il
+    livello alto PAM4 → introdotto il VGA da ROSA)."""
+    from serdes_sim.config import STANDARD_PROFILES
+    for name, (cfg, _desc) in STANDARD_PROFILES.items():
+        r = simulate(cfg, seed=42, depth="light")
+        assert r.link_up, f"{name}: LINK DOWN"
+        if r.fec_link is not None:
+            assert r.fec_link.frames_uncorrectable == 0, name
+            assert r.fec_link.post_fec_ber == 0.0, name
+        else:
+            assert r.ber_post_dfe < 5e-3, f"{name}: BER {r.ber_post_dfe:.1e}"
+
+
+def test_vga_tia_no_level_crush_at_high_power():
+    """Alta potenza ottica: il VGA del TIA riduce Z_T invece di schiacciare
+    il livello PAM4 alto contro le rail (q_top crollava a 0.2)."""
+    from serdes_sim.config import STANDARD_PROFILES
+    dr4 = [v[0] for k, v in STANDARD_PROFILES.items() if "DR4" in k][0]
+    r = simulate(dr4.with_updates(laser_dbm=6.0), seed=42, depth="light")
+    assert r.link_up
+    qs = r.snr_dfe["q_per_eye"]
+    # gli occhi devono restare comparabili (niente crush asimmetrico)
+    assert min(qs) > 0.5 * max(qs)
+
+
+def test_autoneg_priority_follows_data_rate():
+    from serdes_sim.blocks.autoneg import resolve
+    # 40GBASE-KR4 (40G) batte 25GBASE-KR/CR (25G)
+    assert resolve(["A10", "A3"], ["A10", "A3"])["hcd"] == "A3"
+    # 100GBASE-CR10 (100G totali) batte 50GBASE-KR (50G)
+    assert resolve(["A13", "A5"], ["A13", "A5"])["hcd"] == "A5"
+    # 200GBASE-KR4 batte 100GBASE-KR1
+    assert resolve(["A16", "A15"], ["A16", "A15"])["hcd"] == "A15"
+
+
+def test_lt_holdout_guards_against_overfit():
+    from serdes_sim.engine import anlt_session
+    out = anlt_session(LinkConfig(**GOOD_LINK), lt_rounds=1, lt_step=0.03)
+    h = out["lt"]["holdout"]
+    assert isinstance(h["accepted"], bool)
+    if not h["accepted"]:
+        # rifiutato → i tap del banco restano quelli di partenza
+        assert tuple(out["cfg_after"].tx_ffe_taps) == \
+            LinkConfig(**GOOD_LINK).tx_ffe_taps
+
+
+def test_bt4_reference_filter_and_sndr():
+    from labpro import paneldata
+    cfg = LinkConfig(**GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    m_off = paneldata.eye_measures(sim, cfg, node="driver")
+    m_bt = paneldata.eye_measures(sim, cfg, node="driver",
+                                  ref_filter="bt4_05")
+    # il BT4 a 0.5·Bd taglia banda: rise time più lento
+    assert m_bt["t_rise_ps"] > m_off["t_rise_ps"]
+    # SNDR con fit lineare: al driver (pulito) è alto, dopo il canale scende
+    m_ch = paneldata.eye_measures(sim, cfg, node="vctle")
+    assert m_off["sndr_db"] > 35.0
+    assert m_ch["sndr_db"] < m_off["sndr_db"]
+
+
+def test_optical_p_levels_monotone_dbm():
+    from labpro import paneldata
+    cfg = LinkConfig(**GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    m = paneldata.eye_measures(sim, cfg, node="pfiber")
+    pl = m["p_levels_dbm"]
+    assert len(pl) == 4 and all(a < b for a, b in zip(pl, pl[1:]))
+    assert -20 < pl[0] < pl[-1] < 5
+
+
+def test_pd_square_law():
+    hi = simulate(LinkConfig(laser_dbm=3.0, **GOOD_LINK), seed=5,
+                  depth="light")
+    lo = simulate(LinkConfig(laser_dbm=0.0, **GOOD_LINK), seed=5,
+                  depth="light")
+    # sulla CORRENTE del PD (prima del VGA del TIA, che normalizza)
+    ratio_db = 20 * np.log10(np.std(hi.receiver.i_pd_signal_a)
+                             / np.std(lo.receiver.i_pd_signal_a))
+    assert abs(ratio_db - 6.0) < 0.8   # -3 dB ottici = -6 dB elettrici
+
+
+def test_cd_fading_null_matches_theory():
+    """Primo nullo della risposta IM su fibra dispersiva:
+    f = sqrt(c / (2 λ² D L)) — 19.2 GHz a 10 km / 1550 nm."""
+    from scipy import signal as sp_sig
+    cfg = LinkConfig(fiber_km=10.0, chirp_alpha=0.0,
+                     channel_il_nyquist_db=6.0, wavelength_nm=1550.0,
+                     dispersion_ps_nm_km=17.0, fiber_gamma_w_inv_km=0.0,
+                     pmd_ps_sqrt_km=0.0)
+    sim = simulate(cfg, seed=5, depth="light")
+    fs = cfg.fs_analog_hz
+    pin = sim.optical.P_mzm_w - np.mean(sim.optical.P_mzm_w)
+    pout = sim.optical.P_fiber_w - np.mean(sim.optical.P_fiber_w)
+    f, Pi = sp_sig.welch(pin, fs=fs, nperseg=8192)
+    _, Po = sp_sig.welch(pout, fs=fs, nperseg=8192)
+    H = Po / np.maximum(Pi, 1e-30)
+    mask = (f > 2e9) & (f < 28e9)
+    f_null = f[mask][np.argmin(H[mask])]
+    theory = np.sqrt(3e8 / (2 * (1.55e-6) ** 2 * 17e-6 * 1e4))
+    assert abs(f_null - theory) / theory < 0.15
+
+
 def test_anlt_no_common_ability():
     from serdes_sim.blocks.autoneg import resolve
     res = resolve(["A16", "A17"], ["A0", "A2"])

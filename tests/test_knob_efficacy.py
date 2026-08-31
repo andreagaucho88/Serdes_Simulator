@@ -105,9 +105,10 @@ KNOBS = {
     "pd_saturation_a": (5e-5, {}, {"vctle"}, {"driver", "pfib"}),
     "rin_db_hz": (-130.0, {}, {"vctle"}, {"driver", "pfib"}),
     "tia_noise_a_rt_hz": (60e-12, {}, {"vctle"}, {"driver", "pfib"}),
-    "tia_transimpedance_ohm": (5000.0, {}, {"vctle"}, {"driver", "pfib"}),
+    # oltre il range del VGA (~10 dB): overload reale contro le rail
+    "tia_transimpedance_ohm": (20000.0, {}, {"vctle"}, {"driver", "pfib"}),
     "tia_bw_hz": (22e9, {}, {"vctle"}, {"driver", "pfib"}),
-    "tia_clip_v": (0.3, {}, {"vctle"}, {"driver", "pfib"}),
+    "tia_clip_v": (0.05, {}, {"vctle"}, {"driver", "pfib"}),
     "agc_target_rms_v": (0.35, {}, {"vctle"}, {"driver", "pfib"}),
     "ctle_zero_hz": (5e9, {}, {"vctle"}, {"driver", "pfib"}),
     "ctle_pole_hz": (20e9, {}, {"vctle"}, {"driver", "pfib"}),
