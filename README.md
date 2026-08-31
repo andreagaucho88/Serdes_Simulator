@@ -51,8 +51,15 @@ Frontend custom (Tornado + WebSocket + canvas/plotly locale, niente CDN):
   height/width per occhio, Q, RLM, OMA/ER sui nodi ottici; TIE live con seed,
   trend, spettro e bathtub empirica;
 - **BERT + traffic analyzer**: PPG/ED con stress RJ/PJ/DCD/rumore
-  differenziale, BER/SER MSB-LSB, error insertion; frame Ethernet L2 reali e
-  benchmark end-to-end della frame size (dichiarato non RFC 2544);
+  differenziale, BER/SER MSB-LSB, error insertion singola o burst, gating
+  Start/Stop con BER gated e confidenza sul target (stile MP1900A); frame
+  Ethernet L2 reali su **PCS scrambler Clause 49** (x⁵⁸+x³⁹+1), benchmark
+  frame size e **test ONT-style** (load ramp via IPG, latency budget per
+  blocco, service disruption dal lock CDR) — dichiarato non RFC 2544;
+- **AN/LT**: Auto-Negotiation Clause 73 a livello protocollo (base page,
+  priority resolution → HCD, timer di Table 73-7) e Link Training con
+  l'handshake di Clause 72/136 (preset, inc/dec c(-1)/c(+1),
+  updated/at_limit, receiver ready) su metrica misurata dal banco;
 - **ottica configurabile e coerente**: CW-DFB+MZM, DFB-EML, DFB-DML e
   VCSEL/MMF; CD beta2, slope/beta3, linewidth, PMD, Kerr e modal bandwidth;
 - **pannelli PD/TIA/AGC e pulse response**: waveform live, noise/ENBW,

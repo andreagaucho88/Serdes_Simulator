@@ -168,8 +168,11 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     # sorgente del payload (stile PPG di un BERT)
     def _payload_bits(n):
         if cfg.pattern == "eth":
-            bits, _, _ = ethernet.build_stream_bits(n, cfg.l2_frame_bytes)
-            return bits
+            bits, _, _ = ethernet.build_stream_bits(n, cfg.l2_frame_bytes,
+                                                    ipg_bytes=cfg.l2_ipg_bytes)
+            # scrambler PCS (Clause 49): senza, l'idle 0x00 di un IPG lungo
+            # produce run costanti che ammazzano CDR e AGC
+            return ethernet.scramble(bits)
         if cfg.pattern == "ssprq_like":
             return stimulus.ssprq_like_bits(n, spec)
         if cfg.pattern == "clock2":
@@ -200,8 +203,12 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     pam4 = stimulus.symbols_from_bits(tx_bits, spec)   # riferimento DSP/ED
     if cfg.err_insert_bits > 0:
         lo = (cfg.training_stop + 300) * bps
-        pos = rng.choice(np.arange(lo, total_bits), cfg.err_insert_bits,
-                         replace=False)
+        if cfg.err_insert_burst:
+            start = int(rng.integers(lo, total_bits - cfg.err_insert_bits))
+            pos = np.arange(start, start + cfg.err_insert_bits)
+        else:
+            pos = rng.choice(np.arange(lo, total_bits), cfg.err_insert_bits,
+                             replace=False)
         mod_bits = tx_bits.copy()
         mod_bits[pos] ^= 1
         result.err_positions = np.sort(pos)
@@ -526,10 +533,9 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
 
     # --- 9d. Analyzer L2 (pattern eth): delineazione frame e contatori ------
     if cfg.pattern == "eth":
-        flb = ethernet.OVERHEAD - 18 + cfg.l2_frame_bytes  # byte per frame
         flb = (len(ethernet.PREAMBLE) + len(ethernet.HEADER)
                + max(cfg.l2_frame_bytes - len(ethernet.HEADER) - 4, 8) + 4
-               + len(ethernet.IPG)) * 8                    # bit per frame
+               + cfg.l2_ipg_bytes) * 8                     # bit per frame
         if result.fec_link is not None and result.fec_link.post_payload_bits is not None:
             codec = fec_block.FEC_CODECS[cfg.fec_mode]
             stream = result.fec_link.post_payload_bits
@@ -540,13 +546,17 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
             stream = stimulus.symbols_to_bits(decided, spec)
             offset = int(eq.symbol_k_fse[0]) * bps
             payload_rate = cfg.symbol_rate_hz * bps
-        seq0 = int(np.ceil(offset / flb))
+        # descrambler self-sync: servono 58 bit di burn-in prima del primo
+        # frame che vogliamo delineare
+        stream = ethernet.descramble(stream)
+        seq0 = int(np.ceil((offset + 58) / flb))
         skip = seq0 * flb - offset
         window = stream[skip:]
         if len(window) > flb + 64:
             result.l2 = ethernet.analyze_stream_bits(
                 window, cfg.l2_frame_bytes,
-                window_s=len(window) / payload_rate, seq0=seq0)
+                window_s=len(window) / payload_rate, seq0=seq0,
+                ipg_bytes=cfg.l2_ipg_bytes)
             _check(result, result.l2.frames_detected > 0,
                    "Analyzer L2: frame delineati",
                    f"{result.l2.frames_ok} ok / {result.l2.frames_fcs_bad} FCS "
@@ -595,6 +605,45 @@ SWEEPABLE_FIELDS = {
     "rx_ppm_offset": ("Offset clock RX [ppm]", -300.0, 300.0),
     "mzm_bias_rad": ("Bias MZM [rad]", 0.9, 2.2),
 }
+
+
+
+def jitter_transfer(cfg: LinkConfig, freqs_mhz=(10, 30, 60, 120, 300, 800),
+                    amp_ui=0.04, seed=20240731, progress_callback=None):
+    """OJTF misurata del CDR: inietta un PJ piccolo al TX e misura quanto il
+    clock recuperato (la traccia di fase del NCO) lo insegue.
+
+    JTF(f) = ampiezza del tono a f nella fase del NCO / ampiezza iniettata.
+    Sotto la banda del loop ≈ 0 dB (il CDR insegue), sopra crolla; il picco
+    vicino al corner è il jitter peaking del 2° ordine. NON normativa."""
+    if cfg.cdr_mode == "oracle":
+        raise ValueError("la JTF richiede il CDR reale (gardner/mm)")
+    points = []
+    for i, f_mhz in enumerate(freqs_mhz):
+        r = simulate(cfg.with_updates(tx_pj_amp_ui=float(amp_ui),
+                                      tx_pj_freq_mhz=float(f_mhz)),
+                     seed=seed, depth="light")
+        if r.cdr is None or not r.cdr.locked:
+            points.append({"freq_mhz": float(f_mhz), "jtf_db": None,
+                           "locked": False})
+        else:
+            tau = np.asarray(r.cdr.tau_trace_ui, dtype=float)
+            tau = tau - np.polyval(np.polyfit(np.arange(len(tau)), tau, 1),
+                                   np.arange(len(tau)))
+            win = np.hanning(len(tau))
+            spec = np.abs(np.fft.rfft(tau * win)) / max(np.sum(win) / 2, 1)
+            bin_f = f_mhz * 1e6 / cfg.symbol_rate_hz * len(tau)
+            b0 = int(round(bin_f))
+            lo, hi = max(b0 - 2, 1), min(b0 + 3, len(spec))
+            amp_meas = float(spec[lo:hi].max()) if hi > lo else 0.0
+            points.append({
+                "freq_mhz": float(f_mhz),
+                "jtf_db": float(20 * np.log10(max(amp_meas, 1e-6) / amp_ui)),
+                "locked": True,
+            })
+        if progress_callback:
+            progress_callback((i + 1) / len(freqs_mhz))
+    return points
 
 
 def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
@@ -726,6 +775,183 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
                           "accepted": accepted,
                           "verification_seeds": list(verification_seeds)})
     return cur, steps, base, best_score
+
+
+def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
+                 seed=1101, lt_rounds=8, lt_step=0.02):
+    """AN/LT: Auto-Negotiation Clause 73 (protocollo) + Link Training con
+    handshake dei coefficienti in stile Clause 72/136.
+
+    DICHIARATO — cosa è vero e cosa è modellato:
+    - AN: base page, priority resolution, timer e macchina a stati sono
+      quelli di clause (sottoinsieme di Table 73-4 fino ad A18); NON c'è la
+      segnalazione DME elettrica. Su mezzo ottico l'AN di Clause 73 NON
+      esiste (la gestione modulo è CMIS) e la sessione lo dichiara.
+    - LT: il protocollo è quello vero (richieste increment/decrement/hold
+      per c(-1)/c(0)/c(+1), risposte updated/at_limit, preset iniziale,
+      receiver ready), ma la decisione del ricevitore usa la metrica
+      MISURATA sul banco (SNR allo slicer da una simulate light), non un
+      DFE hardware: è un LT "protocol-shaped" con metrica onesta.
+    """
+    from .blocks import autoneg as an_block
+
+    local = an_block.local_abilities_from_cfg(cfg)
+    local_fec = ("F2",) if cfg.fec_mode != "none" else ()
+    if partner_abilities is None:
+        partner_abilities = list(local)
+    an = an_block.an_session(local, partner_abilities, local_fec,
+                             partner_fec or local_fec, seed=seed)
+    an["medium_note"] = (
+        "link_medium = optical: Clause 73 AN NON esiste sull'ottica "
+        "(gestione via CMIS); sessione mostrata a scopo didattico come se "
+        "il lane fosse KR/CR." if cfg.link_medium == "optical" else
+        "link_medium = copper: contesto KR/CR corretto per Clause 73.")
+
+    # --- LT (PMD control): handshake coefficienti su tx_ffe_taps ----------
+    def metric(c):
+        r = simulate(c, seed=seed, depth="light")
+        if not r.link_up or r.snr_dfe is None:
+            return -50.0, r
+        return float(r.snr_dfe["snr_slicer_db"]), r
+
+    # preset 1 di LT: nessuna equalizzazione (c(-1)=0, c(0)=1, c(+1)=0);
+    # se col preset il link non aggancia nemmeno, si usa la richiesta
+    # "initialize" (mantieni i coefficienti correnti), anch'essa di clause
+    cur = cfg.with_updates(tx_ffe_taps=(0.0, 1.0, 0.0))
+    req0 = "preset 1"
+    m0, _ = metric(cur)
+    if m0 <= -49.0:
+        cur = cfg
+        req0 = "initialize (hold current)"
+        m0, _ = metric(cur)
+    frames = []
+    frame_us = 23552 / cfg.symbol_rate_hz * 1e6  # ordine di grandezza del
+    # training frame PAM4 (frame marker + control channel + payload PRBS13Q)
+    t_us = 0.0
+    exchange = 0
+    frames.append({"t_us": t_us, "coeff": "preset", "request": req0,
+                   "status": "updated", "taps": list(cur.tx_ffe_taps),
+                   "snr_db": m0})
+    best = m0
+    hold_streak = 0
+    lim = 0.35
+    for rnd in range(lt_rounds):
+        for coeff, idx in (("c(-1)", 0), ("c(+1)", 2)):
+            taps = list(cur.tx_ffe_taps)
+            cands = []
+            for req, delta in (("decrement", -lt_step), ("increment", lt_step)):
+                v = taps[idx] + delta
+                t2 = list(taps)
+                t2[idx] = v
+                # vincolo di picco stile clause: |c-1|+|c0|+|c+1| limitato;
+                # violarlo produce status = at_limit, non un update
+                if abs(v) > lim or sum(abs(x) for x in t2) > 1.30:
+                    cands.append((req, None, -1e9))
+                    continue
+                cand = cur.with_updates(tx_ffe_taps=tuple(t2))
+                mm, _ = metric(cand)
+                cands.append((req, cand, mm))
+            req, cand, mm = max(cands, key=lambda c: c[2])
+            exchange += 1
+            t_us += frame_us * 32          # ~32 frame per scambio (hold+ack)
+            if cand is not None and mm > best + 0.02:
+                cur, best = cand, mm
+                status = "updated"
+                hold_streak = 0
+            else:
+                req, status = "hold", ("at_limit" if cand is None
+                                       else "not_updated")
+                hold_streak += 1
+            frames.append({"t_us": t_us, "coeff": coeff, "request": req,
+                           "status": status, "taps": list(cur.tx_ffe_taps),
+                           "snr_db": best})
+        if hold_streak >= 4:               # entrambe le direzioni ferme x2
+            break
+    m_final, r_final = metric(cur)
+    if r_final.link_up:
+        frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
+                       "request": "local receiver ready", "status": "ready",
+                       "taps": list(cur.tx_ffe_taps), "snr_db": m_final})
+    else:
+        # niente frame lock → il link_fail_inhibit_timer scade e l'AN riparte
+        frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
+                       "request": "training failure",
+                       "status": "link_fail_inhibit_timer → restart AN",
+                       "taps": list(cur.tx_ffe_taps), "snr_db": m_final})
+    lt = {"frames": frames, "snr_before_db": m0, "snr_after_db": m_final,
+          "taps_before": list(frames[0]["taps"]),
+          "taps_after": list(cur.tx_ffe_taps),
+          "exchanges": exchange, "duration_us": frames[-1]["t_us"],
+          "ber_after": (r_final.ber_post_dfe if r_final.link_up
+                        else float("nan")),
+          "link_up_after": bool(r_final.link_up)}
+    return {"an": an, "lt": lt, "cfg_after": cur}
+
+
+def l2_ont_report(cfg: LinkConfig, ipg_grid=(12, 96, 384, 1024, 2000),
+                  seed=73101):
+    """Test L2 in stile ONT (Viavi/EXFO): load ramp via IPG, latency budget
+    deterministico e service-disruption proxy dal lock del CDR.
+
+    DICHIARATO: non c'è un DUT di rete — la perdita di frame viene dai bit
+    error del PHY, non da congestione/coda; la latenza è un BUDGET calcolato
+    dai blocchi (serializzazione, FEC store&forward, fibra, DSP), non una
+    misura round-trip con timestamp nel payload."""
+    bps = 2 if cfg.modulation == "PAM4" else 1
+    line_gbps = cfg.symbol_rate_hz * bps / 1e9
+
+    # --- load ramp: IPG grande = offered load piccolo ----------------------
+    ramp = []
+    for ipg in ipg_grid:
+        c = cfg.with_updates(pattern="eth", l2_ipg_bytes=int(ipg))
+        r = simulate(c, seed=seed + int(ipg), depth="light")
+        l2 = r.l2
+        wire = (8 + len(ethernet.HEADER)
+                + max(cfg.l2_frame_bytes - len(ethernet.HEADER) - 4, 8) + 4)
+        offered_pct = 100.0 * wire / (wire + ipg)
+        ramp.append({
+            "ipg_bytes": int(ipg), "offered_pct": offered_pct,
+            "link_up": bool(r.link_up),
+            "frames_ok": (l2.frames_ok if l2 else 0),
+            "frames_lost": (l2.frames_lost if l2 else 0),
+            "loss_pct": (100 * l2.frames_lost / max(l2.frames_expected, 1)
+                         if l2 else float("nan")),
+            "goodput_gbps": (l2.throughput_gbps if l2 else float("nan")),
+        })
+
+    # --- latency budget (one-way, deterministico) --------------------------
+    r0 = simulate(cfg.with_updates(pattern="eth"), seed=seed, depth="light")
+    frame_bits = (8 + len(ethernet.HEADER)
+                  + max(cfg.l2_frame_bytes - len(ethernet.HEADER) - 4, 8)
+                  + 4) * 8
+    items = [("serializzazione frame",
+              frame_bits / (line_gbps * 1e9) * 1e9,
+              f"{frame_bits} bit a {line_gbps:.0f} Gb/s")]
+    if cfg.fec_mode != "none":
+        codec = fec_block.FEC_CODECS[cfg.fec_mode]
+        fec_ns = 2 * codec.n * fec_block.GF_M / (line_gbps * 1e9) * 1e9
+        items.append(("FEC store&forward (enc+dec)", fec_ns,
+                      f"2 × {codec.n * fec_block.GF_M} bit "
+                      f"RS({codec.n},{codec.k})"))
+    if cfg.link_medium == "optical" and cfg.fiber_km > 0:
+        items.append(("propagazione fibra", cfg.fiber_km * 4890.0,
+                      f"{cfg.fiber_km:g} km × 4.89 µs/km (n_g≈1.468)"))
+    ui_ns = 1.0 / cfg.symbol_rate_hz * 1e9
+    dsp_ns = (cfg.fse_taps / 2 + cfg.dfe_taps) * ui_ns
+    items.append(("pipeline DSP (FSE+DFE)", dsp_ns,
+                  f"{cfg.fse_taps} tap T/2 + {cfg.dfe_taps} tap DFE"))
+    budget = [{"item": n, "ns": v, "detail": d} for n, v, d in items]
+    total_ns = float(sum(b["ns"] for b in budget))
+
+    # --- service disruption proxy: tempo di lock del CDR -------------------
+    lock_us = None
+    if (r0.cdr is not None and getattr(r0.cdr, "lock_symbol", None)
+            is not None):
+        lock_us = r0.cdr.lock_symbol / cfg.symbol_rate_hz * 1e6
+    return {"ramp": ramp, "latency_budget": budget, "latency_total_ns":
+            total_ns, "cdr_lock_us": lock_us,
+            "line_rate_gbps": line_gbps,
+            "frame_bytes": cfg.l2_frame_bytes}
 
 
 def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),

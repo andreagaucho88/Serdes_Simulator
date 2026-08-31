@@ -35,23 +35,49 @@ def _bits_to_bytes(bits: np.ndarray) -> bytes:
     return np.packbits(bits[:n].astype(np.uint8)).tobytes()
 
 
-def build_frame(seq: int, frame_bytes: int) -> bytes:
+def scramble(bits: np.ndarray) -> np.ndarray:
+    """Scrambler self-synchronous del PCS (Clause 49): G(x)=1+x^39+x^58.
+
+    s[n] = d[n] ^ s[n-39] ^ s[n-58]. È il motivo per cui l'idle (byte 0x00
+    dell'IPG) NON produce run costanti sulla linea: senza scrambler un IPG
+    lungo ammazza CDR e AGC — il banco lo mostra davvero se lo togli."""
+    d = np.asarray(bits, dtype=np.uint8)
+    out = np.empty(len(d) + 58, dtype=np.uint8)
+    out[:58] = 1                              # stato iniziale non nullo
+    for n in range(len(d)):                   # dipendenza sequenziale reale
+        out[n + 58] = d[n] ^ out[n + 58 - 39] ^ out[n]
+    return out[58:]
+
+
+def descramble(bits: np.ndarray) -> np.ndarray:
+    """Descrambler self-synchronous: d[n] = r[n] ^ r[n-39] ^ r[n-58].
+
+    Si auto-sincronizza dopo 58 bit ricevuti (i primi 58 output sono
+    spazzatura) e moltiplica ×3 ogni bit error — il classico costo del
+    self-sync, ben visibile sull'FCS."""
+    r = np.asarray(bits, dtype=np.uint8)
+    pad = np.concatenate([np.ones(58, dtype=np.uint8), r])
+    return (r ^ pad[58 - 39:58 - 39 + len(r)] ^ pad[:len(r)]).astype(np.uint8)
+
+
+def build_frame(seq: int, frame_bytes: int, ipg_bytes: int = 12) -> bytes:
     payload_len = max(frame_bytes - len(HEADER) - 4, 8)
     payload = seq.to_bytes(4, "big") + bytes(
         (seq + i) & 0xFF for i in range(payload_len - 4))
     body = HEADER + payload
     fcs = zlib.crc32(body).to_bytes(4, "big")
-    return PREAMBLE + body + fcs + IPG
+    return PREAMBLE + body + fcs + bytes(ipg_bytes)
 
 
-def build_stream_bits(n_bits: int, frame_bytes: int, seq0: int = 0):
+def build_stream_bits(n_bits: int, frame_bytes: int, seq0: int = 0,
+                      ipg_bytes: int = 12):
     """Flusso di frame per riempire n_bits; ritorna (bits, n_frame, next_seq)."""
     chunks = []
     total = 0
     seq = seq0
     frame_len_bits = (frame_bytes + OVERHEAD - len(HEADER) - 4) * 8
     while total < n_bits:
-        f = build_frame(seq, frame_bytes)
+        f = build_frame(seq, frame_bytes, ipg_bytes)
         chunks.append(f)
         total += len(f) * 8
         seq += 1
@@ -72,13 +98,14 @@ class L2Analysis:
 
 
 def analyze_stream_bits(rx_bits: np.ndarray, frame_bytes: int,
-                        window_s: float, seq0: int = 0) -> L2Analysis:
+                        window_s: float, seq0: int = 0,
+                        ipg_bytes: int = 12) -> L2Analysis:
     """Delineazione tipo analyzer: caccia al preamble+SFD, verifica FCS,
     ricostruzione delle sequenze. rx_bits deve essere allineato al byte 0
     del flusso TX (l'allineamento arriva dal pattern lock del PHY)."""
     data = _bits_to_bytes(np.asarray(rx_bits, dtype=np.uint8))
     body_len = len(HEADER) + max(frame_bytes - len(HEADER) - 4, 8) + 4
-    frame_len = len(PREAMBLE) + body_len + len(IPG)
+    frame_len = len(PREAMBLE) + body_len + ipg_bytes
     expected = len(data) // frame_len
 
     detected = ok = bad = 0

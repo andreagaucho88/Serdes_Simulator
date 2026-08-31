@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
 from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
-from serdes_sim.engine import jitter_tolerance, link_train, traffic_sweep  # noqa: E402
+from serdes_sim.engine import (anlt_session, jitter_tolerance, jitter_transfer,  # noqa: E402
+                               l2_ont_report, link_train, traffic_sweep)
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
 
@@ -186,6 +187,7 @@ class ApiConfig(Base):
         BENCH.set_config(new)
         persist()
         broadcast({"type": "config", "cfg": new.to_dict()})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
         self.write_json({"ok": True, "cfg": new.to_dict()})
 
 
@@ -199,6 +201,7 @@ class ApiPreset(Base):
         BENCH.set_config(source[name][0])
         persist()
         broadcast({"type": "config", "cfg": BENCH.cfg.to_dict()})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
         self.write_json({"ok": True, "cfg": BENCH.cfg.to_dict()})
 
 
@@ -259,10 +262,74 @@ class ApiS2P(Base):
                          "n_ports": n_ports, "diag": paneldata.J(diag)})
 
 
+
+class ApiJtf(Base):
+    def post(self):
+        body = self.body_json()
+        freqs = [float(f) for f in (body.get("freqs_mhz")
+                                    or [10, 30, 60, 120, 300, 800])][:8]
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            points = jitter_transfer(BENCH.cfg, freqs,
+                                     amp_ui=float(body.get("amp_ui", 0.04)))
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
+        finally:
+            if was_running:
+                BENCH.start()
+        self.write_json({"ok": True, "points": paneldata.J(points),
+                         "loop_bw_mhz": BENCH.cfg.cdr_bw
+                         * BENCH.cfg.symbol_rate_hz / 1e6})
+
+
+class ApiAnlt(Base):
+    def post(self):
+        body = self.body_json()
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            out = anlt_session(BENCH.cfg,
+                               partner_abilities=body.get("partner_abilities"),
+                               lt_rounds=int(body.get("lt_rounds", 6)))
+        finally:
+            if was_running and not body.get("apply"):
+                BENCH.start()
+        cfg_after = out.pop("cfg_after")
+        if body.get("apply") and out["lt"]["link_up_after"]:
+            BENCH.set_config(cfg_after)
+            persist()
+            broadcast({"type": "config", "cfg": cfg_after.to_dict()})
+            broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
+            if was_running:
+                BENCH.start()
+            out["applied"] = True
+        else:
+            out["applied"] = False
+        self.write_json(paneldata.J({"ok": True, **out}))
+
+
+class ApiOnt(Base):
+    def post(self):
+        body = self.body_json()
+        grid = [int(v) for v in (body.get("ipg_grid")
+                                 or [12, 96, 384, 1024, 2000])][:8]
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            out = l2_ont_report(BENCH.cfg, ipg_grid=grid)
+        finally:
+            if was_running:
+                BENCH.start()
+        self.write_json(paneldata.J({"ok": True, **out}))
+
+
 class ApiInject(Base):
     def post(self):
-        n = int(self.body_json().get("bits", 10))
-        BENCH.inject_errors(n)
+        body = self.body_json()
+        n = int(body.get("bits", 10))
+        BENCH.inject_errors(n, burst=bool(body.get("burst", False)))
         self.write_json({"ok": True, "bits": n})
 
 
@@ -432,7 +499,10 @@ def make_app():
         (r"/api/experiment/sweep", ApiSweep),
         (r"/api/experiment/jtol", ApiJtol),
         (r"/api/experiment/train", ApiTrain),
+        (r"/api/experiment/jtf", ApiJtf),
         (r"/api/experiment/traffic", ApiTraffic),
+        (r"/api/experiment/anlt", ApiAnlt),
+        (r"/api/experiment/ont", ApiOnt),
         (r"/api/inject", ApiInject),
         (r"/api/scope", ApiScope),
         (r"/api/panel/(\w+)", ApiPanel),

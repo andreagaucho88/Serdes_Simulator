@@ -503,7 +503,56 @@ def optical_panel(sim, cfg):
         "nonlinear_phase_peak_rad": o.nonlinear_phase_peak_rad,
         "laser_linewidth_mhz": cfg.laser_linewidth_mhz,
         "nyquist_ghz": cfg.nyquist_hz / 1e9,
+        # --- vista "seria": dove lavora il modulatore, budget, livelli ottici
+        "drive_hist": _drive_histogram(o),
+        "budget_steps": _budget_steps(o.power_budget_dbm),
+        "chirp_t_ps": (np.arange(10 * cfg.analog_sps) / cfg.fs_analog_hz * 1e12),
+        "chirp_ghz": o.inst_freq_shift_hz[:10 * cfg.analog_sps] / 1e9,
+        "p_levels": _optical_levels_dbm(sim, cfg),
     })
+
+
+def _drive_histogram(o):
+    """Istogramma del drive effettivo, nel dominio della transfer statica:
+    mostra DOVE il modulatore viene esercitato (compressione ai bordi)."""
+    drive = np.asarray(o.mzm_drive_v)
+    lo, hi = float(np.min(o.v_static)), float(np.max(o.v_static))
+    h, edges = np.histogram(np.clip(drive, lo, hi), bins=70, range=(lo, hi))
+    return {"x": 0.5 * (edges[:-1] + edges[1:]),
+            "h": h / max(h.max(), 1)}
+
+
+def _budget_steps(budget):
+    """Waterfall del link budget: piani + perdita di ciascun segmento."""
+    names = list(budget.keys())
+    vals = [budget[k] for k in names]
+    steps = []
+    for i, (name, val) in enumerate(zip(names, vals)):
+        steps.append({"plane": name, "dbm": float(val),
+                      "delta_db": (float(val - vals[i - 1]) if i else 0.0)})
+    return steps
+
+
+def _optical_levels_dbm(sim, cfg):
+    """Potenze ottiche per livello al PD (P0..P3 per PAM4): la grandezza con
+    cui le spec ottiche definiscono OMA/ER/RLM."""
+    try:
+        m = eye_measures(sim, cfg, node="pfiber")
+    except Exception:
+        return None
+    levels_mw = [st["mean"] for st in m["levels"]]
+    if any(v <= 0 for v in levels_mw):
+        return None
+    dbm = [10 * np.log10(v) for v in levels_mw]   # mW → dBm
+    oma_outer = levels_mw[-1] - levels_mw[0]
+    inner = (levels_mw[2] - levels_mw[1]) if len(levels_mw) == 4 else None
+    return {
+        "p_dbm": dbm, "p_mw": levels_mw,
+        "oma_outer_mw": oma_outer,
+        "oma_inner_mw": inner,
+        "er_db": 10 * np.log10(levels_mw[-1] / levels_mw[0]),
+        "rlm_proxy": m["rlm_proxy"],
+    }
 
 
 def adc_panel(sim, cfg):

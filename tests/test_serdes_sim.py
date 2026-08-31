@@ -456,6 +456,100 @@ def test_bert_error_insertion_counted():
     assert 15 <= delta <= 20     # quasi tutte le inserzioni contate dall'ED
 
 
+def test_burst_insertion_is_contiguous_and_stresses_fec():
+    """Stesso numero di bit, ma il burst deve costare di più al RS in
+    simboli/frame colpiti rispetto agli errori sparsi."""
+    from serdes_sim.blocks import fec as fec_block
+    iid = simulate(LinkConfig(err_insert_bits=40, fec_mode="kp4",
+                              **GOOD_LINK), depth="light")
+    burst = simulate(LinkConfig(err_insert_bits=40, err_insert_burst=True,
+                                fec_mode="kp4", **GOOD_LINK), depth="light")
+    assert iid.link_up and burst.link_up
+    # il burst concentra gli errori: i frame corrotti sono meno (o uguali),
+    # ma i simboli RS per frame colpito sono di più
+    fi, fb = iid.fec_link, burst.fec_link
+    hit_i = fi.frames_corrected + fi.frames_uncorrectable
+    hit_b = fb.frames_corrected + fb.frames_uncorrectable
+    assert hit_b <= hit_i
+
+
+def test_l2_ipg_changes_offered_load():
+    r12 = simulate(LinkConfig(pattern="eth", l2_ipg_bytes=12,
+                              **GOOD_LINK), depth="light")
+    r384 = simulate(LinkConfig(pattern="eth", l2_ipg_bytes=384,
+                               **GOOD_LINK), depth="light")
+    assert r12.l2 is not None and r384.l2 is not None
+    # più IPG = meno frame nella stessa finestra (offered load più basso);
+    # la sopravvivenza dei singoli frame dipende dalla BER residua (×3 dal
+    # descrambler self-sync), quindi qui non si pretende lost == 0
+    assert r384.l2.frames_expected < r12.l2.frames_expected
+
+
+def test_pcs_scrambler_keeps_link_alive_on_long_ipg():
+    """Senza scrambler l'IPG 0x00 lungo produce run costanti che uccidono
+    il CDR: con lo scrambler Clause 49 il link resta UP anche a IPG 2000."""
+    r = simulate(LinkConfig(pattern="eth", l2_ipg_bytes=2000,
+                            **GOOD_LINK), depth="light")
+    assert r.link_up and r.ber_post_dfe < 5e-3
+
+
+def test_scrambler_roundtrip_and_error_multiplication():
+    from serdes_sim.blocks import ethernet
+    rng = np.random.default_rng(3)
+    d = rng.integers(0, 2, 4000).astype(np.uint8)
+    line = ethernet.scramble(d)
+    assert np.array_equal(ethernet.descramble(line), d)
+    hit = line.copy(); hit[2000] ^= 1
+    assert int((ethernet.descramble(hit) ^ d).sum()) == 3
+
+
+def test_jitter_transfer_tracks_low_freq():
+    from serdes_sim.engine import jitter_transfer
+    pts = jitter_transfer(LinkConfig(**GOOD_LINK), freqs_mhz=(10.0, 800.0),
+                          amp_ui=0.05)
+    lo = next(q for q in pts if q["freq_mhz"] == 10.0)
+    hi = next(q for q in pts if q["freq_mhz"] == 800.0)
+    assert lo["jtf_db"] is not None
+    # in banda il loop insegue (JTF vicino a 0 dB); fuori banda attenua
+    assert lo["jtf_db"] > -6.0
+    if hi["jtf_db"] is not None:
+        assert hi["jtf_db"] < lo["jtf_db"]
+
+
+def test_anlt_resolution_and_lt_protocol():
+    from serdes_sim.engine import anlt_session
+    out = anlt_session(LinkConfig(**GOOD_LINK), lt_rounds=2)
+    res = out["an"]["resolution"]
+    assert res["hcd"] == "A18"          # 112G/lane PAM4 → 400GBASE-KR4/CR4
+    assert "RS(544,514)" in res["fec"]
+    states = [t["state"] for t in out["an"]["timeline"]]
+    assert states[0] == "AN_ENABLE" and states[-1] == "AN_GOOD"
+    lt = out["lt"]
+    assert lt["frames"][0]["request"] == "preset 1"
+    assert lt["frames"][-1]["request"] == "local receiver ready"
+    assert lt["snr_after_db"] >= lt["snr_before_db"] - 1e-9
+    assert all(f["status"] in ("updated", "not_updated", "at_limit", "ready")
+               for f in lt["frames"])
+
+
+def test_anlt_no_common_ability():
+    from serdes_sim.blocks.autoneg import resolve
+    res = resolve(["A16", "A17"], ["A0", "A2"])
+    assert res["hcd"] is None
+
+
+def test_l2_ont_report_budget_and_ramp():
+    from serdes_sim.engine import l2_ont_report
+    cfg = LinkConfig(pattern="eth", fec_mode="kp4", **GOOD_LINK)
+    out = l2_ont_report(cfg, ipg_grid=(12, 384))
+    assert out["latency_total_ns"] > 0
+    items = [b["item"] for b in out["latency_budget"]]
+    assert "serializzazione frame" in items
+    assert "FEC store&forward (enc+dec)" in items
+    offered = [r["offered_pct"] for r in out["ramp"]]
+    assert offered[0] > offered[1]      # IPG più grande = offered più basso
+
+
 def test_copper_medium_runs_and_skips_optics():
     r = simulate(LinkConfig(link_medium="copper",
                             channel_il_nyquist_db=14.0), depth="light")

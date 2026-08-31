@@ -60,6 +60,7 @@ class LiveBench:
         self.l2_records = 0
         # BERT error insertion (one-shot sul prossimo record)
         self._inject_bits = 0
+        self._inject_burst = False
         self.injected_total = 0
         self.postfec_bits = 0
         self.postfec_errors = 0
@@ -74,11 +75,12 @@ class LiveBench:
         with self._lock:
             self._reset_locked()
 
-    def inject_errors(self, n_bits: int):
+    def inject_errors(self, n_bits: int, burst: bool = False):
         """BERT: inverte n bit del pattern TX (vs riferimento ED) al
-        prossimo record. One-shot."""
+        prossimo record. One-shot; burst=True li mette consecutivi."""
         with self._lock:
             self._inject_bits = int(max(0, min(n_bits, 200)))
+            self._inject_burst = bool(burst)
 
     @property
     def cfg(self) -> LinkConfig:
@@ -121,9 +123,11 @@ class LiveBench:
                 self._seed += 1
                 seed = self._seed
                 inject = self._inject_bits
+                inject_burst = self._inject_burst
                 self._inject_bits = 0
             run_cfg = (cfg if inject == 0
-                       else cfg.with_updates(err_insert_bits=inject))
+                       else cfg.with_updates(err_insert_bits=inject,
+                                             err_insert_burst=inject_burst))
             try:
                 r = simulate(run_cfg, seed=seed, depth="light")
             except Exception:

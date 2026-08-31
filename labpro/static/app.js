@@ -6,6 +6,71 @@
 const LANG = localStorage.getItem("labpro_lang") === "en" ? "en" : "it";
 const L = (it, en) => LANG === "en" ? (en || it) : it;
 
+/* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
+   frammenti IT→EN applicati solo in modalità EN. */
+const TR_FRAGMENTS = [
+  ["RS(544,514) obbligatorio", "RS(544,514) mandatory"],
+  ["RS(528,514) obbligatorio", "RS(528,514) mandatory"],
+  ["RS-FEC richiesto via F2", "RS-FEC requested via F2"],
+  ["richiesto via F3", "requested via F3"],
+  ["nessuno (né F2 né F3 richiesti)", "none (neither F2 nor F3 requested)"],
+  ["nessuna abilità comune → AN fallisce (in un PHY reale si resta in ABILITY_DETECT)", "no common ability → AN fails (a real PHY stays in ABILITY_DETECT)"],
+  ["AN abilitato, DME sul lane 0", "AN enabled, DME on lane 0"],
+  ["break_link_timer scaduto (60–75 ms)", "break_link_timer expired (60–75 ms)"],
+  ["3 base page identiche ricevute → ability_match", "3 identical base pages received → ability_match"],
+  ["pagina con Ack=1 ed echoed nonce corretto", "page with Ack=1 and correct echoed nonce"],
+  ["ack_finished (nessuna next page in questo modello)", "ack_finished (no next page in this model)"],
+  ["nessuna HCD → si resta in negoziazione", "no HCD → negotiation continues"],
+  ["; parte il PMD control (link training) se previsto", "; PMD control (link training) starts if required"],
+  ["HCD = ", "HCD = "],
+  ["link_status=OK entro il link_fail_inhibit_timer (510 ms)", "link_status=OK within the link_fail_inhibit_timer (510 ms)"],
+  ["link_medium = optical: Clause 73 AN NON esiste sull'ottica (gestione via CMIS); sessione mostrata a scopo didattico come se il lane fosse KR/CR.", "link_medium = optical: Clause 73 AN does NOT exist on optics (managed via CMIS); session shown didactically as if the lane were KR/CR."],
+  ["link_medium = copper: contesto KR/CR corretto per Clause 73.", "link_medium = copper: correct KR/CR context for Clause 73."],
+  ["serializzazione frame", "frame serialization"],
+  ["FEC store&forward (enc+dec)", "FEC store&forward (enc+dec)"],
+  ["propagazione fibra", "fiber propagation"],
+  ["pipeline DSP (FSE+DFE)", "DSP pipeline (FSE+DFE)"],
+  [" bit a ", " bits at "],
+  ["Occupazione PRBS13Q-style 2047/2048", "PRBS13Q-style occupancy 2047/2048"],
+  ["Occupazione dei livelli bilanciata", "Balanced level occupancy"],
+  ["La pre-enfasi consuma headroom", "Pre-emphasis costs headroom"],
+  ["Driver non dominato dal clipping", "Driver not clipping-dominated"],
+  ["Main cursor normalizzato", "Main cursor normalized"],
+  ["Loss campo/potenza coerente", "Field/power loss consistent"],
+  ["Photodiode fuori saturazione", "Photodiode below saturation"],
+  ["TIA fuori overload", "TIA below overload"],
+  ["AFE fuori overload", "AFE below overload"],
+  ["ADC non dominato dal clipping", "ADC not clipping-dominated"],
+  ["in lock", "locked"],
+  ["Pattern lock (BERT-style)", "Pattern lock (BERT-style)"],
+  ["FSE migliora (o eguaglia) la BER di validation", "FSE improves (or matches) validation BER"],
+  ["DFE non degrada la BER di validation", "DFE does not degrade validation BER"],
+  ["GMI numericamente valida", "GMI numerically valid"],
+  ["nel percorso: post-FEC ≤ pre-FEC", "in-path: post-FEC ≤ pre-FEC"],
+  ["Analyzer L2: frame delineati", "L2 analyzer: frames delineated"],
+  ["LINK DOWN — metriche soppresse", "LINK DOWN — metrics suppressed"],
+  ["Acquisition oracle (modalità idealizzata dichiarata)", "Oracle acquisition (declared idealized mode)"],
+  ["Equalizzazione dopo il lock", "Equalization after lock"],
+  ["senza lock del CDR e del pattern non esistono BER/GMI/FEC: questo è il comportamento di un ricevitore reale", "without CDR and pattern lock there is no BER/GMI/FEC: this is how a real receiver behaves"],
+  ["correzioni", "corrections"], ["corretti", "corrected"], ["persi", "lost"],
+  ["miscorretti", "miscorrected"], ["fase", "phase"], ["coda", "tail"],
+  ["simbolo", "symbol"], ["ritardo CDR", "CDR delay"],
+  ["centro nominale TX", "TX nominal center"],
+  ["modello analitico", "analytic model"],
+  ["S2P misurato", "measured S2P"],
+  ["aggressore al piano RX/driver", "aggressor at RX/driver plane"],
+  ["Temperatura modulo", "Module temperature"],
+  ["frame persi", "frames lost"],
+  ["clip=", "clip="], ["sat=", "sat="],
+  ["peak ratio=", "peak ratio="],
+];
+const tr = (txt) => {
+  if (LANG !== "en" || typeof txt !== "string") return txt;
+  let out = txt;
+  for (const [it, en] of TR_FRAGMENTS) out = out.split(it).join(en);
+  return out;
+};
+
 /* ---------------- utilities ---------------- */
 const $ = (sel, el = document) => el.querySelector(sel);
 const CE = (tag, cls, html) => {
@@ -172,6 +237,7 @@ const PARAMS = {
   pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "ssprq_like", "clock2", "clock8", "eth"],
     names: { prbs: "PRBS (PRBSnQ per PAM4)", ssprq_like: "SSPRQ-like (stress, non-clause)", clock2: "clock 0101", clock8: "clock 4+4", eth: "Ethernet frames (L2)" } },
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
+  l2_ipg_bytes: { l: "IPG (rate control)", u: "B", min: 8, max: 2000, step: 4 },
   link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
     names: { optical: "ottico (MZM+fibra+PD)", copper: "rame (KR/CR/C2M)" } },
   pn_skew_ps: { l: "Skew P/N", u: "ps", min: 0, max: 10, step: 0.25 },
@@ -273,6 +339,7 @@ const OPTION_EN = {
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
   "VCSEL direct": "direct VCSEL",
 };
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters"};
 let _pendingCfg = {};
 const _flushCfg = debounce(() => {
   const updates = _pendingCfg; _pendingCfg = {};
@@ -351,12 +418,11 @@ function readout(items) {
 
 /* ================= PANNELLI ================= */
 const NODE_OPTS = {
-  vctle: L("Uscita CTLE", "CTLE output"), vtia: L("Uscita TIA/AFE", "TIA/AFE output"),
-  pfiber: L("P ottica al PD", "Optical power at PD"), pmzm: L("P ottica MZM", "MZM optical power"),
-  chan: L("Uscita canale", "Channel output"), driver: L("Driver (diff. ideale)", "Driver (ideal differential)"),
-  vp: "V_p (P)", vn: "V_n (N)", vdiff: "V_diff", vcm: "V_cm",
-  drive: L("Ingresso canale selezionato", "Selected channel input"),
-  vagc: L("Uscita AGC", "AGC output"),
+  vctle: ["Uscita CTLE", "CTLE output"], vtia: ["Uscita TIA/AFE", "TIA/AFE output"],
+  pfiber: ["P ottica al PD", "Optical power at PD"], pmzm: ["P ottica al modulatore", "Optical power at modulator"],
+  chan: ["Uscita canale", "Channel output"], driver: ["Driver (diff. ideale)", "Driver (ideal diff.)"],
+  vp: ["V_p (ramo P)", "V_p (P leg)"], vn: ["V_n (ramo N)", "V_n (N leg)"],
+  vdiff: ["V_diff", "V_diff"], vcm: ["V_cm", "V_cm"],
 };
 const OPTICAL_NODES = new Set(["pfiber", "pmzm"]);
 function nodeSelect(panel, cb, def = "vctle") {
@@ -366,7 +432,7 @@ function nodeSelect(panel, cb, def = "vctle") {
     sel.innerHTML = "";
     for (const [k, v] of Object.entries(NODE_OPTS)) {
       if (S.cfg && S.cfg.link_medium === "copper" && OPTICAL_NODES.has(k)) continue;
-      const o = CE("option"); o.value = k; o.textContent = v; sel.appendChild(o);
+      const o = CE("option"); o.value = k; o.textContent = Array.isArray(v) ? L(v[0], v[1]) : v; sel.appendChild(o);
     }
     sel.value = [...sel.options].some(o => o.value === cur) ? cur : "vctle";
   };
@@ -462,7 +528,7 @@ PANEL_DEFS.chain = {
           r.setAttribute("stroke", COL.fail);
           r.setAttribute("stroke-width", "2.6");
           r.setAttribute("fill", "rgba(255,84,112,0.10)");
-          r.querySelector("title").textContent = "CHECKPOINT FAIL: " + msg;
+          r.querySelector("title").textContent = "CHECKPOINT FAIL: " + tr(msg);
         }
       }
       let led = p.body.querySelector(".chain-led");
@@ -720,13 +786,34 @@ PANEL_DEFS.scope = {
       this.maskCount(p);
       const m = d.meas, items = [];
       const eyes = ["basso", "medio", "alto"].slice(0, m.eye_heights.length);
-      items.push({ l: "allineamento", v: d.align, sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: L("il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo", "the DCA auto-centers on maximum opening; the offset shows where the CDR samples relative to the optimum") });
+      items.push({ l: L("allineamento", "alignment"), v: tr(d.align), sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: L("il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo", "the DCA auto-centers on maximum opening; the offset shows where the CDR samples relative to the optimum") });
       m.eye_heights.forEach((h, i) => items.push({ l: `eye ${eyes[i]} H/W`, v: `${fix(h, 3)} / ${fix(m.eye_widths_ui[i], 2)} UI`, cls: h > 0 ? "" : "fail", title: L("height p1–p99 al centro strumento / larghezza a p1-p99 (frazione UI)", "p1–p99 height at instrument center / p1–p99 width (UI fraction)") }));
       items.push({ l: "Q per occhio", v: m.q_per_eye.map(q => fix(q, 1)).join(" · ") });
       if (m.t_rise_ps != null) items.push({ l: "rise/fall 20-80", v: `${fix(m.t_rise_ps, 1)} / ${fix(m.t_fall_ps, 1)} ps` });
       if (m.rlm_proxy != null) items.push({ l: "RLM proxy", v: fix(m.rlm_proxy, 3) });
       if (m.oma_outer_mw != null) { items.push({ l: "OMA outer", v: fix(m.oma_outer_mw, 3) + " mW", cls: "warn" }); items.push({ l: "ER", v: fix(m.er_db, 2) + " dB", cls: "warn" }); }
+      // statistiche di misura per acquisizione, stile DCA reale
+      const skey = p.node + "|" + hashCfg(S.cfg);
+      if (p.statsKey !== skey) { p.stats = {}; p.statsKey = skey; }
+      const track = (name, val) => {
+        if (val == null || !isFinite(val)) return;
+        const st = p.stats[name] || { min: val, max: val, sum: 0, sum2: 0, n: 0 };
+        st.cur = val; st.min = Math.min(st.min, val); st.max = Math.max(st.max, val);
+        st.sum += val; st.sum2 += val * val; st.n++;
+        p.stats[name] = st;
+      };
+      const eyesN = ["low", "mid", "up"].slice(0, m.eye_heights.length);
+      m.eye_heights.forEach((h, i) => track("H " + eyesN[i], h));
+      m.eye_widths_ui.forEach((w2, i) => track("W " + eyesN[i], w2));
+      m.q_per_eye.forEach((q, i) => track("Q " + eyesN[i], q));
+      if (m.t_rise_ps != null) { track("rise ps", m.t_rise_ps); track("fall ps", m.t_fall_ps); }
+      const srows = Object.entries(p.stats).map(([k2, st]) => {
+        const mean = st.sum / st.n, sd = Math.sqrt(Math.max(st.sum2 / st.n - mean * mean, 0));
+        return `<tr><td>${k2}</td><td>${fix(st.cur, 3)}</td><td>${fix(st.min, 3)}</td><td>${fix(st.max, 3)}</td><td>${fix(mean, 3)}</td><td>${fix(sd, 4)}</td><td>${st.n}</td></tr>`;
+      }).join("");
       p.measHost.innerHTML = ""; p.measHost.appendChild(readout(items));
+      p.measHost.insertAdjacentHTML("beforeend",
+        `<table class="mini"><tr><th>${L("misura", "measure")}</th><th>cur</th><th>min</th><th>max</th><th>mean</th><th>σ</th><th>N</th></tr>${srows}</table>`);
     } catch (e) { p.measHost.innerHTML = `<div class="note w">${e.message}</div>`; }
   },
   onConfig(p) { if (p.fillAux) p.fillAux(); this.refetch(p); },
@@ -875,7 +962,7 @@ PANEL_DEFS.feclive = {
     mergeAxis(lay, "yaxis", { title: { text: "frame (cum.)", font: { size: 9 } }, type: "log" });
     plot(p.hist, [{ x: xs, y: ys, type: "bar", marker: { color: colors } }], lay);
   },
-  onConfig(p) { syncParams(p.body); },
+  onConfig(p) { syncParams(p.body); this.onTick(p); },
 };
 
 /* --- serializer + TX PLL (jitter injection) + coppia P/N --- */
@@ -984,6 +1071,7 @@ PANEL_DEFS.jitter = {
 /* --- BER live --- */
 PANEL_DEFS.berlive = {
   title: "BER live — accumulo", size: "s4",
+  onConfig(p) { this.onTick(p); },
   make(p) { p.body.innerHTML = ""; p.ro = CE("div"); p.body.appendChild(p.ro); p.trend = CE("div", "plot"); p.body.appendChild(p.trend); this.onTick(p); },
   onTick(p) {
     const a = S.acc; if (!a) return;
@@ -1093,18 +1181,22 @@ PANEL_DEFS.channel = {
 };
 
 PANEL_DEFS.optical = {
-  title: "Ottica — MZM/EML · fibra", size: "s6",
+  title: "Optical TX · fiber · levels", size: "s6",
   make(p) {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
-    p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1);
-    p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2);
+    const grid = CE("div"); grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
+    p.plot3 = CE("div", "plot"); p.plot4 = CE("div", "plot");
+    grid.append(p.plot1, p.plot2, p.plot3, p.plot4);
+    p.body.appendChild(grid);
+    p.note = CE("div", "note"); p.body.appendChild(p.note);
     this.refetch(p);
   },
   async refetch(p) {
     const d = await GET(`/api/panel/optical?source=${S.running ? "live" : "auto"}`);
-    if (d.inactive) { p.ro.innerHTML = `<div class="note w">${d.reason}</div>`; p.plot1.innerHTML = p.plot2.innerHTML = ""; return; }
+    if (d.inactive) { p.ro.innerHTML = `<div class="note w">${d.reason}</div>`; p.plot1.innerHTML = p.plot2.innerHTML = p.plot3.innerHTML = p.plot4.innerHTML = ""; p.note.innerHTML = ""; return; }
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
       { l: L("architettura", "architecture"), v: d.modulator.toUpperCase(), sub: `${d.laser_type} · ${S.cfg.electrical_drive_mode}` },
@@ -1114,14 +1206,50 @@ PANEL_DEFS.optical = {
       { l: L("propagazione", "propagation"), v: d.fiber_type.toUpperCase(), sub: d.modal_bw_ghz ? `modal BW ${fix(d.modal_bw_ghz, 1)} GHz` : `β₂ ${sci(d.beta2_s2_m)} · β₃ ${sci(d.beta3_s3_m)}` },
       { l: "PMD / Kerr", v: `${fix(d.pmd_dgd_ps, 3)} ps / ${sci(d.nonlinear_phase_peak_rad)} rad`, sub: `linewidth ${fix(d.laser_linewidth_mhz, 1)} MHz` },
     ]));
-    const l1 = PL({ height: 180, showlegend: false });
-    mergeAxis(l1, "xaxis", { title: { text: d.modulator === "mzm" ? "drive [V]" : "drive normalizzato EML", font: { size: 10 } } });
-    mergeAxis(l1, "yaxis", { title: { text: "P/P_in", font: { size: 10 } } });
-    plot(p.plot1, [{ x: d.v_static, y: d.p_static, line: { color: COL.op, width: 2 } }], l1);
-    const l2 = PL({ height: 180, showlegend: false, shapes: [vline(d.nyquist_ghz)] });
-    mergeAxis(l2, "xaxis", { title: { text: "GHz", font: { size: 10 } } });
-    mergeAxis(l2, "yaxis", { title: { text: "fading CD dB", font: { size: 10 } }, range: [-50, 5] });
-    plot(p.plot2, [{ x: d.fade_f_ghz, y: d.fade_db, line: { color: COL.op } }], l2);
+    // 1) transfer del modulatore + istogramma di pilotaggio: DOVE lavora
+    const l1 = PL({ height: 200 });
+    mergeAxis(l1, "xaxis", { title: { text: d.modulator === "mzm" ? L("drive [V]", "drive [V]") : L("drive normalizzato", "normalized drive"), font: { size: 9 } } });
+    mergeAxis(l1, "yaxis", { title: { text: "P/P_in", font: { size: 9 } } });
+    const tr1 = [{ x: d.v_static, y: d.p_static, name: "transfer", line: { color: COL.op, width: 2 } }];
+    if (d.drive_hist) tr1.push({ x: d.drive_hist.x, y: d.drive_hist.h.map(v => v * Math.max(...d.p_static) * 0.5), name: L("dove pilota il segnale", "drive occupancy"), type: "bar", marker: { color: "rgba(86,200,232,0.35)" } });
+    plot(p.plot1, tr1, l1);
+    // 2) link budget waterfall
+    if (d.budget_steps) {
+      const l2 = PL({ height: 200, showlegend: false });
+      mergeAxis(l2, "yaxis", { title: { text: "dBm", font: { size: 9 } } });
+      plot(p.plot2, [{
+        x: d.budget_steps.map(b => tr(b.plane)), y: d.budget_steps.map(b => b.dbm),
+        type: "bar", marker: { color: COL.op },
+        text: d.budget_steps.map(b => (b.delta_db ? fix(b.delta_db, 1) + " dB" : fix(b.dbm, 1))),
+        textposition: "outside", textfont: { size: 9 },
+      }], l2);
+    }
+    // 3) livelli ottici P0..P3 al PD (le grandezze delle spec ottiche)
+    if (d.p_levels) {
+      const pl = d.p_levels;
+      const l3 = PL({ height: 200, showlegend: false });
+      mergeAxis(l3, "xaxis", { title: { text: L("livello ottico al PD", "optical level at PD"), font: { size: 9 } } });
+      mergeAxis(l3, "yaxis", { title: { text: "dBm", font: { size: 9 } } });
+      plot(p.plot3, [{
+        x: pl.p_dbm.map((_, i) => "P" + i), y: pl.p_dbm, type: "bar",
+        marker: { color: [COL.el, COL.ok, COL.am, COL.op].slice(0, pl.p_dbm.length) },
+        text: pl.p_dbm.map(v => fix(v, 2)), textposition: "outside", textfont: { size: 9 },
+      }], l3);
+      p.note.innerHTML = `OMA<sub>outer</sub> ${fix(pl.oma_outer_mw, 3)} mW` +
+        (pl.oma_inner_mw != null ? ` · OMA<sub>inner</sub> ${fix(pl.oma_inner_mw, 3)} mW` : "") +
+        ` · ER ${fix(pl.er_db, 2)} dB · RLM ${fix(pl.rlm_proxy, 3)} — ` +
+        L("misure proxy al centro strumento (niente reference receiver di clause: non è TDECQ)",
+          "proxy measurements at instrument center (no clause reference receiver: this is not TDECQ)");
+    } else {
+      p.plot3.innerHTML = ""; p.note.innerHTML = L("livelli ottici non stimabili su questo record", "optical levels not estimable on this record");
+    }
+    // 4) fading CD + chirp istantaneo
+    const l4 = PL({ height: 200, shapes: [vline(d.nyquist_ghz)] });
+    mergeAxis(l4, "xaxis", { title: { text: "GHz", font: { size: 9 } } });
+    mergeAxis(l4, "yaxis", { title: { text: L("fading CD [dB]", "CD fading [dB]"), font: { size: 9 } }, range: [-50, 5] });
+    const tr4 = [{ x: d.fade_f_ghz, y: d.fade_db, name: "IM/DD", line: { color: COL.op } }];
+    if (d.f_null_ghz) l4.shapes.push(vline(d.f_null_ghz, COL.fail, "dot"));
+    plot(p.plot4, tr4, l4);
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
 };
@@ -1153,8 +1281,28 @@ PANEL_DEFS.timing = {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["cdr_mode", "cdr_bw", "cdr_damping", "rx_ppm_offset"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
-    p.plot1 = CE("div", "plot"); p.body.appendChild(p.plot1);
-    p.plot2 = CE("div", "plot"); p.body.appendChild(p.plot2);
+    const g = CE("div"); g.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
+    p.plot3 = CE("div", "plot"); p.plot4 = CE("div", "plot");
+    g.append(p.plot1, p.plot2, p.plot3, p.plot4);
+    p.body.appendChild(g);
+    const bar = CE("div", "scope-bar");
+    const btnJtf = CE("button", "btn btn-accent", L("Misura jitter transfer (~3 s)", "Measure jitter transfer (~3 s)"));
+    btnJtf.onclick = async () => {
+      btnJtf.disabled = true;
+      try {
+        const d2 = await POST("/api/experiment/jtf", {});
+        const ok = d2.points.filter(q => q.jtf_db != null);
+        const lay = PL({ height: 190, showlegend: false, shapes: [hline(-3, COL.muted, "dash"), vline(d2.loop_bw_mhz, COL.ok, "dot")] });
+        mergeAxis(lay, "xaxis", { type: "log", title: { text: "PJ [MHz]", font: { size: 9 } } });
+        mergeAxis(lay, "yaxis", { title: { text: L("OJTF misurata [dB]", "measured OJTF [dB]"), font: { size: 9 } }, range: [-30, 6] });
+        plot(p.plot4, ok.length ? [{ x: ok.map(q => q.freq_mhz), y: ok.map(q => q.jtf_db), mode: "lines+markers", line: { color: COL.am, width: 2 } }] : [], lay);
+        p.jtfDone = true;
+      } catch (e) { toast(e.message); }
+      btnJtf.disabled = false;
+    };
+    bar.append(btnJtf, CE("span", "", L("OJTF: 0 dB = il loop insegue il PJ; il picco vicino al corner è il jitter peaking; il −3 dB è la banda REALE del loop (verde = banda impostata).", "OJTF: 0 dB = the loop tracks the PJ; the peak near the corner is jitter peaking; the −3 dB crossing is the ACTUAL loop bandwidth (green = configured).")));
+    p.body.appendChild(bar);
     p.note = CE("div", "note"); p.body.appendChild(p.note);
     this.refetch(p);
   },
@@ -1178,6 +1326,29 @@ PANEL_DEFS.timing = {
       mergeAxis(l2, "xaxis", { title: { text: "simbolo (×" + c.sub + ")", font: { size: 9 } } });
       mergeAxis(l2, "yaxis", { title: { text: "registro freq [ppm]", font: { size: 9 } } });
       plot(p.plot2, [{ y: c.fppm, line: { color: COL.am, width: 1.2 } }], l2);
+      // istogramma dell'errore di fase del loop (tau detrended, log-y)
+      {
+        const n = c.tau.length, mx = (n - 1) / 2;
+        let num = 0, den = 0; const my = c.tau.reduce((x, y) => x + y, 0) / n;
+        for (let i = 0; i < n; i++) { num += (i - mx) * (c.tau[i] - my); den += (i - mx) ** 2; }
+        const b = num / den;
+        const resid = c.tau.map((v, i) => v - (my + b * (i - mx)));
+        const bins = 60, hmin = Math.min(...resid), hmax = Math.max(...resid);
+        const hh = new Array(bins).fill(0);
+        for (const v of resid) hh[Math.min(bins - 1, Math.max(0, Math.floor((v - hmin) / (hmax - hmin || 1) * bins)))]++;
+        const l3 = PL({ height: 190, showlegend: false });
+        mergeAxis(l3, "xaxis", { title: { text: L("errore di fase del loop [UI]", "loop phase error [UI]"), font: { size: 9 } } });
+        mergeAxis(l3, "yaxis", { type: "log", title: { text: "count", font: { size: 9 } } });
+        plot(p.plot3, [{ x: hh.map((_, i) => hmin + (i + 0.5) * (hmax - hmin) / bins), y: hh.map(v => Math.max(v, 0.5)), type: "bar", marker: { color: COL.dg } }], l3);
+      }
+      // S-curve dei TED dal riferimento full (finché non c'è una JTF misurata)
+      if (d.gardner && !p.jtfDone) {
+        const ls = PL({ height: 190 });
+        mergeAxis(ls, "xaxis", { title: { text: L("fase [UI] — S-curve TED", "phase [UI] — TED S-curve"), font: { size: 9 } } });
+        plot(p.plot4, [
+          { x: d.phase_ui, y: d.gardner, name: "Gardner", line: { color: COL.dg } },
+          { x: d.phase_ui, y: d.mm, name: "MM", line: { color: COL.am } }], ls);
+      }
       p.note.innerHTML = L("Loop PI del 2° ordine + NCO <b>nel datapath</b>: gli istanti di campionamento di FSE/DFE/BER sono quelli del loop; l'allineamento viene dal pattern lock, non da un oracle. Senza lock il link è DOWN e le metriche non esistono.", "2nd-order PI loop + NCO <b>in the datapath</b>: FSE/DFE/BER sampling instants come from the loop; alignment comes from pattern lock, not from an oracle. Without lock the link is DOWN and metrics do not exist.");
     } else if (d.phase_ui) {
       p.ro.appendChild(readout([
@@ -1335,7 +1506,7 @@ PANEL_DEFS.checks = {
   make(p) { p.body.innerHTML = ""; p.host = CE("div"); p.body.appendChild(p.host); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/checks");
-    const rows = d.checks.map(c => `<tr><td><span class="badge ${c.status === "PASS" ? "ok" : "fail"}">${c.status === "PASS" ? "✓" : "✗"}</span></td><td>${c.check}<br><span style="color:var(--muted)">${c.detail || ""}</span></td></tr>`).join("");
+    const rows = d.checks.map(c => `<tr><td><span class="badge ${c.status === "PASS" ? "ok" : "fail"}">${c.status === "PASS" ? "✓" : "✗"}</span></td><td>${tr(c.check)}<br><span style="color:var(--muted)">${tr(c.detail || "")}</span></td></tr>`).join("");
     p.host.innerHTML = `<table class="mini">${rows}</table>`;
   },
   onConfig(p) { this.refetch(p); },
@@ -1436,11 +1607,29 @@ PANEL_DEFS.bert = {
     const bar = CE("div", "scope-bar");
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
     const btn = CE("button", "btn btn-accent", "Inserisci errori");
-    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value })
+    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked })
       .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "bits flipped at TX on the next record: watch the spike in the map and (with FEC) the corrections.")}</span>`}</span>`; })
       .catch(e => toast(e.message));
     btn.textContent = L("Inserisci errori", "Insert errors");
-    bar.append(CE("span", "", L("bit da invertire:", "bits to invert:")), p.nIns, btn);
+        p.burstChk = CE("input"); p.burstChk.type = "checkbox";
+    const burstLab = CE("label", "", ""); burstLab.append(p.burstChk, document.createTextNode(" burst"));
+    bar.append(CE("span", "", L("bit da invertire:", "bits to flip:")), p.nIns, burstLab, btn);
+    // gating stile BERT: Start/Stop su finestra dei contatori cumulativi
+    const gbar = CE("div", "scope-bar");
+    p.gateBtn = CE("button", "btn", L("Gate START", "Gate START"));
+    p.gateInfo = CE("span", "", "");
+    p.targetBer = CE("input"); p.targetBer.type = "text"; p.targetBer.value = "1e-3"; p.targetBer.style.width = "64px";
+    p.gateBtn.onclick = () => {
+      if (!p.gate) {
+        p.gate = { bits: S.acc.bits_total, errs: S.acc.bit_errors_total, t: Date.now() };
+        p.gateBtn.textContent = "Gate STOP"; p.gateBtn.classList.add("btn-accent");
+      } else {
+        p.gateFrozen = this.gateSnapshot(p); p.gate = null;
+        p.gateBtn.textContent = L("Gate START", "Gate START"); p.gateBtn.classList.remove("btn-accent");
+      }
+    };
+    gbar.append(p.gateBtn, CE("span", "", L("target BER:", "target BER:")), p.targetBer, p.gateInfo);
+    p.body.appendChild(gbar);
     p.body.appendChild(bar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
@@ -1451,8 +1640,23 @@ PANEL_DEFS.bert = {
     p.lastFetch = 0;
     this.refetch(p);
   },
+  gateSnapshot(p) {
+    if (!p.gate || !S.acc) return null;
+    const bits = S.acc.bits_total - p.gate.bits;
+    const errs = S.acc.bit_errors_total - p.gate.errs;
+    const secs = (Date.now() - p.gate.t) / 1000;
+    const target = Number(p.targetBer.value) || 1e-3;
+    // confidenza (iid): CL = 1 - exp(-n·p_target) con 0 errori; con errori,
+    // bit necessari ~3/p per CL95 — indicatore, non statistica completa
+    const cl = bits > 0 ? (1 - Math.exp(-bits * target)) * 100 : 0;
+    return { bits, errs, secs, ber: bits ? errs / bits : null, cl, target };
+  },
   async refetch(p) {
     try {
+      const g = p.gate ? this.gateSnapshot(p) : p.gateFrozen;
+      if (p.gateInfo && g) {
+        p.gateInfo.innerHTML = `${p.gate ? "⏺" : "⏹"} ${eng(g.bits)}b · ${g.errs} err · BER ${g.ber == null ? "—" : sci(g.ber)} · ${fix(g.secs, 0)}s · CL(BER<${sci(g.target, 0)}) ${fix(Math.min(g.cl, 99.9), 1)}%`;
+      }
       const d = await GET(`/api/panel/bert?source=${S.running ? "live" : "auto"}`);
       p.ro.innerHTML = "";
       if (d.link_down) { p.ro.appendChild(readout([{ l: "SYNC", v: "LOSS", cls: "fail", big: true, sub: "pattern lock perso: l'ED non conta" }])); return; }
@@ -1483,7 +1687,7 @@ PANEL_DEFS.l2 = {
   title: "Ethernet · Traffic L2-lite", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes"]));
+    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes", "l2_ipg_bytes"]));
     const toolsBar = CE("div", "scope-bar");
     const bench = CE("button", "btn btn-accent", L("Benchmark frame size", "Frame-size benchmark"));
     bench.onclick = async () => {
@@ -1503,7 +1707,29 @@ PANEL_DEFS.l2 = {
       } catch (e) { p.benchTable.innerHTML = `<div class="note w">${e.message}</div>`; }
       bench.disabled = false; bench.textContent = L("Benchmark frame size", "Frame-size benchmark");
     };
-    toolsBar.append(bench, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
+    const ont = CE("button", "btn", L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)"));
+    ont.onclick = async () => {
+      ont.disabled = true; ont.textContent = L("misura…", "measuring…");
+      try {
+        const d = await POST("/api/experiment/ont", {});
+        const lay = PL({ height: 210, yaxis2: { overlaying: "y", side: "right",
+          title: { text: "FLR [%]", font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+        mergeAxis(lay, "xaxis", { title: { text: "offered load [%]", font: { size: 9 } } });
+        mergeAxis(lay, "yaxis", { title: { text: "goodput [Gb/s]", font: { size: 9 } } });
+        const rr = d.ramp.filter(r => isFinite(r.goodput_gbps));
+        plot(p.benchPlot, [
+          { x: rr.map(r => r.offered_pct), y: rr.map(r => r.goodput_gbps), name: "goodput", mode: "lines+markers", line: { color: COL.ok, width: 2 } },
+          { x: d.ramp.map(r => r.offered_pct), y: d.ramp.map(r => r.loss_pct), name: "FLR", yaxis: "y2", mode: "lines+markers", line: { color: COL.fail, dash: "dot" } },
+        ], lay);
+        const bud = d.latency_budget.map(b => `<tr><td>${tr(b.item)}</td><td>${b.ns >= 1000 ? fix(b.ns / 1000, 2) + " µs" : fix(b.ns, 1) + " ns"}</td><td>${tr(b.detail)}</td></tr>`).join("");
+        p.benchTable.innerHTML = `<table class="mini"><tr><th>${L("latency budget (one-way)", "latency budget (one-way)")}</th><th>t</th><th></th></tr>${bud}` +
+          `<tr><th>${L("totale", "total")}</th><th>${fix(d.latency_total_ns / 1000, 2)} µs</th><th></th></tr>` +
+          (d.cdr_lock_us != null ? `<tr><td>${L("service disruption proxy", "service disruption proxy")}</td><td>${fix(d.cdr_lock_us, 2)} µs</td><td>${L("tempo di lock del CDR", "CDR lock time")}</td></tr>` : "") + `</table>` +
+          `<div class="note">${L("Ramp: l'IPG modula l'offered load come il rate scheduler di un ONT; la perdita qui viene SOLO dai bit error del PHY (nessun DUT con code). Latenza = budget dai blocchi, non un round-trip con timestamp.", "Ramp: IPG modulates offered load like an ONT rate scheduler; loss here comes ONLY from PHY bit errors (no queueing DUT). Latency = block budget, not a timestamped round-trip.")}</div>`;
+      } catch (e) { p.benchTable.innerHTML = `<div class="note w">${e.message}</div>`; }
+      ont.disabled = false; ont.textContent = L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)");
+    };
+    toolsBar.append(bench, ont, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
     p.body.appendChild(toolsBar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.benchPlot = CE("div", "plot"); p.body.appendChild(p.benchPlot);
@@ -1532,9 +1758,64 @@ PANEL_DEFS.l2 = {
       { l: L("FCS errati", "bad FCS"), v: String(l.frames_fcs_bad), cls: l.frames_fcs_bad ? "fail" : "ok" },
       { l: L("persi", "lost"), v: String(l.frames_lost), cls: l.frames_lost ? "fail" : "ok", sub: isFinite(l.loss_pct) ? fix(l.loss_pct, 2) + " %" : "" },
       { l: L("throughput utile", "useful throughput"), v: fix(l.throughput_gbps, 2) + " Gb/s", sub: L("payload con FCS ok / tempo", "FCS-good payload / time") },
+      { l: L("offered load", "offered load"), v: (() => { const w = l.frame_bytes + 8, ipg = S.cfg.l2_ipg_bytes || 12; return fix(100 * w / (w + ipg), 1); })() + " %", sub: `IPG ${S.cfg.l2_ipg_bytes || 12} B`, title: L("frazione di linea occupata da frame vs IPG: il rate control del generatore, come su uno Xena/ONT", "line fraction carrying frames vs IPG: the generator rate control, as on a Xena/ONT") },
     ]));
   },
   onConfig(p) { syncParams(p.body); this.onTick(p); },
+};
+
+/* --- AN/LT Clause 73/72-136 --- */
+PANEL_DEFS.anlt = {
+  title: "AN/LT · Clause 73 + training", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    const btn = CE("button", "btn btn-accent", L("Avvia AN + LT (~10 s)", "Run AN + LT (~10 s)"));
+    p.applyChk = CE("input"); p.applyChk.type = "checkbox";
+    const lab = CE("label", "", ""); lab.append(p.applyChk, document.createTextNode(L(" applica i tap negoziati", " apply negotiated taps")));
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = L("negoziazione…", "negotiating…");
+      try {
+        const d = await POST("/api/experiment/anlt", { apply: p.applyChk.checked });
+        const res = d.an.resolution;
+        p.ro.innerHTML = "";
+        p.ro.appendChild(readout(res.hcd ? [
+          { l: "HCD", v: res.hcd_name, big: true, cls: "ok", sub: `${res.lanes}×${res.lane_gbps} Gb/s ${res.modulation}` },
+          { l: "FEC", v: tr(res.fec).split(" — ")[0], sub: tr(res.fec) },
+          { l: L("abilità comuni", "common abilities"), v: String(res.common.length), sub: res.common.join(" ") },
+          { l: "LT", v: `${fix(d.lt.snr_before_db, 1)}→${fix(d.lt.snr_after_db, 1)} dB`, cls: d.lt.snr_after_db > d.lt.snr_before_db ? "ok" : "", sub: `${d.lt.exchanges} exchange · ${fix(d.lt.duration_us, 0)} µs` + (d.applied ? L(" · applicato", " · applied") : "") },
+        ] : [{ l: "HCD", v: "—", cls: "fail", big: true, sub: tr(res.parallel_detect) }]));
+        // pagine base
+        const pg = d.an.pages;
+        p.pages.innerHTML = `<table class="mini"><tr><th></th><th>base page</th><th>abilities</th><th>FEC</th><th>nonce</th></tr>` +
+          [["local", pg.local_base], ["partner", pg.partner_base]].map(([who, b]) =>
+            `<tr><td>${who}</td><td>${b.raw_hex}</td><td>${b.abilities.join(" ")}</td><td>${b.fec_bits.join(" ") || "—"}</td><td>${b.nonce}</td></tr>`).join("") + `</table>`;
+        // timeline stati AN
+        p.sm.innerHTML = `<table class="mini"><tr><th>t [ms]</th><th>${L("stato", "state")}</th><th></th></tr>` +
+          d.an.timeline.map(t2 => `<tr><td>${fix(t2.t_ms, 2)}</td><td><b>${t2.state}</b></td><td>${tr(t2.note)}</td></tr>`).join("") + `</table>` +
+          `<div class="note">${tr(d.an.medium_note)}</div>`;
+        // LT: SNR per scambio + tabella richieste coefficienti
+        const fr = d.lt.frames;
+        const lay = PL({ height: 190, showlegend: false });
+        mergeAxis(lay, "xaxis", { title: { text: L("tempo di training [µs]", "training time [µs]"), font: { size: 9 } } });
+        mergeAxis(lay, "yaxis", { title: { text: "SNR slicer [dB]", font: { size: 9 } } });
+        plot(p.ltPlot, [{ x: fr.map(f => f.t_us), y: fr.map(f => f.snr_db), mode: "lines+markers", line: { color: COL.dg, width: 2, shape: "hv" } }], lay);
+        p.ltTable.innerHTML = `<table class="mini"><tr><th>t [µs]</th><th>coeff</th><th>request</th><th>status</th><th>c(-1)</th><th>c0</th><th>c(+1)</th></tr>` +
+          fr.map(f => `<tr><td>${fix(f.t_us, 0)}</td><td>${f.coeff}</td><td>${f.request}</td><td class="${f.status === "updated" || f.status === "ready" ? "ok" : ""}">${f.status}</td><td>${fix(f.taps[0], 2)}</td><td>${fix(f.taps[1], 2)}</td><td>${fix(f.taps[2], 2)}</td></tr>`).join("") + `</table>`;
+      } catch (e) { toast(e.message); }
+      btn.disabled = false; btn.textContent = L("Avvia AN + LT (~10 s)", "Run AN + LT (~10 s)");
+    };
+    bar.append(btn, lab);
+    p.body.appendChild(bar);
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.pages = CE("div"); p.body.appendChild(p.pages);
+    p.sm = CE("div"); p.body.appendChild(p.sm);
+    p.ltPlot = CE("div", "plot"); p.body.appendChild(p.ltPlot);
+    p.ltTable = CE("div"); p.ltTable.style.cssText = "max-height:180px;overflow-y:auto"; p.body.appendChild(p.ltTable);
+    p.body.appendChild(CE("div", "note", L(
+      "Auto-Negotiation Clause 73 a livello di PROTOCOLLO (base page 48 bit, priority resolution → HCD, timer di Table 73-7; niente segnalazione DME) + Link Training con l'handshake vero di Clause 72/136: preset 1, richieste increment/decrement per c(-1)/c(+1), status updated/not_updated/at_limit, receiver ready. La decisione del RX usa la metrica misurata dal banco (SNR allo slicer), non un DFE hardware. Clause 73 esiste per KR/CR (backplane/rame): sull'ottica la gestione è CMIS.",
+      "Clause 73 Auto-Negotiation at the PROTOCOL level (48-bit base page, priority resolution → HCD, Table 73-7 timers; no DME signalling) plus Link Training with the real Clause 72/136 handshake: preset 1, increment/decrement requests for c(-1)/c(+1), updated/not_updated/at_limit status, receiver ready. RX decisions use the bench-measured metric (slicer SNR), not a hardware DFE. Clause 73 exists for KR/CR (backplane/copper): optics is managed via CMIS.")));
+  },
 };
 
 /* --- Link training --- */
@@ -1719,6 +2000,7 @@ const PALETTE = [
   ["sweep", L("Sweep parametrico", "Parametric sweep"), null, 4, 7],
   ["jtol", "JTOL-lite (PJ)", "digital", 4, 8],
   ["train", "Link training", "digital", 4, 9],
+  ["anlt", "AN/LT · Clause 73", "digital", 4, 9.5],
   ["standards", "Standard IEEE/OIF", null, 4, 10],
   ["instruments", "Instrument alignment", null, 4, 11],
   ["checks", "Checkpoint & ledger", null, 4, 12],
@@ -1731,7 +2013,7 @@ const VIEWS = {
   "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "pd", "tia", "agc", "ctle", "adc", "timing", "eq", "decisions", "scope"],
   "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "instruments", "checks"],
-  "BERT e traffico": ["chain", "stimulus", "bert", "l2", "feclive", "berlive", "train", "cmis"],
+  "BERT e traffico": ["chain", "stimulus", "bert", "l2", "anlt", "feclive", "berlive", "train", "cmis"],
   "Scope P/N": ["chain", "scope", "scope", "serpll", "jitter", "spectrum"],
   "Academy": ["chain", "education", "standards", "instruments", "scope", "jitter", "bert", "l2"],
 };
@@ -1750,7 +2032,7 @@ const PANEL_EN = {
   jitter: "Jitter · TIE", spectrum: "Spectrum analyzer", berlive: "Live BER · accumulated",
   bert: "BERT · Error Detector", feclive: "Live FEC · accumulated",
   l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",
-  jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent",
+  jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent", anlt: "AN/LT · Clause 73 + training",
   standards: "IEEE / OIF standards", checks: "Checkpoints & signal ledger",
   instruments: "Instrument alignment · DCA / BERT / Traffic",
   education: "Academy · block and standards guide",

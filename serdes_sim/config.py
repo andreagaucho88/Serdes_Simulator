@@ -18,6 +18,7 @@ class LinkConfig:
     prbs_order: int = 13          # 7, 9, 11, 13, 15, 23, 31
     pattern: str = "prbs"         # prbs | clock2 | clock8 | eth | ssprq_like
     l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
+    l2_ipg_bytes: int = 12        # inter-packet gap (rate control del PPG)
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
     fec_mode: str = "none"        # "none" | "kp4" RS(544,514) | "kr4" RS(528,514)
@@ -61,6 +62,7 @@ class LinkConfig:
 
     # BERT: bit del pattern invertiti al TX rispetto al riferimento dell'ED
     err_insert_bits: int = 0
+    err_insert_burst: bool = False   # True: bit consecutivi (burst singolo)
 
     # Canale elettrico
     channel_il_nyquist_db: float = 12.0
@@ -248,6 +250,8 @@ class LinkConfig:
             problems.append("pattern deve essere prbs/clock2/clock8/eth/ssprq_like")
         if self.pattern in ("clock2", "clock8", "ssprq_like") and self.fec_mode != "none":
             problems.append("il FEC in-path richiede un payload (prbs o eth)")
+        if not (8 <= self.l2_ipg_bytes <= 2000):
+            problems.append("l2_ipg_bytes fuori range [8, 2000]")
         if not (64 <= self.l2_frame_bytes <= 1024):
             problems.append("l2_frame_bytes fuori range [64, 1024]")
         if self.link_medium not in ("optical", "copper"):
