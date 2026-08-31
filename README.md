@@ -1,0 +1,118 @@
+# SerDes Optical Lab — laboratorio didattico della catena elettro-ottica
+
+Laboratorio interattivo 112G-class PAM4: il segnale dal bit al BER, senza salti.
+
+> **Stato: laboratorio didattico avanzato con proxy dichiarati.**
+> Il **CDR è nel datapath** (loop PI 2° ordine + NCO, Gardner o Mueller-Müller,
+> pattern lock stile BERT; senza lock il link è DOWN e le metriche non
+> esistono; "oracle" resta come modalità idealizzata dichiarata). Il **FEC può
+> essere nel percorso** (encoder TX → decoder RX, KP4/KR4 reali, con categoria
+> miscorrected) oppure fare analisi what-if del pattern. Le soglie da modello
+> sono etichettate come tali: NON è uno strumento di conformità IEEE/OIF.
+> Roadmap e limiti in `HANDOFF_CODEX.md`.
+
+**bit → PAM4 → TX FFE → DAC/driver → canale elettrico → MZM → fibra →
+PD/TIA/CTLE → ADC 2 sps → CDR → FSE/DFE → LLR, BER, GMI.**
+
+La fisica è quella (verificata) del notebook v7 del corso
+(`codice/build_serdes_course_framework_v7.py`), riorganizzata in un motore
+modulare (`serdes_sim/`) con una GUI Streamlit (`app/`).
+
+## Due interfacce
+
+### Lab PRO (consigliata) — banco a pannelli con acquisizione continua
+
+Doppio click su `avvia_labpro.command`, oppure:
+
+```bash
+cd simulatore
+python -m labpro.server --port 8640
+# → http://localhost:8640
+```
+
+Frontend custom (Tornado + WebSocket + canvas/plotly locale, niente CDN):
+
+- **pannelli paralleli**: apri, chiudi, ridimensiona e riordina le schede
+  (Scope DCA, Spettro, CTLE, FEC live, BER live, catena, ogni blocco…) una
+  accanto all'altra — il layout si salva da solo;
+- **acquisizione continua vera**: un motore server-side simula record dopo
+  record (nuovo rumore a ogni record) e i contatori si riempiono nel tempo —
+  bit, errori, IC della BER che si stringe, **frame FEC clean/corretti/persi
+  che si accumulano** come su un analyzer reale;
+- **FEC nel percorso**: encoder RS prima del mapper e decoder dopo lo slicer
+  (KP4 RS(544,514) o KR4 RS(528,514), entrambi codec algebrici reali);
+- **pannello CTLE dedicato**: zero/poli/gain DC, Bode + group delay, peaking
+  e noise enhancement;
+- **DCA con misure**: eye a persistenza con overlay di livelli e soglie,
+  height/width per occhio, Q, RLM, OMA/ER sui nodi ottici;
+- ogni modifica di parametro azzera l'accumulo e si propaga a tutti i
+  pannelli via WebSocket (config versionata, hash in basso a destra).
+
+### Interfaccia didattica Streamlit (pagine guidate con teoria)
+
+Doppio click su `avvia_simulatore.command`, oppure:
+
+```bash
+cd simulatore
+python -m streamlit run app/main.py
+# → http://localhost:8501
+```
+
+Dipendenze (già presenti in anaconda3): numpy, scipy, pandas, streamlit ≥1.45,
+plotly.
+
+## Struttura
+
+- `serdes_sim/` — motore fisico puro (nessuna dipendenza dalla GUI):
+  - `config.py`: `LinkConfig` (immutabile) + 6 preset didattici;
+  - `blocks/`: stimolo, TX, canale, ottica, ricevitore, ADC, DSP, metriche,
+    **FEC RS(544,514) reale** su GF(2¹⁰);
+  - `engine.py`: `simulate(cfg, seed, depth)` e `sweep(...)`;
+  - `ami.py`: loader IBIS-AMI via ctypes + modello demo compilabile;
+  - `selftest.py`: `python -m serdes_sim.selftest` verifica tutta la catena.
+- `app/` — GUI Streamlit, 21 pagine: panoramica, catena completa, 11 stadi
+  (inclusa l'analisi FEC), **Scope live stile DCA**, **Spectrum analyzer**,
+  eye lungo la catena, misure & definizioni, esperimenti, standard IEEE/OIF,
+  IBIS-AMI, note. Lo schema della catena è **cliccabile** (ogni blocco porta
+  alla sua pagina) e la configurazione è persistita su disco fra i reload.
+- `tests/` — suite pytest (regressione numerica della baseline inclusa):
+  `python -m pytest tests -q`.
+
+Funzionalità principali:
+
+- **Stimolo**: PRBS 7/9/11/13/15/23/31; NRZ, PAM4 Gray, PAM4 binario.
+- **Canale misurato**: un Touchstone S2P caricato può sostituire il modello
+  analitico nel percorso principale (pagina Canale elettrico).
+- **FEC RS(544,514)**: codec algebrico reale (Berlekamp-Massey + Chien),
+  banco di iniezione errori, analisi iid/burst del pattern del link.
+- **Scope live (DCA)**: eye a persistenza di fosforo 60 fps con tracce reali,
+  acquisizione continua, pannello misure (Vpp/OMA/ER/BER/SNR/Q) e analisi FEC
+  con verdetto — riflette ogni modifica di configurazione.
+- **SNR e definizioni**: SNR al slicer, Q per occhio, OMA/ER proxy; pagina
+  "Misure & definizioni" con definizione operativa e formula di ogni numero.
+- **Standard IEEE 802.3 / OIF-CEI**: mappa delle corsie 10G→200G/lane con la
+  famiglia più vicina alla tua configurazione e il margine sulla soglia
+  pre-FEC (modello binomiale dichiarato).
+- **Filtri causali** opzionali (fase reale) su DAC/driver/MZM/PD/TIA.
+- **IBIS-AMI**: banco che carica vere librerie AMI vendor
+  (AMI_Init/AMI_GetWave) e un modello demo in C compilabile al volo.
+- Pacchetti di supporto installati: scikit-rf, serdespy (riferimento).
+
+## Uso didattico
+
+1. Scegli un **preset** nella sidebar (default: 112G, 2 km @1550 nm).
+2. Pagina **Catena completa**: KPI, signal ledger, checkpoint.
+3. Pagine **stadio**: teoria, parametri, osservabili. Ogni modifica riesegue
+   l'intera catena (cache: ~0.5 s).
+4. **Esperimenti**: sweep end-to-end (BER/GMI vs parametro).
+5. **Note e glossario**: metodo delle sette domande, confini di validità.
+
+> Confine di validità: framework system-level per l'apprendimento e la
+> sensitivity analysis. Non è un tester TDECQ/SECQ/COM conforme; ogni metrica
+> non normativa è etichettata **proxy**.
+
+## Manutenzione
+
+- La fonte di verità della fisica resta il builder v7: non modificare i modelli
+  senza confronto.
+- Stato del progetto ed estensioni pianificate: `HANDOFF_CODEX.md`.

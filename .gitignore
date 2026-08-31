@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.last_session.json
+labpro/.labpro_session.json
+labpro/static/plotly.min.js

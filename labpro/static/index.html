@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SerDes Optical Lab Pro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/plotly.min.js"></script>
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-name">SerDes <em>Optical</em> Lab</span>
+    <span class="brand-sub">PRO · BANCO ELETTRO-OTTICO 112G</span>
+  </div>
+  <div class="tb-group">
+    <select id="preset-select" title="Preset di configurazione"></select>
+    <button id="btn-run" class="btn btn-run" title="Avvia/ferma l'acquisizione continua">
+      <span class="led" id="led-run"></span><span id="btn-run-label">RUN</span>
+    </button>
+    <button id="btn-reset" class="btn" title="Azzera i contatori accumulati">AZZERA</button>
+  </div>
+  <div class="tb-live" id="tb-live">
+    <div class="tb-cell"><label>record</label><b id="tb-records">0</b></div>
+    <div class="tb-cell"><label>bit</label><b id="tb-bits">0</b></div>
+    <div class="tb-cell"><label>BER cum.</label><b id="tb-ber">—</b></div>
+    <div class="tb-cell"><label>frame FEC</label><b id="tb-frames">—</b></div>
+    <div class="tb-cell"><label>stato</label><b id="tb-checks">—</b></div>
+  </div>
+  <div class="tb-group">
+    <span class="chip" id="chip-rate">—</span>
+    <span class="chip" id="chip-mod">—</span>
+    <span class="chip chip-fec" id="chip-fec">—</span>
+    <select id="view-select" title="Viste predefinite (layout ordinato per flusso del segnale)"></select>
+    <div class="dropdown">
+      <button class="btn btn-accent" id="btn-add">＋ Pannello</button>
+      <div class="dropdown-menu" id="panel-menu"></div>
+    </div>
+  </div>
+</header>
+
+<div id="conn-banner" class="hidden">connessione al server persa — riconnessione…</div>
+<main id="workbench"></main>
+
+<footer id="statusbar">
+  <span id="sb-note">Laboratorio didattico con proxy dichiarati — le metriche
+  post-DSP usano la fase dell'acquisition supervisionata (v. pannello Timing).</span>
+  <span id="sb-cfg-hash"></span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
