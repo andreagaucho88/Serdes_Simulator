@@ -9,6 +9,25 @@ const L = (it, en) => LANG === "en" ? (en || it) : it;
 /* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
    frammenti IT→EN applicati solo in modalità EN. */
 const TR_FRAGMENTS = [
+  ["Uscita driver (diff. ideale)", "Driver output (ideal diff.)"],
+  ["V_p (ramo positivo)", "V_p (positive leg)"],
+  ["V_n (ramo negativo)", "V_n (negative leg)"],
+  ["Ingresso canale selezionato", "Selected channel input"],
+  ["Uscita canale", "Channel output"],
+  ["P ottica MZM", "MZM optical power"],
+  ["P ottica al PD", "Optical power at PD"],
+  ["Uscita TIA/AFE", "TIA/AFE output"],
+  ["Uscita AGC", "AGC output"],
+  ["Uscita CTLE", "CTLE output"],
+  ["ritardo CDR", "CDR delay"],
+  ["centro nominale TX", "TX nominal center"],
+  ["fase acquisita", "acquired phase"],
+  ["finestra troppo corta", "window too short"],
+  ["lock al simbolo", "lock at symbol"],
+  ["lock sul fronte: dati a +0.5 UI (pattern sync)", "edge lock: data at +0.5 UI (pattern sync)"],
+  ["std fase coda=", "tail phase std="],
+  ["correlazione insufficiente", "insufficient correlation"],
+  ["senza lock del CDR e del pattern non esistono BER/GMI/FEC: questo è il comportamento di un ricevitore reale", "without CDR and pattern lock there is no BER/GMI/FEC: this is how a real receiver behaves"],
   ["RS(544,514) obbligatorio", "RS(544,514) mandatory"],
   ["RS(528,514) obbligatorio", "RS(528,514) mandatory"],
   ["RS-FEC richiesto via F2", "RS-FEC requested via F2"],
@@ -184,6 +203,12 @@ function throttled(p, ms) {
   return false;
 }
 // badge LIVE/REF nell'header del pannello: dichiara da quale record arrivano i dati
+// scala/offset verticale per canale (semantica da strumento: × amplifica
+// attorno al centro, offset trasla; il deskew sposta in tempo i CH overlay)
+function chAdjRange(raw, adj) {
+  const [lo, hi] = raw, c = (lo + hi) / 2, hr = (hi - lo) / 2 / (adj.scale || 1);
+  return [c - hr - (adj.off || 0), c + hr - (adj.off || 0)];
+}
 function acqBadge(p, d) {
   const a2 = d && d._acquisition; if (!a2 || !p.head) return;
   if (!p.acqEl) {
@@ -209,11 +234,14 @@ const PARAMS = {
   modulation: { l: "Modulazione", type: "select", opts: ["PAM4", "NRZ"] },
   pam4_mapping: { l: "Mapping PAM4", type: "select", opts: ["gray", "binary"] },
   fec_mode: { l: "FEC nel percorso", type: "select", opts: ["none", "kp4", "kr4"],
-    names: { none: "nessuno", kp4: "KP4 RS(544,514)", kr4: "KR4 RS(528,514)" } },
+    names: { none: L("nessuno", "none"), kp4: "KP4 RS(544,514)", kr4: "KR4 RS(528,514)" } },
   tx_rj_rms_fs: { l: "RJ clock TX", u: "fs", min: 0, max: 1500, step: 25 },
   tx_pj_amp_ui: { l: "PJ ampiezza", u: "UI", min: 0, max: 0.3, step: 0.005 },
   tx_pj_freq_mhz: { l: "PJ frequenza", u: "MHz", min: 10, max: 3000, step: 10 },
   tx_dcd_pct: { l: "DCD", u: "%UI", min: 0, max: 25, step: 0.5 },
+  tx_buj_amp_ui: { l: "BUJ ampiezza", u: "UI", min: 0, max: 0.25, step: 0.005 },
+  tx_ssc_ppm: { l: "SSC down-spread", u: "ppm", min: 0, max: 5000, step: 100 },
+  tx_ssc_khz: { l: "SSC freq", u: "kHz", min: 30, max: 33, step: 0.5 },
   dac_bits: { l: "Bit DAC", min: 4, max: 10, step: 1 },
   dac_bw_hz: { l: "Banda DAC", u: "GHz", min: 15, max: 60, step: 1, scale: 1e9 },
   dac_full_scale_vpp: { l: "FS DAC", u: "Vpp", min: 1, max: 4, step: 0.1 },
@@ -259,14 +287,14 @@ const PARAMS = {
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
   l2_ipg_bytes: { l: "IPG (rate control)", u: "B", min: 8, max: 2000, step: 4 },
   link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
-    names: { optical: "ottico (MZM+fibra+PD)", copper: "rame (KR/CR/C2M)" } },
+    names: { optical: L("ottico (MZM+fibra+PD)", "optical (MZM+fiber+PD)"), copper: L("rame (KR/CR/C2M)", "copper (KR/CR/C2M)") } },
   pn_skew_ps: { l: "Skew P/N", u: "ps", min: 0, max: 10, step: 0.25 },
   pn_gain_mismatch_pct: { l: "Mismatch P/N", u: "%", min: 0, max: 30, step: 1 },
   vcm_offset_v: { l: "V_cm offset", u: "V", min: -0.3, max: 0.3, step: 0.01 },
   vcm_noise_mv: { l: "Rumore CM", u: "mVrms", min: 0, max: 200, step: 5 },
   tx_diff_noise_mv: { l: "Rumore diff. TX", u: "mVrms", min: 0, max: 200, step: 5 },
   electrical_drive_mode: { l: "Piano drive", type: "select", opts: ["differential", "single_ended_p", "single_ended_n"],
-    names: { differential: "differenziale Vp−Vn", single_ended_p: "single-ended P", single_ended_n: "single-ended N" } },
+    names: { differential: L("differenziale Vp−Vn", "differential Vp−Vn"), single_ended_p: "single-ended P", single_ended_n: "single-ended N" } },
   xtalk_next_db: { l: "NEXT @Nyq", u: "dB", min: -60, max: 0, step: 1 },
   xtalk_fext_db: { l: "FEXT @Nyq", u: "dB", min: -60, max: 0, step: 1 },
   s4p_pairs: { l: "Porte s4p", type: "select", opts: ["13_24", "12_34"],
@@ -302,7 +330,7 @@ const PARAMS = {
   dfe_taps: { l: "Tap DFE", min: 1, max: 12, step: 1 },
   training_stop: { l: "Fine training", u: "simboli", min: 600, max: 6000, step: 50 },
   causal_filters: { l: "Filtri causali", type: "select", opts: [false, true],
-    names: { false: "fase zero (v7)", true: "Butterworth causale" } },
+    names: { false: L("fase zero (v7)", "zero phase (v7)"), true: L("Butterworth causale", "causal Butterworth") } },
 };
 const PARAM_EN = {
   symbol_rate_hz: "Baud rate", prbs_order: "PRBS", modulation: "Modulation",
@@ -359,7 +387,8 @@ const OPTION_EN = {
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
   "VCSEL direct": "direct VCSEL",
 };
-const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters"};
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)"};
+Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
 const _flushCfg = debounce(() => {
   const updates = _pendingCfg; _pendingCfg = {};
@@ -481,7 +510,7 @@ PANEL_DEFS.chain = {
     const jitOn = S.cfg.tx_rj_rms_fs > 0 || S.cfg.tx_pj_amp_ui > 0 || S.cfg.tx_dcd_pct > 0;
     const ethOn = S.cfg.pattern === "eth";
     const rows = [
-      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FFE", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", "Canale", "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
+      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FIR", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", "Canale", "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
       [["pd", "PD", copper ? "off" : "el", "pd"], ["tia", copper ? "AFE" : "TIA", "el", "tia"], ["agc", "AGC", "el", "agc"], ["ctle", "CTLE", "el", "ctle"], ["adc", "ADC", "dg", "adc"], ["cdr", "CDR", "ck", "timing"], ["fse", "FSE", "dg", "eq"], ["dfe", "DFE", "dg", "eq"], ["slc", "Slicer", "dg", "decisions"], ["dmx", "DEMUX", "dg", "decisions"], ["fdec", ethOn ? "FEC·L2" : "FEC dec", fecOn || ethOn ? "dg" : "off", ethOn ? "l2" : "feclive"]],
     ];
     const W = 98, H = 42, G = 13, X0 = 18, Y = [42, 130];
@@ -620,6 +649,27 @@ PANEL_DEFS.scope = {
       sel.onchange = () => { p.auxNodes[slot] = sel.value; p.acc.fill(0); this.refetch(p); };
     }
     p.fillAux();
+    // scala/offset/deskew per canale (come i controlli verticali di un DCA)
+    p.chAdj = { scale: 1, off: 0 };
+    p.auxAdj = [{ scale: 1, off: 0, skew: 0 }, { scale: 1, off: 0, skew: 0 }, { scale: 1, off: 0, skew: 0 }];
+    const vbar = CE("div", "scope-bar");
+    const mkNum = (val, step, w2, title, on) => {
+      const el = CE("input"); el.type = "number"; el.value = val; el.step = step;
+      el.style.width = w2; el.title = title; el.oninput = () => on(+el.value || 0);
+      return el;
+    };
+    vbar.appendChild(CE("b", "", L("VERTICALE/SKEW", "VERTICAL/SKEW")));
+    vbar.appendChild(CE("span", "", "A ×"));
+    vbar.appendChild(mkNum(1, 0.1, "52px", L("scala verticale CH A", "CH A vertical scale"), v => { p.chAdj.scale = Math.max(v, 0.05); p.vrange = chAdjRange(p.vrangeRaw || p.vrange, p.chAdj); p.acc.fill(0); }));
+    vbar.appendChild(CE("span", "", "off"));
+    vbar.appendChild(mkNum(0, 0.01, "58px", L("offset verticale CH A [unità del nodo]", "CH A vertical offset [node units]"), v => { p.chAdj.off = v; p.vrange = chAdjRange(p.vrangeRaw || p.vrange, p.chAdj); p.acc.fill(0); }));
+    for (let slot = 0; slot < 3; slot++) {
+      vbar.appendChild(CE("span", "", `${String.fromCharCode(66 + slot)} ×`));
+      vbar.appendChild(mkNum(1, 0.1, "48px", L("scala CH", "CH scale"), v => { p.auxAdj[slot].scale = Math.max(v, 0.05); this.refetch(p); }));
+      vbar.appendChild(mkNum(0, 0.01, "54px", "offset", v => { p.auxAdj[slot].off = v; this.refetch(p); }));
+      vbar.appendChild(mkNum(0, 0.05, "50px", L("deskew [UI]", "deskew [UI]"), v => { p.auxAdj[slot].skew = v; this.refetch(p); }));
+    }
+    multi.after(vbar);
     const pn4 = CE("button", "btn", "P/N · Diff · CM");
     pn4.title = L("mostra i quattro reference plane dallo stesso record", "show all four reference planes from the same record");
     pn4.onclick = () => {
@@ -629,6 +679,28 @@ PANEL_DEFS.scope = {
     multi.appendChild(pn4);
     multi.appendChild(CE("span", "sub", L("stesso seed/record; densità su CH A, overlay B–D", "same seed/record; density on CH A, B–D overlays")));
     p.body.appendChild(multi);
+    const cbar = CE("div", "scope-bar");
+    const btnCont = CE("button", "btn", L("Contour BER 2D (~2 s)", "2D BER contour (~2 s)"));
+    btnCont.onclick = async () => {
+      btnCont.disabled = true;
+      try {
+        const d = await GET(`/api/panel/eyecontour?node=${p.node}&source=${S.running ? "live" : "auto"}`);
+        const lay = PL({ height: 260, showlegend: false });
+        mergeAxis(lay, "xaxis", { title: { text: L("fase [UI]", "phase [UI]"), font: { size: 9 } } });
+        mergeAxis(lay, "yaxis", { title: { text: `${tr(d.label)} [${d.unit}]`, font: { size: 9 } } });
+        plot(p.contourEl, [{
+          x: d.phases_ui, y: d.y, z: d.logber, type: "contour",
+          contours: { start: -12, end: -1, size: 1, coloring: "heatmap", showlabels: true, labelfont: { size: 8, color: "#d7e1e8" } },
+          colorscale: [[0, "#0a2a18"], [0.5, "#155e38"], [0.8, "#3ecf8e"], [1, "#e8c55a"]],
+          colorbar: { title: { text: "log₁₀BER", font: { size: 8 } }, thickness: 8, tickfont: { size: 8 } },
+        }], lay);
+        p.contourEl.insertAdjacentHTML("beforeend", `<div class="note">${L("Contour BER come l'eye mode di un DCA: per ogni (fase, ampiezza) la BER estrapolata Q-scale dai cluster μ/σ. Le curve chiuse più interne sono l'occhio ai BER più bassi. DICHIARATO: code gaussiane.", "BER contour like a DCA eye mode: for each (phase, amplitude) the Q-scale extrapolated BER from the μ/σ clusters. The innermost closed curves are the eye at the lowest BER. DECLARED: Gaussian tails.")}</div>`);
+      } catch (e) { toast(e.message); }
+      btnCont.disabled = false;
+    };
+    cbar.append(btnCont, CE("span", "", L("CH A — al cambio nodo rilancia", "CH A — rerun after changing node")));
+    p.body.appendChild(cbar);
+    p.contourEl = CE("div"); p.body.appendChild(p.contourEl);
     p.measHost = CE("div"); p.body.appendChild(p.measHost);
     p.traces = []; p.lastFetch = 0;
     this.refetch(p);
@@ -703,15 +775,16 @@ PANEL_DEFS.scope = {
             const [amin, amax] = ch.vrange;
             const ay = v => H - (v - amin) / (amax - amin) * H;
             ctx.strokeStyle = auxColors[ai]; ctx.globalAlpha = 0.34;
+            const sk = ((ch.adj || {}).skew || 0) * ch.traces[0].length / 2;  // UI → colonne
             for (let k = 0; k < Math.min(4, p.rate); k++) {
               const tr = ch.traces[(p.idx + k) % ch.traces.length]; ctx.beginPath();
-              for (let i = 0; i < tr.length; i++) { const x = W * i / (tr.length - 1); i ? ctx.lineTo(x, ay(tr[i])) : ctx.moveTo(x, ay(tr[i])); }
+              for (let i = 0; i < tr.length; i++) { const x = W * (i + sk) / (tr.length - 1); i ? ctx.lineTo(x, ay(tr[i])) : ctx.moveTo(x, ay(tr[i])); }
               ctx.stroke();
             }
           });
           ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
           ctx.font = "10px IBM Plex Mono";
-          p.auxData.forEach((ch, ai) => { ctx.fillStyle = auxColors[ai]; ctx.fillText(`CH${String.fromCharCode(66 + ai)} ${ch.label} [${ch.unit}]`, 8, 16 + ai * 13); });
+          p.auxData.forEach((ch, ai) => { ctx.fillStyle = auxColors[ai]; ctx.fillText(`CH${String.fromCharCode(66 + ai)} ${tr(ch.label)} [${ch.unit}]`, 8, 16 + ai * 13); });
         }
         // overlay livelli/soglie
         if (p.overlayChk.checked && p.meas) {
@@ -797,18 +870,21 @@ PANEL_DEFS.scope = {
       p.traces = d.traces; p.color = DOMC[d.domain]; p.unit = d.unit; p.meas = d.meas;
       let vmin = Infinity, vmax = -Infinity;
       for (const tr of d.traces) for (const v of tr) { if (v < vmin) vmin = v; if (v > vmax) vmax = v; }
-      const pad = 0.12 * (vmax - vmin || 1); p.vrange = [vmin - pad, vmax + pad];
-      p.auxData = pack.channels.slice(1).map(ch => {
+      const pad = 0.12 * (vmax - vmin || 1); p.vrangeRaw = [vmin - pad, vmax + pad];
+      p.vrange = chAdjRange(p.vrangeRaw, p.chAdj || {});
+      p.auxData = pack.channels.slice(1).map((ch, ai) => {
         let lo = Infinity, hi = -Infinity;
         for (const tr of ch.traces) for (const v of tr) { if (v < lo) lo = v; if (v > hi) hi = v; }
         const pd = 0.12 * (hi - lo || 1);
-        return Object.assign({}, ch, { vrange: [lo - pd, hi + pd] });
+        const adj = (p.auxAdj || [])[ai] || {};
+        return Object.assign({}, ch, { vrangeRaw: [lo - pd, hi + pd], vrange: chAdjRange([lo - pd, hi + pd], adj), adj });
       });
       this.maskCount(p);
       const m = d.meas, items = [];
       const eyes = ["basso", "medio", "alto"].slice(0, m.eye_heights.length);
       items.push({ l: L("allineamento", "alignment"), v: tr(d.align), sub: "centro strumento " + fix(m.center_offset_ui, 2) + " UI dal CDR · " + nodes.length + " CH / stesso record", title: L("il DCA autocentra la misura sulla massima apertura; l'offset mostra dove campiona il CDR rispetto all'ottimo", "the DCA auto-centers on maximum opening; the offset shows where the CDR samples relative to the optimum") });
       m.eye_heights.forEach((h, i) => items.push({ l: `eye ${eyes[i]} H/W`, v: `${fix(h, 3)} / ${fix(m.eye_widths_ui[i], 2)} UI`, cls: h > 0 ? "" : "fail", title: L("height p1–p99 al centro strumento / larghezza a p1-p99 (frazione UI)", "p1–p99 height at instrument center / p1–p99 width (UI fraction)") }));
+      if (Math.min(...m.eye_heights) < 0) items.push({ l: L("occhio chiuso", "eye closed"), v: "≠ bug", cls: "warn", sub: L("normale PRE-equalizzazione a 112G", "normal PRE-equalization at 112G"), title: L("a 56 GBd PAM4 l'occhio ai nodi canale/TIA è chiuso per ISI e banda: è ESATTAMENTE il motivo per cui esistono TX FIR, CTLE, RX FFE e DFE. Prova AN/LT (topbar) e guarda il nodo CTLE o le decisioni allo slicer.", "at 56 GBd PAM4 the eye at the channel/TIA nodes is closed by ISI and bandwidth: this is EXACTLY why TX FIR, CTLE, RX FFE, and DFE exist. Run AN/LT (topbar) and look at the CTLE node or the slicer decisions.") });
       if (m.eh_at_ber) items.push({ l: "EH@2.4e-4", v: m.eh_at_ber["2.4e-4"].map(h => fix(h, 3)).join(" · "), cls: Math.min(...m.eh_at_ber["2.4e-4"]) > 0 ? "" : "fail", sub: `EH@1e-6 ${m.eh_at_ber["1e-6"].map(h => fix(h, 3)).join(" · ")}`, title: L("eye height estrapolata a BER target con code gaussiane (Q-scale, come l'eye mode di un DCA); l'ISI multimodale può chiudere prima", "eye height extrapolated to target BER with Gaussian tails (Q-scale, like a DCA eye mode); multimodal ISI may close earlier") });
       items.push({ l: "Q per occhio", v: m.q_per_eye.map(q => fix(q, 1)).join(" · ") });
       if (m.t_rise_ps != null) items.push({ l: "rise/fall 20-80", v: `${fix(m.t_rise_ps, 1)} / ${fix(m.t_fall_ps, 1)} ps` });
@@ -856,7 +932,7 @@ PANEL_DEFS.spectrum = {
   async refetch(p) {
     if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
     const d = await GET(`/api/panel/spectrum?node=${p.node}&source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
-    const traces = [{ x: d.f_ghz, y: d.psd_db, name: d.label, line: { color: COL.el, width: 1.2 } }];
+    const traces = [{ x: d.f_ghz, y: d.psd_db, name: tr(d.label), line: { color: COL.el, width: 1.2 } }];
     if (d.model_db) traces.push({ x: d.f_ghz, y: d.model_db, name: "floor noise budget", line: { color: COL.am, dash: "dash", width: 1.6 } });
     const layout = PL({ height: 280, shapes: [vline(d.nyquist_ghz)] });
     mergeAxis(layout, "xaxis", { title: { text: "GHz", font: { size: 10 } } });
@@ -962,7 +1038,7 @@ PANEL_DEFS.feclive = {
       return;
     }
     const items = [
-      { l: "frame accumulati", v: String(f.frames_total), big: true, sub: "solo codeword interamente in validation" },
+      { l: L("frame accumulati", "accumulated frames"), v: String(f.frames_total), big: true, sub: L("solo codeword interamente in validation", "only codewords fully inside validation") },
       { l: L("clean / corretti / persi", "clean / corrected / lost"), v: `${f.frames_clean} / ${f.frames_corrected} / ${f.frames_lost}`, cls: f.frames_lost ? "fail" : "ok" },
     ];
     if (f.in_path) items.push(
@@ -993,7 +1069,7 @@ PANEL_DEFS.serpll = {
   title: "Serializer · TX PLL · uscita P/N", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct",
+    p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct", "tx_buj_amp_ui", "tx_ssc_ppm", "tx_ssc_khz",
       "pn_skew_ps", "pn_gain_mismatch_pct", "vcm_offset_v", "vcm_noise_mv", "tx_diff_noise_mv"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.body.appendChild(CE("div", "note", L("Il jitter è iniettato sul time base del serializer/DAC (reference plane: clock TX), un offset per UI. Misuralo nel pannello <b>Jitter · TIE</b>: al driver vedi ciò che hai iniettato + il DDJ del pattern; al CTLE si somma tutto il canale.", "Jitter is injected on the serializer/DAC time base (reference plane: TX clock), one offset per UI. Measure it in the <b>Jitter · TIE</b> panel: at the driver you see what you injected + pattern DDJ; at the CTLE the whole channel adds up.")));
@@ -1109,14 +1185,14 @@ PANEL_DEFS.berlive = {
     if (a.last && a.last.link_up === false) {
       p.ro.appendChild(readout([
         { l: "LINK", v: "DOWN", cls: "fail", big: true, sub: "CDR o pattern lock non agganciano: nessun bit valido" },
-        { l: "record scartati", v: String(a.link_down_records || 0), cls: "fail" },
+        { l: L("record scartati", "discarded records"), v: String(a.link_down_records || 0), cls: "fail" },
       ]));
       plot(p.trend, [], PL({ height: 120, showlegend: false }));
       return;
     }
     p.ro.appendChild(readout([
       { l: "BER cumulativa", v: a.bit_errors_total ? sci(a.ber_cum) : (a.bits_total ? "< " + sci(ci[1]) : "—"), big: true, sub: `${eng(a.bit_errors_total)} err / ${eng(a.bits_total)}b`, title: "IC 95% con ipotesi IID: gli errori correlati dal DFE lo allargano" },
-      { l: "ultimo record", v: sci(a.last.ber), sub: "GMI " + fix(a.last.gmi, 3) },
+      { l: L("ultimo record", "last record"), v: sci(a.last.ber), sub: "GMI " + fix(a.last.gmi, 3) },
       { l: "SNR slicer", v: fix(a.last.snr_db, 1) + " dB", sub: "Q min " + fix(a.last.q_min, 2) },
       { l: "P @ PD", v: fix(a.last.p_pd_dbm, 2) + " dBm" },
     ]));
@@ -1145,7 +1221,7 @@ PANEL_DEFS.stimulus = {
 };
 
 PANEL_DEFS.tx = {
-  title: "TX — FFE · DAC · driver", size: "s6",
+  title: "TX — FIR · DAC · driver", size: "s6",
   make(p) {
     p.body.innerHTML = "";
     p.ffe = CE("div", "params");
@@ -1251,7 +1327,7 @@ PANEL_DEFS.optical = {
     p.ro.appendChild(readout([
       { l: L("architettura", "architecture"), v: d.modulator.toUpperCase(), sub: `${d.laser_type} · ${S.cfg.electrical_drive_mode}` },
       { l: "P @ PD", v: fix(d.budget["PD input"], 2) + " dBm" },
-      { l: "drive picco", v: fix(d.drive_peak_v, 2) + " V", sub: d.vpi ? fix(d.drive_peak_v / d.vpi, 2) + "·Vπ" : "ER set " + fix(d.er_set_db, 1) + " dB" },
+      { l: L("drive picco", "peak drive"), v: fix(d.drive_peak_v, 2) + " V", sub: d.vpi ? fix(d.drive_peak_v / d.vpi, 2) + "·Vπ" : "ER set " + fix(d.er_set_db, 1) + " dB" },
       { l: "1º nullo IM/DD", v: d.f_null_ghz ? fix(d.f_null_ghz, 1) + " GHz" : "∞", cls: d.f_null_ghz && d.f_null_ghz < d.nyquist_ghz ? "fail" : "" },
       { l: L("propagazione", "propagation"), v: d.fiber_type.toUpperCase(), sub: d.modal_bw_ghz ? `modal BW ${fix(d.modal_bw_ghz, 1)} GHz` : `β₂ ${sci(d.beta2_s2_m)} · β₃ ${sci(d.beta3_s3_m)}` },
       { l: "PMD / Kerr", v: `${fix(d.pmd_dgd_ps, 3)} ps / ${sci(d.nonlinear_phase_peak_rad)} rad`, sub: `linewidth ${fix(d.laser_linewidth_mhz, 1)} MHz` },
@@ -1306,24 +1382,67 @@ PANEL_DEFS.optical = {
 };
 
 PANEL_DEFS.adc = {
-  title: "ADC interleaved", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); p.tbl = CE("div"); p.body.appendChild(p.tbl); this.refetch(p); },
+  title: "ADC interleaved · sampling & decisioni", size: "s6",
+  make(p) {
+    p.body.innerHTML = "";
+    p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs"]));
+    const g = CE("div"); g.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    p.plotHist = CE("div", "plot"); p.plotScat = CE("div", "plot");
+    g.append(p.plotHist, p.plotScat); p.body.appendChild(g);
+    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
+    p.tbl = CE("div"); p.body.appendChild(p.tbl);
+    this.refetch(p);
+  },
   async refetch(p) {
     const d = await GET("/api/panel/adc"); acqBadge(p, d);
+    if (d.sampling) {
+      const sm = d.sampling;
+      // istogrammi data vs edge: i 4 modi PAM4 sui campioni DATA, le
+      // transizioni sugli EDGE — il plot classico del front-end 2 sps
+      const l1 = PL({ height: 200, shapes: sm.thresholds_v.map(t2 => vline(t2, COL.ok, "dot")), barmode: "overlay" });
+      mergeAxis(l1, "xaxis", { title: { text: "V @ ADC", font: { size: 9 } } });
+      mergeAxis(l1, "yaxis", { type: "log", title: { text: "count", font: { size: 9 } } });
+      plot(p.plotHist, [
+        { x: sm.hist_x, y: sm.data_hist.map(v => Math.max(v, 0.5)), type: "bar", name: "DATA", marker: { color: COL.dg }, opacity: 0.75 },
+        { x: sm.hist_x, y: sm.edge_hist.map(v => Math.max(v, 0.5)), type: "bar", name: "EDGE", marker: { color: COL.am }, opacity: 0.55 },
+      ], l1);
+      // hard decision al piano ADC: campioni colorati per livello deciso
+      const colors = [COL.fail, COL.am, COL.el, COL.ok];
+      const l2 = PL({ height: 200, showlegend: false, shapes: sm.thresholds_v.map(t2 => hline(t2, COL.muted, "dot")) });
+      mergeAxis(l2, "xaxis", { title: { text: L("simbolo (dal lock)", "symbol (from lock)"), font: { size: 9 } } });
+      mergeAxis(l2, "yaxis", { title: { text: L("campione DATA [V]", "DATA sample [V]"), font: { size: 9 } } });
+      const traces = [0, 1, 2, 3].map(lv => ({
+        x: sm.scatter_y.map((_, i) => i).filter(i => sm.scatter_dec[i] === lv),
+        y: sm.scatter_y.filter((_, i) => sm.scatter_dec[i] === lv),
+        mode: "markers", marker: { color: colors[lv], size: 2.5 },
+      })).filter(t2 => t2.y.length);
+      plot(p.plotScat, traces, l2);
+    } else {
+      p.plotHist.innerHTML = `<div class="note w">${L("CDR non agganciato: nessun istante di campionamento deciso — i plot DATA/EDGE esistono solo col lock.", "CDR not locked: no decided sampling instants — DATA/EDGE plots only exist with lock.")}</div>`;
+      p.plotScat.innerHTML = "";
+    }
     if (d.tone_f_ghz) {
-      const lay = PL({ height: 220, shapes: (d.lines_ghz || []).map(x => vline(x, COL.fail, "dot")) });
+      const lay = PL({ height: 190, shapes: (d.lines_ghz || []).map(x => vline(x, COL.fail, "dot")) });
       mergeAxis(lay, "yaxis", { range: [-110, 5], title: { text: "dBFS", font: { size: 10 } } });
       mergeAxis(lay, "xaxis", { title: { text: "GHz", font: { size: 10 } } });
       plot(p.plotEl, [
-        { x: d.tone_f_ghz, y: d.tone_ideal_db, name: "quantizzazione", line: { color: COL.muted, width: 1 } },
-        { x: d.tone_f_ghz, y: d.tone_mm_db, name: "con mismatch", line: { color: COL.dg, width: 1 } }], lay);
+        { x: d.tone_f_ghz, y: d.tone_ideal_db, name: L("quantizzazione", "quantization"), line: { color: COL.muted, width: 1 } },
+        { x: d.tone_f_ghz, y: d.tone_mm_db, name: L("con mismatch", "with mismatch"), line: { color: COL.dg, width: 1 } }], lay);
       p.tbl.innerHTML = `<div class="readout">
-        <div class="ro"><label>SNDR</label><b>${fix(d.sndr[1], 1)} dB</b><span class="sub">ideale ${fix(d.sndr[0], 1)}</span></div>
-        <div class="ro"><label>ENOB</label><b>${fix(d.enob[1], 2)}</b><span class="sub">bit (tono, non PAM4)</span></div>
+        <div class="ro"><label>SNDR</label><b>${fix(d.sndr[1], 1)} dB</b><span class="sub">${L("ideale", "ideal")} ${fix(d.sndr[0], 1)}</span></div>
+        <div class="ro"><label>ENOB</label><b>${fix(d.enob[1], 2)}</b><span class="sub">${L("bit (tono, non PAM4)", "bits (tone, not PAM4)")}</span></div>
         <div class="ro"><label>LSB / clip</label><b>${fix(d.lsb_mv, 2)} mV</b><span class="sub">${fix(d.clip_pct, 3)}%</span></div></div>`;
-    } else { p.plotEl.innerHTML = ""; p.tbl.innerHTML = `<div class="note">Tone-lab disponibile dopo la prima run full (attendi un attimo e ricambia un parametro).</div>`; }
+    } else {
+      plot(p.plotEl, [{ x: d.code_hist.x, y: d.code_hist.h.map(v => Math.max(v, 0.5)), type: "bar", marker: { color: COL.el } }],
+        (() => { const l3 = PL({ height: 150, showlegend: false, shapes: [vline(-d.fs_v, COL.fail, "dash"), vline(d.fs_v, COL.fail, "dash")] });
+          mergeAxis(l3, "xaxis", { title: { text: L("occupazione codici su full-scale (clip = righe rosse)", "code occupancy over full scale (clip = red lines)"), font: { size: 9 } } });
+          mergeAxis(l3, "yaxis", { type: "log" }); return l3; })());
+      p.tbl.innerHTML = `<div class="readout"><div class="ro"><label>LSB / clip</label><b>${fix(d.lsb_mv, 2)} mV</b><span class="sub">${fix(d.clip_pct, 3)}%</span></div></div>` +
+        `<div class="note">${L("Tone-lab SNDR/ENOB dopo la prima run full; i plot sopra sono live per record.", "Tone-lab SNDR/ENOB after the first full run; the plots above are live per record.")}</div>`;
+    }
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
+  onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
 PANEL_DEFS.timing = {
@@ -1367,7 +1486,7 @@ PANEL_DEFS.timing = {
         { l: "CDR " + d.mode, v: c.locked ? "LOCKED" : "UNLOCKED", cls: c.locked ? "ok" : "fail", sub: c.locked ? `${L("lock @ simbolo", "lock @ symbol")} ${c.lock_symbol}` : c.detail, big: true },
         { l: "pattern lock (BERT)", v: c.pattern_locked ? "SYNC" : "NO SYNC", cls: c.pattern_locked ? "ok" : "fail", sub: c.pattern_lag != null ? `lag ${c.pattern_lag} · |corr| ${fix(Math.abs(c.pattern_corr), 2)}` : "—" },
         { l: "cycle slips", v: String(c.cycle_slips), cls: c.cycle_slips ? "fail" : "ok" },
-        { l: "link", v: d.link_up ? "UP" : "DOWN", cls: d.link_up ? "ok" : "fail", sub: c.ppm_set ? `offset impostato ${c.ppm_set} ppm` : "" },
+        { l: "link", v: d.link_up ? "UP" : "DOWN", cls: d.link_up ? "ok" : "fail", sub: c.ppm_set ? `${L("offset impostato", "set offset")} ${c.ppm_set} ppm` : "" },
       ]));
       const l1 = PL({ height: 170, showlegend: false });
       mergeAxis(l1, "xaxis", { title: { text: "simbolo (×" + c.sub + ")", font: { size: 9 } } });
@@ -1405,7 +1524,7 @@ PANEL_DEFS.timing = {
     } else if (d.phase_ui) {
       p.ro.appendChild(readout([
         { l: "modalità", v: "ORACLE (ideale)", cls: "warn", sub: L("riferimento dichiarato, non un ricevitore", "declared reference, not a receiver") },
-        { l: "delay + fase", v: `${d.delay >= 0 ? "+" : ""}${d.delay} UI · ${fix(d.best_phase, 3)}` },
+        { l: L("delay + fase", "delay + phase"), v: `${d.delay >= 0 ? "+" : ""}${d.delay} UI · ${fix(d.best_phase, 3)}` },
       ]));
       const l1 = PL({ height: 200, showlegend: false, shapes: [vline(d.best_phase, COL.ok)] });
       mergeAxis(l1, "xaxis", { title: { text: "fase [UI]", font: { size: 10 } } });
@@ -1558,15 +1677,27 @@ PANEL_DEFS.education = {
   },
   render(p, id) {
     const t = (p.topics || []).find(v => v.id === id); if (!t) return;
-    const g = key => t[key][LANG] || t[key].it;
-    p.host.innerHTML = `<article class="lesson">
-      <header><span class="badge warn">${t.course}</span><h3>${g("title")}</h3></header>
-      <section><label>${L("IDEA FISICA", "PHYSICAL IDEA")}</label><p>${g("idea")}</p></section>
-      <section class="formula"><label>${L("FORMULA-GUIDA", "GUIDING FORMULA")}</label><code>${t.formula}</code></section>
-      <section><label>${L("COSA MISURARE", "WHAT TO MEASURE")}</label><p>${g("observe")}</p></section>
-      <section><label>${L("ESPERIMENTO CONSIGLIATO", "SUGGESTED EXPERIMENT")}</label><p>${g("experiment")}</p></section>
-      <section class="limit"><label>${L("CONFINE DEL MODELLO", "MODEL BOUNDARY")}</label><p>${g("limits")}</p></section>
+    const g = key => (t[key] && (t[key][LANG] || t[key].it)) || "";
+    const nums = (t.numbers || []).map(n => `<tr><td>${n.l}</td><td><b>${n.v}</b></td></tr>`).join("");
+    const acts = (t.actions || []).map(a2 => `<div class="lesson-act"><span class="do">▸ ${a2.do[LANG] || a2.do.it}</span><span class="see">→ ${a2.see[LANG] || a2.see.it}</span></div>`).join("");
+    p.host.innerHTML = `<article class="lesson lesson-grid">
+      <div class="lesson-main">
+        <header><span class="badge warn">${t.course}</span><h3>${g("title")}</h3></header>
+        <section><label>${L("IDEA FISICA", "PHYSICAL IDEA")}</label><p class="lead">${g("idea")}</p></section>
+        ${g("deep") ? `<section><label>${L("IN PROFONDITÀ", "IN DEPTH")}</label><p>${g("deep")}</p></section>` : ""}
+        <section><label>${L("COSA MISURARE QUI", "WHAT TO MEASURE HERE")}</label><p>${g("observe")}</p></section>
+        <section><label>${L("ESPERIMENTO", "EXPERIMENT")}</label><p>${g("experiment")}</p></section>
+        <section class="limit"><label>${L("CONFINE DEL MODELLO", "MODEL BOUNDARY")}</label><p>${g("limits")}</p></section>
+      </div>
+      <aside class="lesson-side">
+        <section class="formula"><label>${L("FORMULA-GUIDA", "GUIDING FORMULA")}</label><code>${t.formula}</code></section>
+        ${nums ? `<section><label>${L("NUMERI DEL MONDO REALE", "REAL-WORLD NUMBERS")}</label><table class="mini lesson-nums">${nums}</table></section>` : ""}
+        ${acts ? `<section><label>${L("PROVA SUL BANCO", "TRY ON THE BENCH")}</label>${acts}</section>` : ""}
+        <button class="btn btn-accent" data-open="${t.panel}">${L("Apri il pannello", "Open the panel")} →</button>
+      </aside>
     </article>`;
+    const ob = p.host.querySelector("[data-open]");
+    if (ob) ob.onclick = () => addPanel(ob.dataset.open);
   },
 };
 
@@ -1772,7 +1903,7 @@ PANEL_DEFS.bert = {
       mergeAxis(lay, "xaxis", { title: { text: "posizione nel record [simboli] — mappa errori", font: { size: 9 } } });
       mergeAxis(lay, "yaxis", { title: { text: "err/bin", font: { size: 9 } } });
       const traces = [{ x: d.hist_x, y: d.hist, type: "bar", marker: { color: COL.fail } }];
-      if (d.inserted.length) traces.push({ x: d.inserted, y: d.inserted.map(() => Math.max(...d.hist, 1)), mode: "markers", marker: { color: COL.am, symbol: "triangle-down", size: 9 }, name: "inseriti" });
+      if (d.inserted.length) traces.push({ x: d.inserted, y: d.inserted.map(() => Math.max(...d.hist, 1)), mode: "markers", marker: { color: COL.am, symbol: "triangle-down", size: 9 }, name: L("inseriti", "inserted") });
       plot(p.plotEl, traces, lay);
     } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
   },
@@ -1830,6 +1961,7 @@ PANEL_DEFS.l2 = {
     toolsBar.append(bench, ont, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
     p.body.appendChild(toolsBar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.insp = CE("div"); p.body.appendChild(p.insp);
     p.benchPlot = CE("div", "plot"); p.body.appendChild(p.benchPlot);
     p.benchTable = CE("div"); p.body.appendChild(p.benchTable);
     p.note = CE("div", "note", L(
@@ -1838,7 +1970,21 @@ PANEL_DEFS.l2 = {
     p.body.appendChild(p.note);
     this.onTick(p);
   },
+  async refetchFrames(p) {
+    try {
+      const d = await GET(`/api/panel/l2?source=${S.running ? "live" : "auto"}`);
+      if (!d.frames || !d.frames.length) { p.insp.innerHTML = ""; return; }
+      const rows = d.frames.map(f => `<tr>
+        <td>${f.seq}</td><td>${f.da.slice(0, 8)}…</td><td>${f.sa.slice(0, 8)}…</td><td>${f.ethertype}</td><td>${f.payload_len}B</td>
+        <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_rx}</td><td>${f.fcs_calc}</td>
+        <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_ok ? "OK" : "BAD"}</td></tr>
+        <tr><td colspan="8" style="font-family:monospace;font-size:9px;color:var(--muted,#7e93a2)">${f.hex_head} …</td></tr>`).join("");
+      p.insp.innerHTML = `<table class="mini"><tr><th>seq</th><th>DA</th><th>SA</th><th>EthType</th><th>len</th><th>${L("FCS ricevuta", "FCS received")}</th><th>${L("CRC-32 ricalcolato", "recomputed CRC-32")}</th><th>✓</th></tr>${rows}</table>` +
+        `<div class="note">${L("Ispettore frame: questi sono i byte VERI decodificati dall'ultimo record RX (dopo FEC e descrambler). Ogni frame si verifica così: preamble+SFD (55…d5) delimitano, il sequence number scova i persi, e la FCS ricevuta deve coincidere col CRC-32 ricalcolato sui byte — esattamente come l'ED di uno Xena/ONT.", "Frame inspector: these are the REAL bytes decoded from the last RX record (after FEC and descrambler). Each frame is verified like this: preamble+SFD (55…d5) delimit it, the sequence number catches lost frames, and the received FCS must match the CRC-32 recomputed over the bytes — exactly like a Xena/ONT error detector.")}</div>`;
+    } catch (e) { p.insp.innerHTML = ""; }
+  },
   onTick(p) {
+    if (throttled(p, 2200)) this.refetchFrames(p);
     const a = S.acc; if (!a || !a.l2) return;
     const l = a.l2;
     p.ro.innerHTML = "";
@@ -1851,7 +1997,7 @@ PANEL_DEFS.l2 = {
       return;
     }
     p.ro.appendChild(readout([
-      { l: "frame OK (cum.)", v: String(l.frames_ok), big: true, cls: "ok", sub: l.frame_bytes + "B/frame" },
+      { l: L("frame OK (cum.)", "frames OK (cum.)"), v: String(l.frames_ok), big: true, cls: "ok", sub: l.frame_bytes + "B/frame" },
       { l: L("rilevati / attesi", "detected / expected"), v: `${l.frames_detected || 0} / ${l.frames_expected}` },
       { l: L("FCS errati", "bad FCS"), v: String(l.frames_fcs_bad), cls: l.frames_fcs_bad ? "fail" : "ok" },
       { l: L("persi", "lost"), v: String(l.frames_lost), cls: l.frames_lost ? "fail" : "ok", sub: isFinite(l.loss_pct) ? fix(l.loss_pct, 2) + " %" : "" },
@@ -1859,7 +2005,7 @@ PANEL_DEFS.l2 = {
       { l: L("offered load", "offered load"), v: (() => { const w = l.frame_bytes + 8, ipg = S.cfg.l2_ipg_bytes || 12; return fix(100 * w / (w + ipg), 1); })() + " %", sub: `IPG ${S.cfg.l2_ipg_bytes || 12} B`, title: L("frazione di linea occupata da frame vs IPG: il rate control del generatore, come su uno Xena/ONT", "line fraction carrying frames vs IPG: the generator rate control, as on a Xena/ONT") },
     ]));
   },
-  onConfig(p) { syncParams(p.body); this.onTick(p); },
+  onConfig(p) { syncParams(p.body); p.lastFetch = 0; this.onTick(p); },
 };
 
 /* --- AN/LT Clause 73/72-136 --- */
@@ -1881,6 +2027,7 @@ PANEL_DEFS.anlt = {
           { l: "HCD", v: res.hcd_name, big: true, cls: "ok", sub: `${res.lanes}×${res.lane_gbps} Gb/s ${res.modulation}` },
           { l: "FEC", v: tr(res.fec).split(" — ")[0], sub: tr(res.fec) },
           { l: L("abilità comuni", "common abilities"), v: String(res.common.length), sub: res.common.join(" ") },
+          ...(d.lt.reverse ? [{ l: L("LT inverso", "reverse LT"), v: d.lt.reverse.ready ? `Q ${fix(d.lt.reverse.q_after, 2)} σ` : "NO LOCK", cls: d.lt.reverse.ready ? "ok" : "fail", sub: (d.lt.both_ready ? "both_ready ✓" : L("solo una direzione pronta", "only one direction ready")) + ` · ${d.lt.reverse.exchanges} exch`, title: L("direzione partner→locale: il partner allena il proprio TX guidato dal nostro ricevitore — canale dichiarato simmetrico, rumore indipendente. In Clause 72/136 il link è UP solo con both_ready.", "partner→local direction: the partner trains its own TX driven by our receiver — channel declared symmetric, independent noise. In Clause 72/136 the link is UP only with both_ready.") }] : []),
           { l: L("LT · occhio", "LT · eye"), v: d.lt.cdr_locked ? `Q ${fix(d.lt.q_after, 2)} σ` : "NO LOCK", cls: d.lt.eye_open ? (d.lt.q_after >= 3 ? "ok" : "warn") : "fail", sub: (d.lt.eye_open ? L("aperto", "open") + (d.lt.q_after < 3 ? L(" (marginale)", " (marginal)") : "") : L("chiuso", "closed")) + ` · BER ${sci(d.lt.ber_after)} · ${d.lt.exchanges} exch · ${fix(d.lt.duration_us, 0)} µs` + (d.applied ? L(" · applicato", " · applied") : ""), title: L("metrica di training: Q minimo fra gli occhi allo slicer (apertura in unità σ), valida solo con CDR agganciato", "training metric: minimum eye Q at the slicer (opening in σ units), valid only with CDR locked") },
         ] : [{ l: "HCD", v: "—", cls: "fail", big: true, sub: tr(res.parallel_detect) }]));
         // pagine base
@@ -1941,7 +2088,7 @@ PANEL_DEFS.train = {
     bar.append(btn);
     p.body.appendChild(bar);
     p.out = CE("div"); p.body.appendChild(p.out);
-    p.body.appendChild(CE("div", "note", L("Fasi: CTLE zero → CTLE gain DC → TX FFE pre → TX FFE post, ognuna valutata end-to-end su 2 seed (i LINK DOWN contano 0.5). NON è l'AN/LT di clause (nessuno scambio di coefficienti col link partner): è un tuning locale onesto. La config migliore viene applicata al banco.", "Phases: CTLE zero → CTLE DC gain → TX FFE pre → TX FFE post, each evaluated end-to-end on 2 seeds (LINK DOWN counts 0.5). This is NOT clause AN/LT (no coefficient exchange with a link partner): it is an honest local tuning. The best config is applied to the bench.")));
+    p.body.appendChild(CE("div", "note", L("Fasi: CTLE zero → CTLE gain DC → TX FIR pre → TX FIR post, ognuna valutata end-to-end su 2 seed (i LINK DOWN contano 0.5). NON è l'AN/LT di clause (nessuno scambio di coefficienti col link partner): è un tuning locale onesto. La config migliore viene applicata al banco.", "Phases: CTLE zero → CTLE DC gain → TX FIR pre → TX FIR post, each evaluated end-to-end on 2 seeds (LINK DOWN counts 0.5). This is NOT clause AN/LT (no coefficient exchange with a link partner): it is an honest local tuning. The best config is applied to the bench.")));
   },
 };
 
@@ -2018,7 +2165,7 @@ PANEL_DEFS.sweep = {
         ];
         if (downs.length) traces.push({ x: downs.map(r => r[d.field]), y: downs.map(() => 0.5), name: "LINK DOWN", mode: "markers", marker: { color: COL.fail, symbol: "x", size: 11 } });
         const lay = PL({ height: 280, shapes: [hline(floor, COL.muted, "dot")] });
-        mergeAxis(lay, "xaxis", { title: { text: d.label, font: { size: 10 } } });
+        mergeAxis(lay, "xaxis", { title: { text: tr(d.label), font: { size: 10 } } });
         mergeAxis(lay, "yaxis", { type: "log", title: { text: "BER (validation)", font: { size: 10 } } });
         plot(p.plotEl, traces, lay);
         p.note.innerHTML = `Ogni punto è una run end-to-end completa (nuovo canale/rumore ricalcolati). Le "✗" sono punti LINK DOWN: il CDR o il pattern lock non agganciano — su un banco reale il BERT mostrerebbe loss-of-sync, non una BER.`;
@@ -2076,7 +2223,7 @@ const PALETTE = [
   ["chain", L("Catena del segnale", "Signal chain"), null, 0, 0],
   ["stimulus", L("Stimolo: PRBS · modulazione", "Stimulus: PRBS · modulation"), "digital", 1, 0],
   ["serpll", L("Serializer · TX PLL (jitter)", "Serializer · TX PLL (jitter)"), "digital", 1, 1],
-  ["tx", "TX: FFE·DAC·driver", "electrical", 1, 2],
+  ["tx", "TX: FIR·DAC·driver", "electrical", 1, 2],
   ["channel", L("Canale elettrico", "Electrical channel"), "electrical", 2, 0],
   ["optical", L("Ottica: MZM·fibra", "Optics: MZM · fiber"), "optical", 2, 1],
   ["rxfe", "RX front-end: PD·TIA·AGC", "electrical", 3, 0],
@@ -2123,7 +2270,7 @@ const VIEW_EN = { "Banco completo": "Full bench", "Essenziale": "Essential",
 VIEW_EN["Scope P/N"] = "P/N scope desk";
 const PANEL_EN = {
   chain: "Signal chain", stimulus: "Stimulus · PPG", serpll: "Serializer · TX PLL · P/N output",
-  tx: "TX · FFE · DAC · driver", channel: "Electrical channel · medium · crosstalk",
+  tx: "TX · FIR · DAC · driver", channel: "Electrical channel · medium · crosstalk",
   optical: "Optics · MZM / EML · fiber", rxfe: "RX front-end · PD · TIA · AGC",
   pd: "Photodiode · PD", tia: "TIA / electrical AFE", agc: "AGC · gain and headroom",
   ctle: "CTLE · configurable sections", adc: "Interleaved ADC", timing: "Timing · CDR",
@@ -2136,7 +2283,7 @@ const PANEL_EN = {
   instruments: "Instrument alignment · DCA / BERT / Traffic",
   education: "Academy · block and standards guide",
 };
-const PANEL_LEARN = { stimulus: "stimulus", serpll: "serpll", tx: "tx", channel: "channel",
+const PANEL_LEARN = { anlt: "anlt", cmis: "cmis", stimulus: "stimulus", serpll: "serpll", tx: "tx", channel: "channel",
   optical: "optical", rxfe: "rxfe", pd: "rxfe", tia: "rxfe", agc: "rxfe", ctle: "ctle", adc: "adc", timing: "timing",
   eq: "eq", decisions: "eq", scope: "scope", jitter: "scope", bert: "bert",
   feclive: "fec", l2: "l2", standards: "standards" };
@@ -2257,6 +2404,23 @@ async function boot() {
   for (const p of (st.profiles || [])) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; pf.appendChild(o); }
   pf.onchange = () => { if (pf.value) { POST("/api/preset", { name: pf.value }).catch(e => toast(e.message)); ps.value = ""; } };
   $("#btn-run").onclick = () => POST("/api/run", { running: !S.running }).catch(e => toast(e.message));
+  const anltBtn = $("#btn-anlt");
+  if (anltBtn) anltBtn.onclick = async () => {
+    anltBtn.disabled = true; const prev = anltBtn.textContent;
+    anltBtn.textContent = "AN/LT…";
+    try {
+      addPanel("anlt");                       // mostra il dettaglio del protocollo
+      const d = await POST("/api/experiment/anlt", { apply: true });
+      const lt = d.lt;
+      toast(lt.cdr_locked
+        ? `AN/LT: ${d.an.resolution.hcd_name || "—"} · CDR LOCK · Q ${fix(lt.q_after, 2)} σ` +
+          (d.applied ? L(" · tap applicati al banco", " · taps applied to the bench") : "")
+        : L("AN/LT: training failure — nessun lock, AN riparte", "AN/LT: training failure — no lock, AN restarts"));
+      const panel = S.panels.find(x => x.type === "anlt");
+      if (panel && panel.el.querySelector("button.btn-accent")) flash(panel.el);
+    } catch (e) { toast(e.message); }
+    anltBtn.disabled = false; anltBtn.textContent = prev;
+  };
   $("#btn-reset").onclick = () => POST("/api/reset").catch(e => toast(e.message));
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };

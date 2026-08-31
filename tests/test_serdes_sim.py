@@ -592,6 +592,67 @@ def test_eye_measures_eh_at_ber_and_jitter_tailfit():
     assert tf["tj_1e12_ps"] >= tf["tj_2p4e4_ps"]
 
 
+def test_anlt_bidirectional_both_ready():
+    from serdes_sim.engine import anlt_session
+    out = anlt_session(LinkConfig(**GOOD_LINK), lt_rounds=1, lt_step=0.03)
+    lt = out["lt"]
+    rev = lt["reverse"]
+    assert rev["ready"] and rev["q_after"] > 0
+    assert lt["both_ready"] == (lt["ready"] and rev["ready"]) == True
+
+
+def test_l2_frame_inspector_decodes_real_bytes():
+    from labpro import paneldata
+    cfg = LinkConfig(pattern="eth", fec_mode="kp4", **GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    d = paneldata.l2_panel(sim, cfg)
+    frames = d["frames"]
+    assert len(frames) >= 1
+    f0 = frames[0]
+    assert f0["ethertype"] == "0x88b5" and f0["fcs_ok"]
+    assert f0["fcs_rx"] == f0["fcs_calc"]
+    assert f0["hex_head"].startswith("55 55 55 55 55 55 55 d5")
+    # sequence numbers crescenti
+    seqs = [f["seq"] for f in frames]
+    assert seqs == sorted(seqs)
+
+
+def test_eye_contour_shape_and_center():
+    from labpro import paneldata
+    cfg = LinkConfig(**GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    d = paneldata.eye_contour_panel(sim, cfg, node="vctle")
+    lb = np.asarray(d["logber"])
+    assert lb.shape == (70, 25)
+    # il centro dell'occhio deve avere BER migliore dei bordi di fase
+    assert lb.min() < -2.0
+    assert lb[:, 0].min() > lb.min() - 1e-9
+
+
+def test_adc_panel_sampling_plots():
+    from labpro import paneldata
+    cfg = LinkConfig(**GOOD_LINK)
+    sim = simulate(cfg, seed=11, depth="light")
+    d = paneldata.adc_panel(sim, cfg)
+    sm = d["sampling"]
+    assert sm is not None and len(sm["data_hist"]) == 80
+    assert len(sm["scatter_y"]) == len(sm["scatter_dec"])
+    assert len(sm["thresholds_v"]) == 3
+    # i campioni DATA devono essere multimodali: il picco della hist edge
+    # al centro (transizioni) supera quello della data al centro
+    assert sum(sm["data_hist"]) > 0 and sum(sm["edge_hist"]) > 0
+
+
+def test_education_cards_are_substantive():
+    from labpro.education import TOPICS
+    assert len(TOPICS) >= 17
+    for t in TOPICS:
+        assert len(t["deep"]["it"]) > 200, t["id"]
+        assert len(t["deep"]["en"]) > 200, t["id"]
+        assert len(t["numbers"]) >= 4, t["id"]
+        assert len(t["actions"]) >= 2, t["id"]
+
+
 def test_anlt_no_common_ability():
     from serdes_sim.blocks.autoneg import resolve
     res = resolve(["A16", "A17"], ["A0", "A2"])

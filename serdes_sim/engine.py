@@ -82,6 +82,8 @@ class SimResult:
     # BERT / L2
     err_positions: np.ndarray = None        # bit invertiti al TX (riferimento ED)
     l2: "ethernet.L2Analysis" = None        # analisi frame (pattern eth)
+    l2_window_bits: np.ndarray = None       # finestra RX descramblata (ispettore)
+    l2_seq0: int = 0
 
     @property
     def rx_delay_ui(self) -> float:
@@ -238,7 +240,7 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     # --- 2. TX elettrico (serializer/PLL con jitter, uscita P/N) ------------
     result.tx = tx_block.run_tx(cfg, pam4_phys, rng=rng)
     _register(result, "tx_ffe_symbols", result.tx.tx_ffe_symbols,
-              "normalized amplitude", "symbol", cfg.symbol_rate_hz, "uscita TX FFE")
+              "normalized amplitude", "symbol", cfg.symbol_rate_hz, "uscita TX FIR")
     _register(result, "dac_waveform", result.tx.dac_waveform, "normalized amplitude",
               "sample", cfg.fs_analog_hz, "DAC output",
               f"{cfg.dac_bits} bit; LSB={result.tx.dac_lsb:.4g}")
@@ -552,6 +554,8 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
         seq0 = int(np.ceil((offset + 58) / flb))
         skip = seq0 * flb - offset
         window = stream[skip:]
+        result.l2_window_bits = window[:60000]   # per l'ispettore frame
+        result.l2_seq0 = seq0
         if len(window) > flb + 64:
             result.l2 = ethernet.analyze_stream_bits(
                 window, cfg.l2_frame_bytes,
@@ -707,8 +711,8 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
         ("ctle_zero_hz", "CTLE zero",
          [5e9, 7e9, 9e9, 12e9, 15e9]),
         ("ctle_dc_gain_db", "CTLE gain DC", [-4.0, -2.0, 0.0]),
-        ("ffe_pre", "TX FFE pre-cursor", [-0.15, -0.08, -0.02]),
-        ("ffe_post", "TX FFE post-cursor", [-0.15, -0.08, -0.02]),
+        ("ffe_pre", "TX FIR pre-cursor", [-0.15, -0.08, -0.02]),
+        ("ffe_post", "TX FIR post-cursor", [-0.15, -0.08, -0.02]),
     ]
     total = (sum(len(g) for _, _, g in plan) + 1) * len(seeds)
 
@@ -811,13 +815,6 @@ def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
     # Metrica di training: Q minimo fra gli occhi allo slicer = apertura
     # dell'occhio in unità sigma (per gaussiane BER_occhio ~ Q(q_min)).
     # La metrica esiste SOLO con CDR agganciato: senza lock non c'è occhio.
-    def lt_metric(c):
-        r = simulate(c, seed=seed, depth="light")
-        locked = r.link_up and (r.cdr is None or r.cdr.locked)
-        if not locked or r.snr_dfe is None:
-            return None, r
-        return float(r.snr_dfe["q_min"]), r
-
     def pad5(taps):
         t = list(taps)
         while len(t) < 5:
@@ -832,131 +829,160 @@ def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
         ("preset 3 (pre+post)", (-0.05, -0.15, 1.0, -0.15, -0.05)),
         ("initialize (hold current)", pad5(cfg.tx_ffe_taps)),
     ]
-    frames = []
     frame_us = 23552 / cfg.symbol_rate_hz * 1e6  # ordine di grandezza del
     # training frame PAM4 (frame marker + control channel + payload PRBS13Q)
-    t_us = 0.0
-    exchange = 0
-    rx_notes = []
-    cur = best = None
-    for name, taps in lt_presets:
-        cand = cfg.with_updates(tx_ffe_taps=taps)
-        m, _ = lt_metric(cand)
-        exchange += 1
-        t_us += frame_us * 32
-        frames.append({"t_us": t_us, "coeff": "preset", "request": name,
-                       "status": ("updated" if m is not None else "no lock"),
-                       "taps": list(taps),
-                       "q": (m if m is not None else None)})
-        if m is not None and (best is None or m > best):
-            cur, best = cand, m
-    if cur is None:
-        # nessun preset aggancia: adattazione RX locale (banda del loop CDR),
-        # poi si riprovano i preset — un ricevitore vero fa esattamente
-        # questo genere di ricerca durante il bring-up
-        for bw in (0.0005, 0.003):
-            for name, taps in lt_presets[:3]:
-                cand = cfg.with_updates(cdr_bw=bw, tx_ffe_taps=taps)
-                m, _ = lt_metric(cand)
-                exchange += 1
-                t_us += frame_us * 32
-                if m is not None and (best is None or m > best):
-                    cur, best = cand, m
-            if cur is not None:
-                rx_notes.append(f"RX adapt: cdr_bw → {bw:g}")
-                frames.append({"t_us": t_us, "coeff": "RX",
-                               "request": f"RX adapt: cdr_bw {bw:g}",
-                               "status": "updated",
-                               "taps": list(cur.tx_ffe_taps), "q": best})
-                break
-    if cur is None:
-        cur = cfg.with_updates(tx_ffe_taps=lt_presets[0][1])
-        best = None
-
-    hold_streak = 0
     lim = 0.35
-    main = len(cur.tx_ffe_taps) // 2
-    coeff_ids = [i for i in range(len(cur.tx_ffe_taps)) if i != main]
-    labels = {i: f"c({i - main:+d})" for i in coeff_ids}
-    for rnd in range(lt_rounds):
-        improved_round = False
-        for idx in coeff_ids:
-            taps = list(cur.tx_ffe_taps)
-            cands = []
-            for req, delta in (("decrement", -lt_step), ("increment", lt_step)):
-                v = taps[idx] + delta
-                t2 = list(taps)
-                t2[idx] = v
-                # vincolo di picco stile clause: somma |c_i| limitata;
-                # violarlo produce status = at_limit, non un update
-                if abs(v) > lim or sum(abs(x) for x in t2) > 1.55:
-                    cands.append((req, None, None))
-                    continue
-                cand = cur.with_updates(tx_ffe_taps=tuple(t2))
-                mm, _ = lt_metric(cand)
-                cands.append((req, cand, mm))
-            req, cand, mm = max(
-                cands, key=lambda c2: (-1e9 if c2[2] is None else c2[2]))
+
+    def lt_direction(seed_dir, rounds):
+        """Una direzione di training (Clause 72/136 è simmetrico: ogni RX
+        allena il TX del partner). La direzione inversa usa lo stesso
+        canale (dichiarato simmetrico) con rumore indipendente."""
+        def lt_metric(c):
+            r = simulate(c, seed=seed_dir, depth="light")
+            locked = r.link_up and (r.cdr is None or r.cdr.locked)
+            if not locked or r.snr_dfe is None:
+                return None, r
+            return float(r.snr_dfe["q_min"]), r
+
+        frames = []
+        t_us = 0.0
+        exchange = 0
+        rx_notes = []
+        cur = best = None
+        for name, taps in lt_presets:
+            cand = cfg.with_updates(tx_ffe_taps=taps)
+            m, _ = lt_metric(cand)
             exchange += 1
             t_us += frame_us * 32
-            if (cand is not None and mm is not None
-                    and (best is None or mm > best + 0.02)):
-                cur, best = cand, mm
-                status = "updated"
-                hold_streak = 0
-                improved_round = True
-            else:
-                req = "hold"
-                status = ("at_limit" if all(c2[1] is None for c2 in cands)
-                          else "not_updated")
-                hold_streak += 1
-            frames.append({"t_us": t_us, "coeff": labels[idx],
-                           "request": req, "status": status,
-                           "taps": list(cur.tx_ffe_taps), "q": best})
-        if hold_streak >= len(coeff_ids):     # un giro intero senza update
-            break
-        if not improved_round and best is not None:
-            # adattazione RX locale: il CTLE ritocca il gain DC mentre il
-            # partner tiene fermi i coefficienti (dichiarato: locale)
-            for g in (cur.ctle_dc_gain_db - 2.0, cur.ctle_dc_gain_db + 2.0):
-                g = float(np.clip(g, -8.0, 0.0))
-                if abs(g - cur.ctle_dc_gain_db) < 0.5:
-                    continue
-                cand = cur.with_updates(ctle_dc_gain_db=g)
-                mm, _ = lt_metric(cand)
-                exchange += 1
-                if mm is not None and mm > best + 0.05:
-                    cur, best = cand, mm
-                    rx_notes.append(f"RX adapt: CTLE gain → {g:+.1f} dB")
+            frames.append({"t_us": t_us, "coeff": "preset", "request": name,
+                           "status": ("updated" if m is not None else "no lock"),
+                           "taps": list(taps), "q": m})
+            if m is not None and (best is None or m > best):
+                cur, best = cand, m
+        if cur is None:
+            # nessun preset aggancia: adattazione RX locale (banda del loop
+            # CDR), poi si riprovano i preset — bring-up da ricevitore vero
+            for bw in (0.0005, 0.003):
+                for name, taps in lt_presets[:3]:
+                    cand = cfg.with_updates(cdr_bw=bw, tx_ffe_taps=taps)
+                    m, _ = lt_metric(cand)
+                    exchange += 1
+                    t_us += frame_us * 32
+                    if m is not None and (best is None or m > best):
+                        cur, best = cand, m
+                if cur is not None:
+                    rx_notes.append(f"RX adapt: cdr_bw → {bw:g}")
                     frames.append({"t_us": t_us, "coeff": "RX",
-                                   "request": f"RX adapt: CTLE {g:+.1f} dB",
+                                   "request": f"RX adapt: cdr_bw {bw:g}",
                                    "status": "updated",
                                    "taps": list(cur.tx_ffe_taps), "q": best})
                     break
+        if cur is None:
+            cur = cfg.with_updates(tx_ffe_taps=lt_presets[0][1])
+            best = None
 
-    m_final, r_final = lt_metric(cur)
-    locked_final = m_final is not None
-    eye_open = bool(locked_final and m_final > 0.0)
-    if locked_final and eye_open:
-        frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
-                       "request": "local receiver ready", "status": "ready",
-                       "taps": list(cur.tx_ffe_taps), "q": m_final})
-    else:
-        # niente lock / occhio chiuso → link_fail_inhibit_timer e restart AN
-        frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
-                       "request": "training failure",
-                       "status": "link_fail_inhibit_timer → restart AN",
-                       "taps": list(cur.tx_ffe_taps), "q": m_final})
-    lt = {"frames": frames, "metric": "q_min (apertura occhio, unità σ)",
-          "q_preset": frames[0]["q"], "q_after": m_final,
-          "taps_before": list(frames[0]["taps"]),
-          "taps_after": list(cur.tx_ffe_taps),
-          "cdr_locked": locked_final, "eye_open": eye_open,
-          "rx_notes": rx_notes,
-          "exchanges": exchange, "duration_us": frames[-1]["t_us"],
-          "ber_after": (r_final.ber_post_dfe if r_final.link_up
-                        else float("nan")),
-          "link_up_after": bool(r_final.link_up and locked_final)}
+        hold_streak = 0
+        main = len(cur.tx_ffe_taps) // 2
+        coeff_ids = [i for i in range(len(cur.tx_ffe_taps)) if i != main]
+        labels = {i: f"c({i - main:+d})" for i in coeff_ids}
+        for _rnd in range(rounds):
+            improved_round = False
+            for idx in coeff_ids:
+                taps = list(cur.tx_ffe_taps)
+                cands = []
+                for req, delta in (("decrement", -lt_step),
+                                   ("increment", lt_step)):
+                    v = taps[idx] + delta
+                    t2 = list(taps)
+                    t2[idx] = v
+                    # vincolo di picco stile clause: somma |c_i| limitata;
+                    # violarlo produce status = at_limit, non un update
+                    if abs(v) > lim or sum(abs(x) for x in t2) > 1.55:
+                        cands.append((req, None, None))
+                        continue
+                    cand = cur.with_updates(tx_ffe_taps=tuple(t2))
+                    mm, _ = lt_metric(cand)
+                    cands.append((req, cand, mm))
+                req, cand, mm = max(
+                    cands, key=lambda c2: (-1e9 if c2[2] is None else c2[2]))
+                exchange += 1
+                t_us += frame_us * 32
+                if (cand is not None and mm is not None
+                        and (best is None or mm > best + 0.02)):
+                    cur, best = cand, mm
+                    status = "updated"
+                    hold_streak = 0
+                    improved_round = True
+                else:
+                    req = "hold"
+                    status = ("at_limit"
+                              if all(c2[1] is None for c2 in cands)
+                              else "not_updated")
+                    hold_streak += 1
+                frames.append({"t_us": t_us, "coeff": labels[idx],
+                               "request": req, "status": status,
+                               "taps": list(cur.tx_ffe_taps), "q": best})
+            if hold_streak >= len(coeff_ids):   # un giro intero senza update
+                break
+            if not improved_round and best is not None:
+                # adattazione RX locale: il CTLE ritocca il gain DC mentre
+                # il partner tiene fermi i coefficienti (dichiarato: locale)
+                for g in (cur.ctle_dc_gain_db - 2.0,
+                          cur.ctle_dc_gain_db + 2.0):
+                    g = float(np.clip(g, -8.0, 0.0))
+                    if abs(g - cur.ctle_dc_gain_db) < 0.5:
+                        continue
+                    cand = cur.with_updates(ctle_dc_gain_db=g)
+                    mm, _ = lt_metric(cand)
+                    exchange += 1
+                    if mm is not None and mm > best + 0.05:
+                        cur, best = cand, mm
+                        rx_notes.append(f"RX adapt: CTLE gain → {g:+.1f} dB")
+                        frames.append({"t_us": t_us, "coeff": "RX",
+                                       "request": f"RX adapt: CTLE {g:+.1f} dB",
+                                       "status": "updated",
+                                       "taps": list(cur.tx_ffe_taps),
+                                       "q": best})
+                        break
+
+        m_final, r_final = lt_metric(cur)
+        locked_final = m_final is not None
+        eye_open = bool(locked_final and m_final > 0.0)
+        if locked_final and eye_open:
+            frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
+                           "request": "local receiver ready",
+                           "status": "ready",
+                           "taps": list(cur.tx_ffe_taps), "q": m_final})
+        else:
+            # niente lock/occhio → link_fail_inhibit_timer e restart AN
+            frames.append({"t_us": t_us + frame_us * 16, "coeff": "—",
+                           "request": "training failure",
+                           "status": "link_fail_inhibit_timer → restart AN",
+                           "taps": list(cur.tx_ffe_taps), "q": m_final})
+        return {"frames": frames, "q_after": m_final,
+                "taps_after": list(cur.tx_ffe_taps),
+                "cdr_locked": locked_final, "eye_open": eye_open,
+                "rx_notes": rx_notes, "exchanges": exchange,
+                "duration_us": frames[-1]["t_us"],
+                "ber_after": (r_final.ber_post_dfe if r_final.link_up
+                              else float("nan")),
+                "ready": bool(locked_final and eye_open),
+                "cfg_final": cur}
+
+    fwd = lt_direction(seed, lt_rounds)
+    # direzione inversa (il partner allena il NOSTRO ricevitore → il suo TX):
+    # canale dichiarato simmetrico, rumore indipendente, meno round
+    rev = lt_direction(seed + 7777, min(lt_rounds, 1))
+    cur = fwd.pop("cfg_final")
+    rev.pop("cfg_final")
+    rev.pop("frames")               # nel report basta il riassunto
+    lt = {"metric": "q_min (apertura occhio, unità σ)",
+          "q_preset": fwd["frames"][0]["q"],
+          "taps_before": list(fwd["frames"][0]["taps"]),
+          **fwd,
+          "reverse": rev,
+          "both_ready": bool(fwd["ready"] and rev["ready"]),
+          "link_up_after": bool(fwd["cdr_locked"])}
     return {"an": an, "lt": lt, "cfg_after": cur}
 
 

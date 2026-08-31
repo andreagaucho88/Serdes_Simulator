@@ -392,7 +392,8 @@ class ApiPanel(Base):
         source_used = "reference"
         if source in ("auto", "live") and name in (
                 "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical",
-                "timing", "eq", "decisions", "bert", "checks"):
+                "timing", "eq", "decisions", "bert", "checks", "adc", "l2",
+                "eyecontour"):
             sim = live_sim
             if sim is not None and sim.cfg == cfg:
                 source_used = "live"

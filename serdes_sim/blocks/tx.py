@@ -46,6 +46,28 @@ def tx_clock_tie_ui(cfg, rng):
         tie += cfg.tx_pj_amp_ui * np.sin(2 * np.pi * f_norm * k)
     if cfg.tx_dcd_pct > 0:
         tie += (cfg.tx_dcd_pct / 100 / 2) * np.where(k % 2 == 0, 1.0, -1.0)
+    if cfg.tx_buj_amp_ui > 0:
+        # BUJ: sequenza PRBS7 (seed diverso dai dati) filtrata a ~baud/20 —
+        # jitter deterministico bounded e NON correlato al pattern (da BERT)
+        from . import stimulus as _stim
+        seq = 2.0 * _stim.prbs_bits(7, len(k) + 64,
+                                    seed=[1, 0, 1, 1, 0, 0, 1])[64:].astype(float) - 1.0
+        from scipy import signal as _sig
+        b, a2 = _sig.butter(1, 0.1)          # 0.05·f_baud in normalizzata 2sps
+        buj = _sig.lfilter(b, a2, seq)
+        buj /= max(np.max(np.abs(buj)), 1e-12)
+        tie += cfg.tx_buj_amp_ui * buj
+    if cfg.tx_ssc_ppm > 0:
+        # SSC down-spread triangolare: deviazione di frequenza 0..-ppm,
+        # la fase (TIE) è l'integrale della deviazione. A 33 kHz un record
+        # copre una frazione del periodo: si parte da fase casuale nulla
+        # (dichiarato) e il CDR deve inseguire la rampa come un ppm lento.
+        t_s = k / cfg.symbol_rate_hz
+        period = 1.0 / (cfg.tx_ssc_khz * 1e3)
+        frac = (t_s / period) % 1.0
+        tri = np.where(frac < 0.5, frac * 2, 2 - frac * 2)    # 0..1..0
+        dev_ppm = -cfg.tx_ssc_ppm * tri                        # down-spread
+        tie += np.cumsum(dev_ppm * 1e-6)                       # UI cumulativi
     return tie
 
 
@@ -67,7 +89,8 @@ def run_tx(cfg, pam4_symbols, rng=None) -> TxResult:
     # così la baseline senza jitter resta bit-esatta)
     tx_tie_ui = None
     jitter_on = (cfg.tx_rj_rms_fs > 0 or cfg.tx_pj_amp_ui > 0
-                 or cfg.tx_dcd_pct > 0)
+                 or cfg.tx_dcd_pct > 0 or cfg.tx_buj_amp_ui > 0
+                 or cfg.tx_ssc_ppm > 0)
     if jitter_on and rng is not None:
         tx_tie_ui = tx_clock_tie_ui(cfg, rng)
         tie_analog = np.repeat(tx_tie_ui, cfg.analog_sps) * cfg.analog_sps

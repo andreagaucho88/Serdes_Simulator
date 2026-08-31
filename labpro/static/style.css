@@ -172,3 +172,18 @@ canvas.scope { width: 100%; display: block; background: #04070A;
 .acq-badge { font: 500 9px "IBM Plex Mono", monospace; color: var(--muted, #7e93a2);
   border: 1px solid rgba(126,147,162,.35); border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
 .acq-badge.on { color: #3ecf8e; border-color: rgba(62,207,142,.5); }
+
+/* Academy v2 */
+.lesson-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .lesson-grid { grid-template-columns: 1fr; } }
+.lesson-main p.lead { font-weight: 500; }
+.lesson-main p { line-height: 1.55; }
+.lesson-side { border-left: 1px solid rgba(126,147,162,.25); padding-left: 14px;
+  display: flex; flex-direction: column; gap: 12px; }
+.lesson-side section { margin: 0; }
+.lesson-nums td { padding: 3px 6px; }
+.lesson-nums td:last-child { text-align: right; white-space: nowrap; }
+.lesson-act { display: flex; flex-direction: column; margin-bottom: 7px;
+  font-size: 11px; line-height: 1.4; }
+.lesson-act .do { color: var(--acc, #3ecf8e); font-weight: 500; }
+.lesson-act .see { color: var(--muted, #7e93a2); padding-left: 12px; }

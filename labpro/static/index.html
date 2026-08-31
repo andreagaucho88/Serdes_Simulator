@@ -6,7 +6,7 @@
 <title>SerDes Optical Lab Pro</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=12">
+<link rel="stylesheet" href="/static/style.css?v=13">
 <script src="/static/plotly.min.js"></script>
 </head>
 <body>
@@ -22,6 +22,7 @@
       <span class="led" id="led-run"></span><span id="btn-run-label">RUN</span>
     </button>
     <button id="btn-reset" class="btn" title="Azzera i contatori accumulati">AZZERA</button>
+    <button id="btn-anlt" class="btn" title="Auto-Negotiation + Link Training: negozia HCD e allena il TX FIR finché CDR aggancia e l'occhio si apre; applica i valori al banco">AN/LT</button>
   </div>
   <div class="tb-live" id="tb-live">
     <div class="tb-cell"><label>record</label><b id="tb-records">0</b></div>
@@ -52,6 +53,6 @@
   <span id="sb-cfg-hash"></span>
 </footer>
 
-<script src="/static/app.js?v=13"></script>
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

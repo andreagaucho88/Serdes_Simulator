@@ -167,6 +167,28 @@ def eye_measures(sim, cfg, node="vctle"):
         wave = -wave
         y = -y
 
+    # ALLINEAMENTO GREZZO PER-NODO: il ritardo stimato dal CDR vale al piano
+    # dello slicer; i nodi intermedi (canale, TIA…) hanno il loro group
+    # delay. Come farebbe lo strumento col pattern lock, si cerca l'offset
+    # INTERO di UI a correlazione massima, poi l'autocentraggio fine.
+    sub = k[::7]
+    best_d, best_c = 0, -1.0
+    for d_int in (-2, -1, 0, 1, 2):
+        cc = ((sub + 0.5 + delay + d_int) * sps).astype(int)
+        okm = (cc > sps) & (cc < len(wave) - sps)
+        if okm.sum() < 100:
+            continue
+        c = float(abs(np.corrcoef(wave[cc[okm]], symbols[sub[okm]])[0, 1]))
+        if c > best_c:
+            best_c, best_d = c, d_int
+    if best_d:
+        delay += best_d
+        centers = ((k + 0.5 + delay) * sps).astype(int)
+        valid = (centers > sps) & (centers < len(wave) - sps)
+        k, centers = k[valid], centers[valid]
+        y = wave[centers]
+        truth = symbols[k]
+
     # AUTOCENTRAGGIO da strumento: il DCA sceglie da sé l'istante di misura
     # (massima apertura minima), indipendente dal CDR del ricevitore — il cui
     # istante è riportato a parte come marker.
@@ -316,6 +338,76 @@ def _tie_tail_fit(tie_ui, ui_ps):
         "tj_2p4e4_ps": (dj + 2 * q4 * rj) * ui_ps,
         "ew_2p4e4_ui": 1.0 - (dj + 2 * q4 * rj),
     }
+
+
+def eye_contour_panel(sim, cfg, node="vctle"):
+    """Contour BER 2D (fase × ampiezza), come l'eye contour di un DCA in
+    eye mode: per ogni fase si stimano μ/σ dei cluster per livello e
+    BER(t,y) = ½[Q((y−μ_a(t))/σ_a(t)) + Q((μ_b(t)−y)/σ_b(t))] sull'occhio
+    che contiene y. DICHIARATO: estrapolazione con code gaussiane."""
+    from scipy.stats import norm as sp_norm
+    wave = np.asarray(get_wave(sim, node), dtype=float)
+    sps = cfg.analog_sps
+    spec = sim.spec
+    levels = spec.levels_array
+    delay = _node_delay_ui(sim, node)
+    symbols = sim.pam4_symbols
+    k = np.arange(200, cfg.n_symbols - 200)
+    # polarità + allineamento grezzo come in eye_measures
+    cc0 = ((k + 0.5 + delay) * sps).astype(int)
+    ok0 = (cc0 > 2 * sps) & (cc0 < len(wave) - 2 * sps)
+    k = k[ok0]
+    y0 = wave[cc0[ok0]]
+    truth0 = symbols[k]
+    if float(np.mean((truth0 - truth0.mean()) * (y0 - y0.mean()))) < 0:
+        wave = -wave
+    best_d, best_c = 0, -1.0
+    sub = k[::7]
+    for d_int in (-2, -1, 0, 1, 2):
+        cci = ((sub + 0.5 + delay + d_int) * sps).astype(int)
+        okm = (cci > sps) & (cci < len(wave) - sps)
+        if okm.sum() < 100:
+            continue
+        c = float(abs(np.corrcoef(wave[cci[okm]], symbols[sub[okm]])[0, 1]))
+        if c > best_c:
+            best_c, best_d = c, d_int
+    delay += best_d
+
+    phases = np.linspace(-0.5, 0.5, 25)
+    # griglia di ampiezza dal range del segnale al centro
+    cc = ((k + 0.5 + delay) * sps).astype(int)
+    yc = wave[cc]
+    ymin, ymax = np.percentile(yc, 0.2), np.percentile(yc, 99.8)
+    pad = 0.15 * (ymax - ymin)
+    ygrid = np.linspace(ymin - pad, ymax + pad, 70)
+    logber = np.full((len(ygrid), len(phases)), 0.0)   # log10(BER), 0 = 1
+    for ip, ph in enumerate(phases):
+        cci = ((k + 0.5 + delay + ph) * sps).astype(int)
+        okm = (cci > 0) & (cci < len(wave))
+        yy = wave[cci[okm]]
+        tt = symbols[k[okm]]
+        mus, sigmas = [], []
+        for lv in levels:
+            x = yy[np.isclose(tt, lv)]
+            if len(x) < 30:
+                mus.append(None)
+                sigmas.append(None)
+            else:
+                mus.append(float(np.mean(x)))
+                sigmas.append(float(max(np.std(x), 1e-6)))
+        col = np.full(len(ygrid), 1.0)
+        for a, b in zip(range(len(levels) - 1), range(1, len(levels))):
+            if mus[a] is None or mus[b] is None:
+                continue
+            in_eye = (ygrid >= mus[a]) & (ygrid <= mus[b])
+            ber = 0.5 * (sp_norm.sf((ygrid - mus[a]) / sigmas[a])
+                         + sp_norm.sf((mus[b] - ygrid) / sigmas[b]))
+            col = np.where(in_eye, np.minimum(col, ber), col)
+        logber[:, ip] = np.log10(np.maximum(col, 1e-18))
+    label, domain, unit, _side = NODES[node]
+    return J({"phases_ui": phases, "y": ygrid,
+              "logber": np.round(logber, 2), "unit": unit,
+              "label": label})
 
 
 def jitter_panel(sim, cfg, node="vctle"):
@@ -604,13 +696,46 @@ def _optical_levels_dbm(sim, cfg):
 
 def adc_panel(sim, cfg):
     tl = sim.tone_lab
+    adc_v = np.asarray(sim.adc.adc_samples_v, dtype=float)
+    fs = cfg.adc_full_scale_vpp / 2
     out = {
         "lanes": [{"gain_pct": 100 * g, "offset_mv": 1e3 * o, "skew_fs": 1e15 * s}
                   for g, o, s in zip(sim.adc.lane_gain, sim.adc.lane_offset_v,
                                      sim.adc.lane_skew_s)],
         "lsb_mv": sim.adc.adc_lsb_v * 1e3,
         "clip_pct": 100 * sim.adc.adc_clip_fraction,
+        "fs_v": fs,
     }
+    # occupazione dei codici ADC su tutto il full-scale: mostra quanto l'AGC
+    # usa il range e se le code toccano il clipping
+    hc, ce = np.histogram(adc_v, bins=96, range=(-fs, fs))
+    out["code_hist"] = {"x": 0.5 * (ce[:-1] + ce[1:]), "h": hc}
+    # campioni DATA/EDGE agli istanti decisi dal CDR (2 sps interleaved):
+    # il plot classico da letteratura — 4 modi PAM4 sui data, transizioni
+    # sugli edge — con le hard decision colorate e le soglie
+    if sim.cdr is not None and sim.cdr.locked and sim.link_up:
+        grid = np.arange(len(adc_v), dtype=float)
+        pos = np.asarray(sim.cdr.pos_data_samples, dtype=float)
+        pos = pos[(pos > 1) & (pos < len(adc_v) - 2)]
+        half = cfg.adc_sps / 2.0
+        y_data = np.interp(pos, grid, adc_v)
+        y_edge = np.interp(pos[:-1] + half, grid, adc_v)
+        hd, de = np.histogram(y_data, bins=80, range=(-fs, fs))
+        he, _ = np.histogram(y_edge, bins=80, range=(-fs, fs))
+        # hard decision al piano ADC con soglie a metà fra i modi stimati
+        levels = sim.spec.levels_array
+        scale = float(np.percentile(np.abs(y_data), 97)) or 1.0
+        thr = [0.5 * (a + b) * scale for a, b in zip(levels[:-1], levels[1:])]
+        n_show = min(1200, len(y_data) - 400)
+        ys = y_data[400:400 + n_show]
+        dec = np.digitize(ys, thr)
+        out["sampling"] = {
+            "hist_x": 0.5 * (de[:-1] + de[1:]),
+            "data_hist": hd, "edge_hist": he,
+            "scatter_y": np.round(ys, 4), "scatter_dec": dec,
+            "thresholds_v": thr,
+            "start_symbol": 400,
+        }
     if tl is not None:
         keep = slice(0, len(tl.freq_hz), 4)
         out.update({
@@ -801,7 +926,50 @@ def l2_panel(sim, cfg):
         "line_rate_gbps": l2.line_rate_gbps,
         "frame_bytes": cfg.l2_frame_bytes,
         "fec": cfg.fec_mode,
+        "frames": _decode_frames(sim, cfg),
     })
+
+
+def _decode_frames(sim, cfg, max_frames=8):
+    """Ispettore frame: decodifica i frame REALI della finestra RX
+    descramblata dell'ultimo record — preamble/SFD, DA/SA/EtherType,
+    sequence, FCS ricevuta vs CRC-32 ricalcolato, verdetto per campo."""
+    import zlib
+    from serdes_sim.blocks import ethernet as eth
+    bits = getattr(sim, "l2_window_bits", None)
+    if bits is None or len(bits) < 512:
+        return []
+    data = eth._bits_to_bytes(np.asarray(bits, dtype=np.uint8))
+    body_len = (len(eth.HEADER)
+                + max(cfg.l2_frame_bytes - len(eth.HEADER) - 4, 8) + 4)
+    frames = []
+    i = 0
+    while len(frames) < max_frames and i < len(data) - body_len - 8:
+        j = data.find(eth.PREAMBLE, i)
+        if j < 0:
+            break
+        start = j + len(eth.PREAMBLE)
+        if start + body_len > len(data):
+            break
+        body = data[start:start + body_len - 4]
+        fcs_rx = data[start + body_len - 4:start + body_len]
+        fcs_calc = zlib.crc32(body).to_bytes(4, "big")
+        seq = int.from_bytes(body[len(eth.HEADER):len(eth.HEADER) + 4], "big")
+        frames.append({
+            "offset_byte": j,
+            "da": body[0:6].hex(":"),
+            "sa": body[6:12].hex(":"),
+            "ethertype": "0x" + body[12:14].hex(),
+            "seq": seq,
+            "payload_len": body_len - 4 - len(eth.HEADER),
+            "fcs_rx": fcs_rx.hex(),
+            "fcs_calc": fcs_calc.hex(),
+            "fcs_ok": fcs_rx == fcs_calc,
+            "hex_head": " ".join(f"{b:02x}" for b in
+                                 (eth.PREAMBLE + body)[:36]),
+        })
+        i = start + body_len
+    return frames
 
 
 
@@ -1010,6 +1178,7 @@ def checks_panel(sim, cfg):
 PANEL_BUILDERS = {
     "cmis": cmis_panel,
     "eye": eye_panel,
+    "eyecontour": eye_contour_panel,
     "bert": bert_panel,
     "l2": l2_panel,
     "jitter": jitter_panel,

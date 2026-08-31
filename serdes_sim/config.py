@@ -30,6 +30,9 @@ class LinkConfig:
     tx_pj_amp_ui: float = 0.0     # periodic jitter, ampiezza picco [UI]
     tx_pj_freq_mhz: float = 200.0  # frequenza del PJ sinusoidale
     tx_dcd_pct: float = 0.0       # duty-cycle distortion [% di UI, alternato ±/2]
+    tx_buj_amp_ui: float = 0.0    # BUJ: jitter bounded non correlato (PRBS filtrata) [UI pk]
+    tx_ssc_ppm: float = 0.0       # SSC down-spread [ppm picco] (triangolare)
+    tx_ssc_khz: float = 33.0      # frequenza di modulazione SSC
 
     # TX
     tx_ffe_taps: tuple = (-0.08, 1.00, -0.08)
