@@ -30,6 +30,25 @@ _a("bench_run", "RUN / STOP", "RUN / STOP", "LiveBench", "acquisition scheduler"
    "STOP congela nuovi record; non cancella quelli accumulati.",
    "STOP freezes new records; it does not clear accumulated data.",
    "/api/run", "running state")
+_a("bert_sensitivity", "RX sensitivity search", "RX sensitivity search",
+   "BERT · ED", "optical power → counted BER",
+   "Bisezione sulla potenza ottica lanciata (a seed fisso) per trovare la "
+   "minima potenza al PD con BER contata ≤ target e link UP; target di "
+   "default = soglia pre-FEC iid del FEC in-path.",
+   "Bisection on the launched optical power (fixed seed) to find the "
+   "minimum PD power with counted BER ≤ target and link UP; default "
+   "target = iid pre-FEC threshold of the in-path FEC.",
+   "Soglia in dBm al PD, margine rispetto al punto operativo, traiettoria "
+   "della bisezione e bit/durata per confermare il target a CL95.",
+   "Threshold in dBm at the PD, margin vs the operating point, bisection "
+   "trail, and bits/duration to confirm the target at CL95.",
+   "Potenza MEDIA, non OMA_outer: la sensitivity di clause richiede "
+   "stressed RX calibrato e procedura prescritta. Solo mezzo ottico. "
+   "Il banco non viene modificato.",
+   "AVERAGE power, not OMA_outer: clause sensitivity requires a calibrated "
+   "stressed RX and a prescribed procedure. Optical medium only. "
+   "The bench is not modified.",
+   "/api/experiment/sensitivity", "report only")
 _a("config_export", "Esporta configurazione", "Export configuration",
    "Bench", "LinkConfig snapshot",
    "Scarica un file JSON versionato con tutti i 115 campi del banco e le "

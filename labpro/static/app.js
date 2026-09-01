@@ -2633,6 +2633,30 @@ PANEL_DEFS.bert = {
     };
     gbar.appendChild(p.autoBtn);
     p.body.appendChild(gbar);
+    // --- RX sensitivity search: bisezione sulla potenza lanciata ---------
+    p.body.appendChild(CE("div", "sec-tag", "BERT RX · SENSITIVITY SEARCH"));
+    const sbar = CE("div", "scope-bar");
+    p.sensTarget = CE("input"); p.sensTarget.type = "text";
+    p.sensTarget.style.width = "110px";
+    p.sensTarget.placeholder = L("auto (soglia pre-FEC)", "auto (pre-FEC threshold)");
+    p.sensBtn = CE("button", "btn btn-accent", L("Misura sensitivity (~10 s)", "Measure sensitivity (~10 s)"));
+    p.sensBtn.dataset.action = "bert_sensitivity";
+    p.sensBtn.onclick = async () => {
+      p.sensBtn.disabled = true; const prev = p.sensBtn.textContent;
+      p.sensBtn.textContent = L("bisezione…", "bisecting…");
+      try {
+        const body = {};
+        const t = Number(p.sensTarget.value);
+        if (p.sensTarget.value.trim() && isFinite(t) && t > 0) body.target_ber = t;
+        const d = await POST("/api/experiment/sensitivity", body);
+        this.drawSensitivity(p, d);
+      } catch (e) { toast(e.message); }
+      p.sensBtn.disabled = false; p.sensBtn.textContent = prev;
+    };
+    sbar.append(CE("span", "", "target BER:"), p.sensTarget, p.sensBtn);
+    p.body.appendChild(sbar);
+    p.sensOut = CE("div"); p.body.appendChild(p.sensOut);
+    p.sensPlot = CE("div", "plot"); p.body.appendChild(p.sensPlot);
     p.errAn = CE("div"); p.body.appendChild(p.errAn);
     p.body.appendChild(bar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
@@ -2644,6 +2668,35 @@ PANEL_DEFS.bert = {
     p.lastFetch = 0;
     this.updateTxSummary(p);
     this.refetch(p);
+  },
+  drawSensitivity(p, d) {
+    p.sensOut.innerHTML = "";
+    if (d.status === "fail_at_current") {
+      const now = d.points && d.points[0];
+      p.sensOut.appendChild(CE("div", "note w", L(
+        `BER ${now && now.ber != null ? sci(now.ber) : "—"} già sopra il target ${sci(d.target_ber)} alla potenza attuale: nessuna soglia verso il basso — alza la potenza o rilassa il target.`,
+        `BER ${now && now.ber != null ? sci(now.ber) : "—"} already above the ${sci(d.target_ber)} target at the current power: no downward threshold — raise the power or relax the target.`)));
+      return;
+    }
+    p.sensOut.appendChild(readout([
+      { l: "sensitivity @ PD", v: d.sensitivity_pd_dbm == null ? "—" : fix(d.sensitivity_pd_dbm, 2) + " dBm", big: true,
+        cls: "ok", sub: L("potenza MEDIA (non OMA di clause)", "AVERAGE power (not clause OMA)") },
+      { l: L("margine", "margin"), v: fix(d.margin_db, 2) + " dB", cls: d.margin_db > 1 ? "ok" : "warn",
+        sub: `${L("lancio attuale", "current launch")} ${fix(d.current_launch_dbm, 1)} dBm` },
+      { l: "target BER", v: sci(d.target_ber),
+        sub: d.status === "capped" ? L("≥ fondo scala (−20 dB)", "≥ span floor (−20 dB)") : `${d.points.length} sim` },
+      { l: L("durata per CL95", "CL95 duration"), v: eng(d.cl95_bits) + "b",
+        sub: fix(d.cl95_seconds * 1e3, 3) + " ms @ line rate" },
+    ]));
+    const pts = d.points.filter(q => q.ber != null);
+    const lay = PL({ height: 200, showlegend: false, shapes: [hline(d.target_ber, COL.am)] });
+    mergeAxis(lay, "xaxis", { title: { text: L("potenza lanciata [dBm]", "launch power [dBm]"), font: { size: 9 } } });
+    mergeAxis(lay, "yaxis", { type: "log", title: { text: "BER", font: { size: 9 } } });
+    plot(p.sensPlot, [{ x: pts.map(q => q.launch_dbm), y: pts.map(q => q.ber),
+      mode: "markers", marker: { size: 8, color: pts.map(q => q.pass ? COL.ok : COL.fail) } }], lay);
+    p.sensOut.appendChild(CE("div", "sub", L(
+      "Bisezione sulla potenza lanciata a seed fisso; soglia = minima potenza con BER ≤ target e link UP. DICHIARATO: non è la sensitivity di clause (OMA_outer su stressed RX calibrato).",
+      "Bisection on launch power at fixed seed; threshold = minimum power with BER ≤ target and link UP. DECLARED: not clause sensitivity (OMA_outer on a calibrated stressed RX).")));
   },
   gateSnapshot(p) {
     if (!p.gate || !S.acc) return null;
@@ -3018,24 +3071,58 @@ PANEL_DEFS.jtol = {
       btn.disabled = true; btn.textContent = "bisezione… (~10 s)";
       try {
         const freqs = p.freqs.value.split(",").map(Number).filter(v => v > 0);
-        const d = await POST("/api/experiment/jtol", { freqs_mhz: freqs, target_ber: Number(p.target.value) });
-        const ok = d.points.filter(q => q.amp_ui != null);
-        const traces = [{ x: ok.map(q => q.freq_mhz), y: ok.map(q => q.amp_ui), mode: "lines+markers", name: "tolleranza", line: { color: COL.dg, width: 2 }, marker: { size: 8, symbol: ok.map(q => q.capped ? "triangle-up" : "circle") } }];
-        const lay = PL({ height: 270, showlegend: false });
-        mergeAxis(lay, "xaxis", { type: "log", title: { text: "frequenza PJ [MHz]", font: { size: 10 } } });
-        mergeAxis(lay, "yaxis", { title: { text: "ampiezza PJ tollerata [UI pk]", font: { size: 10 } }, range: [0, 0.4] });
-        plot(p.plotEl, traces, lay);
-        const rows = d.points.map(q => q.amp_ui == null ? `${q.freq_mhz} MHz: ${L("link già KO senza PJ", "link already down without PJ")}` : `${fix(q.freq_mhz, 0)} MHz: ${fix(q.amp_ui, 3)} UI (${fix(q.amp_ps, 2)} ps)${q.capped ? " ≥cap" : ""}`).join(" · ");
-        const fbw = S.cfg.cdr_bw * S.cfg.symbol_rate_hz / 1e6;
-        p.note.innerHTML = `Target BER ${sci(d.target_ber)} — ${rows}.<br>Il <b>minimo vicino a ~${fix(fbw, 0)} MHz</b> (banda del loop) è il <b>jitter peaking</b> del CDR di 2° ordine: prova a cambiare cdr_bw/damping e rifai la misura. Il record (~${fix(S.cfg.n_symbols / (S.cfg.symbol_rate_hz / 1e9), 0)} ns) limita le basse frequenze a ≥3 cicli. <b>NON normativa</b>: le maschere JTOL di clause hanno pattern, durata e procedure prescritte.`;
+        p.lastData = await POST("/api/experiment/jtol", { freqs_mhz: freqs, target_ber: Number(p.target.value) });
+        this.draw(p);
       } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
       btn.disabled = false; btn.textContent = "Misura JTOL";
     };
     bar.append(CE("span", "", "freq [MHz]:"), p.freqs, CE("span", "", "target BER:"), p.target, btn);
     p.body.appendChild(bar);
+    // maschera di CONTESTO sovrapponibile (forma tipica delle maschere JTOL:
+    // −20 dB/dec fino al corner, poi floor) — parametri espliciti, NON di clause
+    const mbar = CE("div", "scope-bar");
+    p.maskOn = CE("input"); p.maskOn.type = "checkbox"; p.maskOn.checked = true;
+    const maskLab = CE("label", "", ""); maskLab.append(p.maskOn, document.createTextNode(" " + L("maschera", "mask")));
+    p.maskFloor = CE("input"); p.maskFloor.type = "text"; p.maskFloor.value = "0.05"; p.maskFloor.style.width = "55px";
+    p.maskCorner = CE("input"); p.maskCorner.type = "text"; p.maskCorner.style.width = "95px";
+    p.maskCorner.placeholder = L("auto (loop BW)", "auto (loop BW)");
+    p.maskOn.onchange = p.maskFloor.onchange = p.maskCorner.onchange = () => { if (p.lastData) this.draw(p); };
+    mbar.append(maskLab, CE("span", "", "floor [UI]:"), p.maskFloor, CE("span", "", "corner [MHz]:"), p.maskCorner);
+    p.body.appendChild(mbar);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
     p.note = CE("div", "note", L("Bisezione sull'ampiezza del PJ iniettato al TX PLL, per frequenza: la curva che ne esce è la firma della banda del CDR.", "Bisection on the PJ amplitude injected at the TX PLL, per frequency: the resulting curve is the signature of the CDR bandwidth."));
     p.body.appendChild(p.note);
+  },
+  maskAt(f_mhz, floor_ui, corner_mhz) {
+    return Math.min(5, floor_ui * Math.max(1, corner_mhz / f_mhz));
+  },
+  draw(p) {
+    const d = p.lastData;
+    const ok = d.points.filter(q => q.amp_ui != null);
+    const fbw = S.cfg.cdr_bw * S.cfg.symbol_rate_hz / 1e6;
+    const traces = [{ x: ok.map(q => q.freq_mhz), y: ok.map(q => q.amp_ui), mode: "lines+markers", name: "tolleranza", line: { color: COL.dg, width: 2 }, marker: { size: 8, symbol: ok.map(q => q.capped ? "triangle-up" : "circle") } }];
+    let maskNote = "";
+    const floor = Number(p.maskFloor.value);
+    const corner = Number(p.maskCorner.value) > 0 ? Number(p.maskCorner.value) : fbw;
+    if (p.maskOn.checked && isFinite(floor) && floor > 0 && d.points.length) {
+      const fs = d.points.map(q => q.freq_mhz);
+      const fLo = Math.min(...fs) / 2, fHi = Math.max(...fs) * 2;
+      const grid = [];
+      for (let i = 0; i <= 40; i++) grid.push(fLo * Math.pow(fHi / fLo, i / 40));
+      traces.push({ x: grid, y: grid.map(f => this.maskAt(f, floor, corner)), mode: "lines", name: L("maschera (contesto)", "mask (context)"), line: { color: COL.am, dash: "dash", width: 1.5 } });
+      const fails = d.points.filter(q => q.amp_ui == null || q.amp_ui < this.maskAt(q.freq_mhz, floor, corner));
+      maskNote = `<br><b>${L("Maschera di contesto", "Context mask")}</b> (floor ${fix(floor, 3)} UI · corner ${fix(corner, 0)} MHz, −20 dB/dec): ` +
+        (fails.length
+          ? `<span class="fail">${fails.length}/${d.points.length} ${L("punti sotto la maschera", "points below the mask")}</span> (${fails.map(q => fix(q.freq_mhz, 0) + " MHz").join(", ")})`
+          : `<span class="ok">${L("tutti i punti sopra la maschera", "all points above the mask")}</span>`) +
+        ` — ${L("forma tipica dichiarata, NON una maschera di clause", "typical declared shape, NOT a clause mask")}.`;
+    }
+    const lay = PL({ height: 270, showlegend: false });
+    mergeAxis(lay, "xaxis", { type: "log", title: { text: "frequenza PJ [MHz]", font: { size: 10 } } });
+    mergeAxis(lay, "yaxis", { title: { text: "ampiezza PJ tollerata [UI pk]", font: { size: 10 } }, range: [0, 0.4] });
+    plot(p.plotEl, traces, lay);
+    const rows = d.points.map(q => q.amp_ui == null ? `${q.freq_mhz} MHz: ${L("link già KO senza PJ", "link already down without PJ")}` : `${fix(q.freq_mhz, 0)} MHz: ${fix(q.amp_ui, 3)} UI (${fix(q.amp_ps, 2)} ps)${q.capped ? " ≥cap" : ""}`).join(" · ");
+    p.note.innerHTML = `Target BER ${sci(d.target_ber)} — ${rows}.<br>Il <b>minimo vicino a ~${fix(fbw, 0)} MHz</b> (banda del loop) è il <b>jitter peaking</b> del CDR di 2° ordine: prova a cambiare cdr_bw/damping e rifai la misura. Il record (~${fix(S.cfg.n_symbols / (S.cfg.symbol_rate_hz / 1e9), 0)} ns) limita le basse frequenze a ≥3 cicli. <b>NON normativa</b>: le maschere JTOL di clause hanno pattern, durata e procedure prescritte.${maskNote}`;
   },
 };
 

@@ -30,7 +30,8 @@ from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E40
 from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
 from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                jitter_tolerance, jitter_transfer,
-                               l2_ont_report, link_train, traffic_sweep)
+                               l2_ont_report, link_train,
+                               rx_sensitivity_search, traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
@@ -641,6 +642,31 @@ class ApiDr4Procedure(Base):
         self.write_json({"ok": True, "report": paneldata.J(report)})
 
 
+class ApiSensitivity(Base):
+    async def post(self):
+        body = self.body_json()
+        target = body.get("target_ber")
+        try:
+            target = float(target) if target is not None else None
+            if target is not None and not 0 < target < 0.5:
+                raise ValueError("target_ber fuori range (0, 0.5)")
+        except (TypeError, ValueError) as exc:
+            self.set_status(400)
+            return self.write_json({"error": f"target_ber non valido: {exc}"})
+        cfg = BENCH.cfg
+        try:
+            report, ok = await run_experiment(
+                self, "RX sensitivity",
+                lambda evt: rx_sensitivity_search(cfg, target_ber=target,
+                                                  cancel=evt))
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
+        if not ok:
+            return
+        self.write_json({"ok": True, **paneldata.J(report)})
+
+
 class ApiExperimentCancel(Base):
     def post(self):
         name = EXPERIMENT.current
@@ -825,6 +851,7 @@ def make_app():
         (r"/api/experiment/dr4-tdecq", ApiDr4Procedure),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
+        (r"/api/experiment/sensitivity", ApiSensitivity),
         (r"/api/experiment/cancel", ApiExperimentCancel),
         (r"/api/chamber", ApiChamber),
         (r"/api/disrupt", ApiDisrupt),

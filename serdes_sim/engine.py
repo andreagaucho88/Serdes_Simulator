@@ -745,6 +745,89 @@ def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
     return points
 
 
+def rx_sensitivity_search(cfg: LinkConfig, target_ber=None, seed=20240731,
+                          iters=7, span_db=20.0, cancel=None):
+    """BERT RX sensitivity (DICHIARATA, non normativa): bisezione sulla
+    potenza ottica lanciata (laser_dbm) per trovare la potenza minima con
+    BER contata ≤ target e link UP.
+
+    - target di default: soglia pre-FEC iid del FEC in-path (KP4/KR4);
+      senza FEC, 1e-4 dichiarato.
+    - la sensitivity è riportata come POTENZA MEDIA al piano "PD input" del
+      power budget: NON è la OMA_outer di clause (che prescrive pattern,
+      stressed eye calibrato e procedura di misura).
+    - il report include i bit necessari a confermare il target a CL95
+      (~3/BER, modello iid): è la "durata guidata dalla confidenza".
+    Solo mezzo ottico: sul rame una sensitivity in potenza lanciata non è
+    definita in questo modello."""
+    if cfg.link_medium != "optical":
+        raise ValueError(
+            "sensitivity search: richiede link_medium=optical (sul rame "
+            "l'ampiezza al RX non è una potenza ottica lanciata)")
+    if target_ber is None:
+        from .blocks import fec as fec_block
+        if cfg.fec_mode == "kp4":
+            target_ber = fec_block.prefec_ber_threshold(1e-13, n=544, t=15,
+                                                        m=10)
+        elif cfg.fec_mode == "kr4":
+            target_ber = fec_block.prefec_ber_threshold(1e-13, n=528, t=7,
+                                                        m=10)
+        else:
+            target_ber = 1e-4
+    target_ber = float(target_ber)
+
+    trail = []
+
+    def measure(launch_dbm):
+        check_cancel(cancel)
+        r = simulate(cfg.with_updates(laser_dbm=float(launch_dbm)),
+                     seed=seed, depth="light")
+        ber = float(r.ber_post_dfe) if r.link_up else None
+        pd_dbm = (r.optical.power_budget_dbm.get("PD input")
+                  if r.optical is not None else None)
+        ok = bool(r.link_up and ber is not None and ber <= target_ber)
+        trail.append({"launch_dbm": float(launch_dbm), "pd_dbm": pd_dbm,
+                      "ber": ber, "link_up": bool(r.link_up), "pass": ok})
+        return ok, pd_dbm
+
+    line_rate = cfg.symbol_rate_hz * (2 if cfg.modulation == "PAM4" else 1)
+    cl95_bits = 3.0 / target_ber
+    base = {
+        "target_ber": target_ber,
+        "current_launch_dbm": float(cfg.laser_dbm),
+        "cl95_bits": cl95_bits,
+        "cl95_seconds": cl95_bits / line_rate,
+        "metric": ("potenza MEDIA al PD, seed fisso "
+                   "(dichiarata: non OMA_outer di clause)"),
+    }
+    hi = float(cfg.laser_dbm)
+    ok_hi, pd_now = measure(hi)
+    base["current_pd_dbm"] = pd_now
+    if not ok_hi:
+        return {**base, "status": "fail_at_current",
+                "threshold_launch_dbm": None, "sensitivity_pd_dbm": None,
+                "margin_db": None, "points": trail}
+    lo = hi - float(span_db)
+    ok_lo, _ = measure(lo)
+    if ok_lo:
+        status, threshold = "capped", lo    # passa anche a fondo scala
+    else:
+        for _ in range(int(iters)):
+            mid = 0.5 * (lo + hi)
+            ok_mid, _ = measure(mid)
+            if ok_mid:
+                hi = mid
+            else:
+                lo = mid
+        status, threshold = "ok", hi
+    _, pd_thr = measure(threshold)          # potenza al PD alla soglia
+    return {**base, "status": status,
+            "threshold_launch_dbm": float(threshold),
+            "sensitivity_pd_dbm": pd_thr,
+            "margin_db": float(cfg.laser_dbm) - float(threshold),
+            "points": trail}
+
+
 def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
                verification_seeds=(3303, 4404), cancel=None):
     """Link training didattico: coordinate descent multi-seed su CTLE
