@@ -139,6 +139,19 @@ def run_differential(cfg, tx: TxResult, rng=None):
     modo differenziale (notch a 1/(2τ)) e lo sbilanciamento ε fa trapelare il
     common-mode nel differenziale. Con tutto a zero: v_diff ≡ v (bit-esatto)."""
     v = tx.driver_voltage_v
+    if not cfg.tx_output_on:
+        # OUTPUT OFF è il mute dell'intero output-stage differenziale: anche
+        # noise adder, skew e mismatch sono dentro lo stesso modulo BERT e non
+        # devono ricreare un Vdiff fantasma. Il common-mode configurato resta
+        # presente in modo identico su P e N.
+        vcm = np.full_like(v, cfg.vcm_offset_v)
+        if cfg.vcm_noise_mv > 0 and rng is not None:
+            vcm = vcm + rng.normal(0, cfg.vcm_noise_mv * 1e-3, len(v))
+        tx.vp_v = vcm.copy()
+        tx.vn_v = vcm.copy()
+        tx.vcm_v = vcm
+        tx.v_diff_v = np.zeros_like(v)
+        return
     if cfg.tx_diff_noise_mv > 0 and rng is not None:
         # Stress source differenziale al reference plane di uscita PPG. Non
         # modifica il nodo driver ideale a monte, ma entra davvero in P/N e

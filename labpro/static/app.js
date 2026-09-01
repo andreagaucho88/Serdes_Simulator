@@ -433,9 +433,10 @@ function acqBadge(p, d) {
     const sp = p.head.querySelector(".spacer");
     if (sp) p.head.insertBefore(p.acqEl, sp); else p.head.appendChild(p.acqEl);
   }
-  const live = a2.source === "live";
-  p.acqEl.textContent = live ? `LIVE #${a2.records}` : (a2.source === "static" ? "" : "REF");
-  p.acqEl.classList.toggle("on", live);
+  const live = a2.source === "live", injected = a2.source === "injection";
+  p.acqEl.textContent = live ? `LIVE #${a2.records}`
+    : (injected ? `INJECTION #${a2.record}` : (a2.source === "static" ? "" : "REF"));
+  p.acqEl.classList.toggle("on", live || injected);
 }
 // --- coalescing dei refresh da config -------------------------------------
 // Un drag di slider produce ~4 broadcast "config" al secondo e OGNI pannello
@@ -907,7 +908,7 @@ PANEL_DEFS.chain = {
     p.body.innerHTML = "";
     p.svgHost = CE("div");
     p.body.appendChild(p.svgHost);
-    p.body.appendChild(CE("div", "note", L("Clicca un blocco per aprire il suo pannello. BERT TX/PPG e BERT RX/ED sono i due estremi dello stesso strumento, non due blocchi consecutivi. I triangoli ambra DCA1:A…DCA2:D mostrano i reference plane degli Scope; i blocchi FEC sono attivi solo con FEC in-path.", "Click a block to open its panel. BERT TX/PPG and BERT RX/ED are the two endpoints of the same instrument, not consecutive blocks. Amber DCA1:A…DCA2:D triangles show Scope reference planes; FEC blocks are active only with in-path FEC.")));
+    p.body.appendChild(CE("div", "note", L("UN SOLO RX FISICO: PD/TIA/ADC/CDR/FSE/DFE/Slicer ricevono davvero il segnale. Il BERT PPG inietta a TX; l'ED è un checker digitale collegato ai tap pre-FEC e post-FEC, non un secondo ricevitore analogico. I triangoli ambra DCA mostrano i reference plane degli Scope.", "ONE PHYSICAL RX: PD/TIA/ADC/CDR/FSE/DFE/Slicer actually receive the signal. The BERT PPG injects at TX; the ED is a digital checker connected to pre-FEC and post-FEC taps, not a second analog receiver. Amber DCA triangles show Scope reference planes.")));
     this.onConfig(p);
   },
   onConfig(p) {
@@ -916,7 +917,7 @@ PANEL_DEFS.chain = {
     const jitOn = S.cfg.tx_rj_rms_fs > 0 || S.cfg.tx_pj_amp_ui > 0 || S.cfg.tx_dcd_pct > 0;
     const ethOn = S.cfg.pattern === "eth";
     const rows = [
-      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "bert"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["map", "Mapper", "dg", "bert"], ["ser", "SER (MUX)", "dg", "bert"], ["ffe", "TX FIR", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "bert"], ["ch", "Canale", "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
+      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["err", "ERR ADD", "dg", "bertcheck"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FIR", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", "Canale", "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
       [["pd", "PD", copper ? "off" : "el", "pd"], ["tia", copper ? "AFE" : "TIA", "el", "tia"], ["agc", "AGC", "el", "agc"], ["ctle", "CTLE", "el", "ctle"], ["adc", "ADC", "dg", "adc"], ["cdr", "CDR", "ck", "timing"], ["fse", "FSE", "dg", "eq"], ["dfe", "DFE", "dg", "eq"], ["slc", "Slicer", "dg", "decisions"], ["dmx", "DEMUX", "dg", "decisions"], ["fdec", ethOn ? "FEC·L2" : "FEC dec", fecOn || ethOn ? "dg" : "off", ethOn ? "l2" : "feclive"]],
     ];
     const W = 98, H = 42, G = 13, X0 = 18, Y = [42, 130];
@@ -924,10 +925,10 @@ PANEL_DEFS.chain = {
     const maxBlocks = Math.max(...rows.map(r => r.length));
     let svg = `<svg class="chain-svg" viewBox="0 0 ${X0 * 2 + maxBlocks * W + (maxBlocks - 1) * G} 200" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, monospace">`;
     // TX PLL sopra il serializer (clock domain in ambra)
-    const pllX = X0 + 3 * (W + G) + 8, pllC = jitOn ? COL.am : "#5A5142";
-    svg += `<a data-target="bert"><rect x="${pllX}" y="4" width="${W - 16}" height="26" rx="7" fill="rgba(232,197,90,0.06)" stroke="${pllC}" stroke-width="1.2"/>
+    const pllX = X0 + 4 * (W + G) + 8, pllC = jitOn ? COL.am : "#5A5142";
+    svg += `<a data-target="serpll"><rect x="${pllX}" y="4" width="${W - 16}" height="26" rx="7" fill="rgba(232,197,90,0.06)" stroke="${pllC}" stroke-width="1.2"/>
       <text x="${pllX + (W - 16) / 2}" y="21" text-anchor="middle" fill="${pllC}" font-size="10">TX PLL${jitOn ? " ⚡" : ""}</text></a>
-      <line x1="${X0 + 3 * (W + G) + W / 2}" y1="30" x2="${X0 + 3 * (W + G) + W / 2}" y2="${Y[0]}" stroke="${pllC}" stroke-width="1.2" stroke-dasharray="3 3"/>`;
+      <line x1="${X0 + 4 * (W + G) + W / 2}" y1="30" x2="${X0 + 4 * (W + G) + W / 2}" y2="${Y[0]}" stroke="${pllC}" stroke-width="1.2" stroke-dasharray="3 3"/>`;
     // clock CDR → ADC
     const cdrI = rows[1].findIndex(b => b[0] === "cdr"), adcI = rows[1].findIndex(b => b[0] === "adc");
     const cdrX = X0 + cdrI * (W + G) + W / 2, adcX = X0 + adcI * (W + G) + W / 2;
@@ -951,13 +952,18 @@ PANEL_DEFS.chain = {
     rows.forEach((row, ri) => row.forEach(([id], i) => {
       blockPos[id] = { x: X0 + i * (W + G) + W / 2, y: Y[ri], row: ri };
     }));
-    // Il BERT abbraccia la chain: PPG all'ingresso, ED allo slicer. I marker
-    // rendono visibile il punto di intervento senza inventare un blocco in serie.
-    const bertTx = blockPos.stim, bertRx = blockPos.slc;
+    // Un solo RX fisico. ERR ADD è nel flusso TX dopo l'encoder; i due marker
+    // ED sono tap digitali di misura prima e dopo il decoder, non altri AFE.
+    const bertTx = blockPos.stim, errAdd = blockPos.err;
+    const edPre = blockPos.dmx, edPost = blockPos.fdec;
     svg += `<g class="bert-endpoint"><path d="M ${bertTx.x - 5} ${bertTx.y - 5} h 10 l -5 6 z" fill="${COL.am}"/>
       <text x="${bertTx.x + 8}" y="${bertTx.y - 8}" fill="${COL.am}" font-size="8">BERT TX/PPG</text></g>
-      <g class="bert-endpoint"><path d="M ${bertRx.x - 5} ${bertRx.y - 5} h 10 l -5 6 z" fill="${COL.am}"/>
-      <text x="${bertRx.x + 8}" y="${bertRx.y - 8}" fill="${COL.am}" font-size="8">BERT RX/ED</text></g>`;
+      <g class="bert-endpoint"><path d="M ${errAdd.x - 5} ${errAdd.y - 5} h 10 l -5 6 z" fill="${COL.am}"/>
+      <text x="${errAdd.x + 8}" y="${errAdd.y - 8}" fill="${COL.am}" font-size="8">ERROR INJECTION</text></g>
+      <g class="bert-endpoint"><path d="M ${edPre.x - 5} ${edPre.y - 5} h 10 l -5 6 z" fill="${COL.am}"/>
+      <text x="${edPre.x + 8}" y="${edPre.y - 8}" fill="${COL.am}" font-size="8">ED PRE-FEC</text></g>
+      <g class="bert-endpoint"><path d="M ${edPost.x - 5} ${edPost.y + H + 5} h 10 l -5 -6 z" fill="${fecOn ? COL.am : COL.muted}"/>
+      <text x="${edPost.x - 8}" y="${edPost.y + H + 14}" text-anchor="end" fill="${fecOn ? COL.am : COL.muted}" font-size="8">ED POST-FEC${fecOn ? "" : " · BYPASS"}</text></g>`;
     const stack = {};
     for (const probe of activeDcaProbes()) {
       const pos = blockPos[probe.block]; if (!pos) continue;
@@ -2399,6 +2405,7 @@ PANEL_DEFS.education = {
     const g = key => (t[key] && (t[key][LANG] || t[key].it)) || "";
     const nums = (t.numbers || []).map(n => `<tr><td>${tr(n.l)}</td><td><b>${tr(n.v)}</b></td></tr>`).join("");
     const acts = (t.actions || []).map(a2 => `<div class="lesson-act"><span class="do">▸ ${a2.do[LANG] || a2.do.it}</span><span class="see">→ ${a2.see[LANG] || a2.see.it}</span></div>`).join("");
+    const opensBert = ["stimulus", "serpll", "bert", "bertcheck", "bertproc"].includes(t.panel);
     p.host.innerHTML = `<article class="lesson lesson-grid">
       <div class="lesson-main">
         <header><span class="badge warn">${t.course}</span><h3>${g("title")}</h3></header>
@@ -2412,7 +2419,7 @@ PANEL_DEFS.education = {
         <section class="formula"><label>${L("FORMULA-GUIDA", "GUIDING FORMULA")}</label><code>${t.formula}</code></section>
         ${nums ? `<section><label>${L("NUMERI DEL MONDO REALE", "REAL-WORLD NUMBERS")}</label><table class="mini lesson-nums">${nums}</table></section>` : ""}
         ${acts ? `<section><label>${L("PROVA SUL BANCO", "TRY ON THE BENCH")}</label>${acts}</section>` : ""}
-        <button class="btn btn-accent" data-open="${t.panel}">${L("Apri il pannello", "Open the panel")} →</button>
+        <button class="btn btn-accent" data-open="${t.panel}">${opensBert ? L("Apri nella console BERT", "Open in the BERT console") : L("Apri il pannello", "Open the panel")} →</button>
       </aside>
     </article>`;
     const ob = p.host.querySelector("[data-open]");
@@ -2581,16 +2588,40 @@ PANEL_DEFS.agc = {
   onTick(p) { if (throttled(p, 1600)) this.refetch(p); },
 };
 
-/* --- BERT unico: PPG TX + error detector RX --- */
+/* --- BERT unico: generatore TX + checker digitali dopo l'unico RX fisico --- */
 PANEL_DEFS.bert = {
-  title: "BERT · PPG (TX) ↔ ED (RX)", size: "s8",
+  title: L("BERT · generatore TX + analizzatore errori", "BERT · TX generator + error analyzer"), size: "s8",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(CE("div", "scope-bar", `<b>MP1900A-STYLE MAINFRAME</b><span class="badge ok">PAM4 PPG</span><span class="badge warn">JITTER / NOISE</span><span class="badge ok">PAM4 ED</span>`));
+    p.body.appendChild(CE("div", "scope-bar", `<b>MP1900A-STYLE MAINFRAME</b><span class="badge ok">${L("UNA CHAIN · UN RX", "ONE CHAIN · ONE RX")}</span>`));
     p.body.appendChild(CE("div", "note", L(
-      "UN SOLO STRUMENTO, DUE PUNTI DELLA CHAIN: il PPG genera pattern e mapping prima del serializer; l'ED confronta il riferimento noto dopo CDR/FSE/DFE e prima del decoder FEC. L'error insertion inverte bit al TX e li osserva all'ED.",
-      "ONE INSTRUMENT, TWO CHAIN ENDPOINTS: the PPG generates pattern and mapping before the serializer; the ED compares the known reference after CDR/FSE/DFE and before the FEC decoder. Error insertion flips TX bits and observes them at the ED.")));
-    p.body.appendChild(CE("div", "sec-tag", "BERT TX · PPG / PATTERN SOURCE"));
+      "UN SOLO STRUMENTO E UN SOLO RX FISICO. Le quattro viste sotto separano le funzioni, non creano altre schede: il generatore TX (PPG) pilota la chain; il checker RX confronta i tap PRE-FEC e POST-FEC dopo AFE/ADC/CDR/FSE/DFE.",
+      "ONE INSTRUMENT AND ONE PHYSICAL RX. The four views below separate functions without creating other cards: the TX generator (PPG) drives the chain; the RX checker compares PRE-FEC and POST-FEC taps after AFE/ADC/CDR/FSE/DFE.")));
+    p.route = CE("div", "bert-route"); p.body.appendChild(p.route);
+
+    p.tabBar = CE("div", "instrument-tabs");
+    p.tabBar.setAttribute("role", "tablist");
+    p.tabButtons = {}; p.tabPanes = {};
+    for (const [key, label] of [
+      ["source", L("1 · SORGENTE TX", "1 · TX SOURCE")],
+      ["stress", L("2 · STRESS TX", "2 · TX STRESS")],
+      ["checker", L("3 · CHECKER RX/FEC", "3 · RX/FEC CHECKER")],
+      ["procedures", L("4 · PROCEDURE RX", "4 · RX PROCEDURES")],
+    ]) {
+      const tab = CE("button", "instrument-tab", label);
+      tab.type = "button"; tab.setAttribute("role", "tab");
+      tab.dataset.bertTab = key; tab.onclick = () => this.showTab(p, key);
+      const pane = CE("section", "instrument-pane");
+      pane.setAttribute("role", "tabpanel"); pane.dataset.bertPane = key;
+      p.tabButtons[key] = tab; p.tabPanes[key] = pane;
+      p.tabBar.appendChild(tab);
+    }
+    p.body.append(p.tabBar, ...Object.values(p.tabPanes));
+
+    const sourcePane = p.tabPanes.source;
+    sourcePane.appendChild(CE("div", "module-head", L(
+      "SORGENTE TX · PPG, mapping e FEC encoder",
+      "TX SOURCE · PPG, mapping and FEC encoder")));
     // OUTPUT enable dello stadio TX, come il tasto Output di un PPG reale
     const obar = CE("div", "scope-bar");
     p.outBtn = CE("button", "btn btn-out", "");
@@ -2599,18 +2630,44 @@ PANEL_DEFS.bert = {
     obar.append(p.outBtn, CE("span", "", L(
       "mute elettrico dello stadio d'uscita — la sorgente ottica resta accesa",
       "output-stage electrical mute — the optical source stays on")));
-    p.body.appendChild(obar);
-    p.body.appendChild(paramsBlock(["pattern", "prbs_order", "modulation", "pam4_mapping", "n_symbols", "fec_mode"]));
-    p.body.appendChild(CE("div", "sec-tag", "BERT TX · SERIALIZER / JITTER / NOISE / P-N"));
-    p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct", "tx_buj_amp_ui", "tx_ssc_ppm", "tx_ssc_khz",
+    sourcePane.append(obar, paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "n_symbols", "fec_mode"]));
+    p.ppgEditor = CE("div", "pattern-editor");
+    const editorHead = CE("div", "pattern-editor-head", `<label>${L("Pattern HEX utente · byte MSB-first", "User HEX pattern · MSB-first bytes")}</label>`);
+    const hexHelp = controlHelpButton("custom_pattern_hex"); hexHelp.style.position = "static"; editorHead.appendChild(hexHelp);
+    p.hexInput = CE("input"); p.hexInput.type = "text"; p.hexInput.maxLength = 12288;
+    p.hexInput.spellcheck = false; p.hexInput.placeholder = "A5 C3 F0 0F";
+    p.hexApply = CE("button", "btn btn-accent", L("APPLICA HEX", "APPLY HEX"));
+    p.hexApply.dataset.action = "pattern_apply"; p.hexStatus = CE("span", "sub");
+    const applyHex = async () => {
+      try {
+        const out = await POST("/api/config", { updates: { pattern: "custom_hex", custom_pattern_hex: p.hexInput.value } });
+        S.cfg = out.cfg; cfgChips(); notify("config");
+        p.hexStatus.textContent = L("applicato · ripetizione ciclica", "applied · cyclic repeat");
+      } catch (e) { toast(e.message); }
+    };
+    p.hexApply.onclick = applyHex;
+    p.hexInput.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); applyHex(); } };
+    p.ppgEditor.append(editorHead, p.hexInput, p.hexApply, p.hexStatus);
+    sourcePane.appendChild(p.ppgEditor);
+    p.sourceSummary = CE("div"); sourcePane.appendChild(p.sourceSummary);
+
+    const stressPane = p.tabPanes.stress;
+    stressPane.appendChild(CE("div", "module-head", L(
+      "STRESS TX · serializer, clock, jitter, rumore e uscita P/N",
+      "TX STRESS · serializer, clock, jitter, noise and P/N output")));
+    stressPane.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct", "tx_buj_amp_ui", "tx_ssc_ppm", "tx_ssc_khz",
       "pn_skew_ps", "pn_gain_mismatch_pct", "vcm_offset_v", "vcm_noise_mv", "tx_diff_noise_mv", "electrical_drive_mode"]));
-    p.txSummary = CE("div"); p.body.appendChild(p.txSummary);
-    p.body.appendChild(CE("div", "sec-tag", "BERT RX · ERROR DETECTOR / ANALYZER"));
-    p.edDisplay = CE("div", "ed-display"); p.body.appendChild(p.edDisplay);
+    p.txSummary = CE("div"); stressPane.appendChild(p.txSummary);
+
+    const checkerPane = p.tabPanes.checker;
+    checkerPane.appendChild(CE("div", "module-head", L(
+      "CHECKER RX · dopo l'unico RX fisico, prima e dopo il decoder FEC",
+      "RX CHECKER · after the single physical RX, before and after the FEC decoder")));
+    p.edDisplay = CE("div", "ed-display"); checkerPane.appendChild(p.edDisplay);
     const bar = CE("div", "scope-bar");
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
     const btn = CE("button", "btn btn-accent", L("Inserisci errori", "Insert errors"));
-    btn.dataset.action = "bert_inject";
+    p.injectBtn = btn; btn.dataset.action = "bert_inject";
     // target dell'inserzione: dove cadono i bit invertiti (mirata iter. 29)
     p.insTarget = CE("select");
     for (const [v, lab] of [["random", L("posizioni random", "random positions")],
@@ -2619,11 +2676,23 @@ PANEL_DEFS.bert = {
                             ["rs_symbol", L("simboli RS interi", "whole RS symbols")]]) {
       const o = CE("option"); o.value = v; o.textContent = lab; p.insTarget.appendChild(o);
     }
-    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked, target: p.insTarget.value })
-      .then(() => { p.note.innerHTML = `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa, il conteggio per lane MSB/LSB e (con FEC) le correzioni.", "TX bits will be inverted in the next record: inspect the error map, the MSB/LSB per-lane counts, and (with FEC) the corrections.")}</span>`; })
-      .catch(e => toast(e.message));
+    btn.onclick = async () => {
+      const bits = Number(p.nIns.value);
+      if (!Number.isInteger(bits) || bits < 1 || bits > 200)
+        return toast(L("bit da inserire: intero 1…200", "bits to insert: integer 1…200"));
+      btn.disabled = true; btn.textContent = L("in attesa del RX…", "waiting for RX…");
+      try {
+        const d = await POST("/api/inject", { bits, burst: p.burstChk.checked, target: p.insTarget.value });
+        p.pendingInjectionId = d.request.id;
+        this.renderInjection(p, { ...d.request, status: "queued" });
+        this.updateInjectionState(p);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = L("Inserisci errori", "Insert errors");
+        toast(e.message);
+      }
+    };
     btn.textContent = L("Inserisci errori", "Insert errors");
-        p.burstChk = CE("input"); p.burstChk.type = "checkbox";
+    p.burstChk = CE("input"); p.burstChk.type = "checkbox";
     const burstLab = CE("label", "", ""); burstLab.append(p.burstChk, document.createTextNode(" burst"));
     bar.append(CE("span", "", L("bit da invertire:", "bits to flip:")), p.nIns, p.insTarget, burstLab, btn);
     // gating stile BERT: Start/Stop su finestra dei contatori cumulativi
@@ -2658,9 +2727,24 @@ PANEL_DEFS.bert = {
       p.autoBtn.disabled = false; p.autoBtn.textContent = L("Auto search fase (~5 s)", "Phase auto search (~5 s)");
     };
     gbar.appendChild(p.autoBtn);
-    p.body.appendChild(gbar);
+    checkerPane.appendChild(gbar);
+
+    p.errAn = CE("div"); checkerPane.appendChild(p.errAn);
+    checkerPane.appendChild(bar);
+    p.injectionOut = CE("div", "injection-result"); checkerPane.appendChild(p.injectionOut);
+    p.ro = CE("div"); checkerPane.appendChild(p.ro);
+    p.plotEl = CE("div", "plot"); checkerPane.appendChild(p.plotEl);
+    p.note = CE("div", "note", L(
+      "Il checker usa il pattern di riferimento del generatore TX ma misura soltanto i bit recuperati dall'unico RX fisico.",
+      "The checker uses the TX generator reference pattern but measures only bits recovered by the single physical RX."));
+    checkerPane.appendChild(p.note);
+
+    const proceduresPane = p.tabPanes.procedures;
+    proceduresPane.appendChild(CE("div", "module-head", L(
+      "PROCEDURE RX · ricerche che fermano temporaneamente il live bench",
+      "RX PROCEDURES · searches that temporarily stop the live bench")));
     // --- RX sensitivity search: bisezione sulla potenza lanciata ---------
-    p.body.appendChild(CE("div", "sec-tag", "BERT RX · SENSITIVITY SEARCH"));
+    proceduresPane.appendChild(CE("div", "sec-tag", "RX · SENSITIVITY SEARCH"));
     const sbar = CE("div", "scope-bar");
     p.sensTarget = CE("input"); p.sensTarget.type = "text";
     p.sensTarget.style.width = "110px";
@@ -2680,11 +2764,11 @@ PANEL_DEFS.bert = {
       p.sensBtn.disabled = false; p.sensBtn.textContent = prev;
     };
     sbar.append(CE("span", "", "target BER:"), p.sensTarget, p.sensBtn);
-    p.body.appendChild(sbar);
-    p.sensOut = CE("div"); p.body.appendChild(p.sensOut);
-    p.sensPlot = CE("div", "plot"); p.body.appendChild(p.sensPlot);
+    proceduresPane.appendChild(sbar);
+    p.sensOut = CE("div"); proceduresPane.appendChild(p.sensOut);
+    p.sensPlot = CE("div", "plot"); proceduresPane.appendChild(p.sensPlot);
     // --- stressed-eye calibration: PJ calibrato su un target di apertura --
-    p.body.appendChild(CE("div", "sec-tag", "BERT RX · STRESSED EYE CAL"));
+    proceduresPane.appendChild(CE("div", "sec-tag", "RX · STRESSED EYE CAL"));
     const stbar = CE("div", "scope-bar");
     p.stressQ = CE("input"); p.stressQ.type = "text"; p.stressQ.value = "3.0";
     p.stressQ.style.width = "55px";
@@ -2708,20 +2792,132 @@ PANEL_DEFS.bert = {
       p.stressBtn.disabled = false; p.stressBtn.textContent = prev;
     };
     stbar.append(CE("span", "", "target Q [σ]:"), p.stressQ, stLab, p.stressBtn);
-    p.body.appendChild(stbar);
-    p.stressOut = CE("div"); p.body.appendChild(p.stressOut);
-    p.errAn = CE("div"); p.body.appendChild(p.errAn);
-    p.body.appendChild(bar);
-    p.ro = CE("div"); p.body.appendChild(p.ro);
-    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
-    p.note = CE("div", "note", L(
-      "La console raggruppa PPG, serializer, stress jitter/noise e ED come workflow one-box. Nel modello i controlli restano applicati ai rispettivi reference plane reali. Ispirato alla modularità MP1900A (PPG/ED + jitter/noise); non è software Anritsu né una procedura normativa.",
-      "The console groups PPG, serializer, jitter/noise stress, and ED as a one-box workflow. In the model, controls still act at their actual reference planes. Inspired by MP1900A modularity (PPG/ED + jitter/noise); this is neither Anritsu software nor a normative procedure."));
-    p.body.appendChild(p.note);
+    proceduresPane.appendChild(stbar);
+    p.stressOut = CE("div"); proceduresPane.appendChild(p.stressOut);
+    proceduresPane.appendChild(CE("div", "note", L(
+      "Sensitivity e stressed-eye sono procedure del ricevitore della stessa chain; non aggiungono un secondo RX e non sono procedure normative complete.",
+      "Sensitivity and stressed-eye are procedures on the same chain receiver; they add no second RX and are not complete normative procedures.")));
     p.lastFetch = 0;
+    this.showTab(p, p.requestedBertTab || "checker");
+    this.syncRoute(p);
+    this.updateSourceSummary(p);
     this.updateTxSummary(p);
     this.syncOutput(p);
+    this.updateInjectionState(p);
     this.refetch(p);
+  },
+  showTab(p, key) {
+    if (!p.tabPanes || !p.tabPanes[key]) return;
+    p.activeBertTab = key;
+    for (const [name, pane] of Object.entries(p.tabPanes)) {
+      const active = name === key;
+      pane.hidden = !active;
+      p.tabButtons[name].classList.toggle("active", active);
+      p.tabButtons[name].setAttribute("aria-selected", active ? "true" : "false");
+      p.tabButtons[name].tabIndex = active ? 0 : -1;
+    }
+    if (key === "checker" && window.Plotly && p.plotEl?.data)
+      requestAnimationFrame(() => Plotly.Plots.resize(p.plotEl));
+    if (key === "procedures" && window.Plotly) requestAnimationFrame(() => {
+      if (p.sensPlot?.data) Plotly.Plots.resize(p.sensPlot);
+    });
+  },
+  updateSourceSummary(p) {
+    if (!p.sourceSummary || !S.cfg) return;
+    const bps = S.cfg.modulation === "NRZ" ? 1 : 2;
+    const pattern = S.cfg.pattern === "prbs" ? `PRBS${S.cfg.prbs_order}` : String(S.cfg.pattern).toUpperCase();
+    p.sourceSummary.innerHTML = "";
+    p.sourceSummary.appendChild(readout([
+      { l: L("pattern generato", "generated pattern"), v: pattern, cls: "ok", sub: `${S.cfg.modulation} · ${S.cfg.pam4_mapping}` },
+      { l: L("rate di linea", "line rate"), v: eng(S.cfg.symbol_rate_hz * bps) + "b/s", sub: `${eng(S.cfg.symbol_rate_hz)}Bd` },
+      { l: L("finestra record", "record window"), v: eng(S.cfg.n_symbols) + "sym", sub: eng(S.cfg.n_symbols * bps) + "bit" },
+      { l: "FEC TX/RX", v: S.cfg.fec_mode === "none" ? "BYPASS" : S.cfg.fec_mode.toUpperCase(), cls: S.cfg.fec_mode === "none" ? "warn" : "ok" },
+    ]));
+    p.ppgEditor.hidden = S.cfg.pattern !== "custom_hex";
+    if (document.activeElement !== p.hexInput) p.hexInput.value = S.cfg.custom_pattern_hex || "";
+  },
+  syncRoute(p) {
+    if (!p.route || !S.cfg) return;
+    const fecOn = S.cfg.fec_mode !== "none";
+    p.route.innerHTML = `<span>PPG</span><i>→</i><span class="warn">ERR ADD · TX</span><i>→</i>` +
+      `<span>TX + ${S.cfg.link_medium === "optical" ? "OPTICAL CHANNEL" : "COPPER CHANNEL"}</span><i>→</i>` +
+      `<span class="ok">${L("RX FISICO", "PHYSICAL RX")}<br><small>AFE · ADC · CDR · FSE · DFE</small></span><i>→</i>` +
+      `<span>ED PRE-FEC</span><i>→</i><span class="${fecOn ? "ok" : "off"}">FEC ${fecOn ? S.cfg.fec_mode.toUpperCase() : "BYPASS"}</span><i>→</i>` +
+      `<span class="${fecOn ? "" : "off"}">ED POST-FEC</span>`;
+    const rs = p.insTarget && [...p.insTarget.options].find(o => o.value === "rs_symbol");
+    if (rs) {
+      rs.disabled = !fecOn;
+      rs.textContent = fecOn ? L("simboli RS interi", "whole RS symbols")
+        : L("simboli RS interi (richiede FEC)", "whole RS symbols (FEC required)");
+      if (!fecOn && p.insTarget.value === "rs_symbol") p.insTarget.value = "random";
+    }
+  },
+  renderInjection(p, r) {
+    if (!p.injectionOut) return;
+    p.injectionOut.innerHTML = "";
+    if (!r) {
+      const fecOn = S.cfg && S.cfg.fec_mode !== "none";
+      p.injectionOut.appendChild(CE("div", "note", fecOn ? L(
+        `Nessuna transazione latched. Premi Inserisci errori per misurare RX fisico → ED pre-FEC → ${S.cfg.fec_mode.toUpperCase()} → ED post-FEC.`,
+        `No latched transaction. Press Insert errors to measure physical RX → pre-FEC ED → ${S.cfg.fec_mode.toUpperCase()} → post-FEC ED.`) : L(
+        "Nessuna transazione latched. Il checker POST-FEC è in BYPASS; seleziona KP4/KR4 per verificare la correzione.",
+        "No latched transaction. The POST-FEC checker is bypassed; select KP4/KR4 to verify correction.")));
+      return;
+    }
+    if (r.status === "queued" || r.status === "active") {
+      p.injectionOut.appendChild(readout([
+        { l: `ERROR ADD #${r.id}`, v: `${r.bits} bit`, cls: "warn", sub: L("attesa del record attraverso il RX fisico", "waiting for the record through the physical RX") },
+      ]));
+      return;
+    }
+    if (r.status === "discarded_config_change" || r.status === "discarded" || r.status === "simulation_error") {
+      const configChange = r.status === "discarded_config_change";
+      p.injectionOut.appendChild(readout([
+        { l: `ERROR ADD #${r.id}`, v: L("ANNULLATA", "CANCELLED"), cls: "fail", sub: configChange ? L("configurazione cambiata prima della misura", "configuration changed before measurement") : r.status },
+        { l: L("RX fisico", "physical RX"), v: "NOT MEASURED", cls: "fail", sub: L("nessun risultato attribuito a questa transazione", "no result assigned to this transaction") },
+      ]));
+      return;
+    }
+    const measured = r.status === "measured";
+    const fecOn = r.fec_mode && r.fec_mode !== "none";
+    p.injectionOut.appendChild(readout([
+      { l: `TX ERROR ADD #${r.id}`, v: `${r.tx_inserted ?? r.bits} bit`, cls: measured ? "warn" : "fail", sub: `${r.target}${r.burst ? " · burst" : ""} · seed ${r.seed ?? "—"}` },
+      { l: L("RX fisico", "physical RX"), v: measured ? "CDR + PATTERN LOCK" : "SYNC LOSS", cls: measured ? "ok" : "fail", sub: L("unico AFE/ADC/FSE/DFE della chain", "the chain's only AFE/ADC/FSE/DFE") },
+      { l: "ED PRE-FEC", v: measured ? `${r.pre_fec_errors} err` : "NOT MEASURED", cls: measured ? (r.pre_fec_errors ? "warn" : "ok") : "fail", sub: measured ? `BER ${sci(r.pre_fec_ber)} / ${eng(r.pre_fec_bits)}b` : L("nessun bit valido dal RX", "no valid bits from RX") },
+      fecOn
+        ? { l: `FEC ${String(r.fec_mode).toUpperCase()}`, v: measured ? `${r.fec_frames_corrected ?? 0} ${L("frame corretti", "frames corrected")}` : "NOT REACHED", cls: measured && !(r.fec_frames_uncorrectable || r.fec_frames_miscorrected) ? "ok" : "fail", sub: measured ? `${r.fec_input_errors ?? 0} err input · ${r.fec_frames_uncorrectable ?? 0} ${L("persi", "lost")} · ${r.fec_symbols_corrected ?? 0} ${L("simboli corretti", "symbols corrected")}` : "—" }
+        : { l: "FEC", v: "BYPASS", cls: "warn", sub: L("seleziona KP4/KR4 per osservare la correzione", "select KP4/KR4 to observe correction") },
+      fecOn
+        ? { l: "ED POST-FEC", v: measured ? `${r.post_fec_errors ?? 0} err` : "NOT MEASURED", cls: measured && !(r.post_fec_errors) ? "ok" : "fail", sub: measured ? `BER ${sci(r.post_fec_ber)} / ${eng(r.post_fec_bits)}b` : "—" }
+        : { l: "ED POST-FEC", v: "N/A", cls: "warn", sub: "FEC BYPASS" },
+    ]));
+    p.injectionOut.appendChild(CE("div", "note", `${L("RISULTATO BLOCCATO sul record", "RESULT LATCHED on record")} #${r.record ?? "—"}: ` + L("non viene sostituito dai record live successivi.", "it is not replaced by later live records.")));
+  },
+  updateInjectionState(p, explicit) {
+    const state = (S.acc && S.acc.injection) || {};
+    const last = explicit || state.last || null;
+    const active = state.active || state.pending || null;
+    this.renderInjection(p, last || (active ? { ...active, status: "active" } : null));
+    if (!p.injectBtn) return;
+    const completed = p.pendingInjectionId && last && last.id === p.pendingInjectionId;
+    if (completed) {
+      const id = p.pendingInjectionId; p.pendingInjectionId = null;
+      p.injectBtn.disabled = false;
+      p.injectBtn.textContent = L("Inserisci errori", "Insert errors");
+      if (p.lastInjectionFetched !== id) {
+        p.lastInjectionFetched = id;
+        this.refetch(p);  // carica la mappa del record latched, non `latest`
+        toast(last.status === "measured"
+          ? `${L("iniezione misurata dal RX fisico", "injection measured by physical RX")}: ${last.pre_fec_errors} err pre-FEC${last.fec_mode !== "none" ? ` → ${last.post_fec_errors} post-FEC` : " · FEC BYPASS"}`
+          : last.status === "discarded_config_change" || last.status === "discarded"
+            ? L("iniezione annullata: la configurazione della chain è cambiata", "injection cancelled: the chain configuration changed")
+            : L("iniezione trasmessa ma RX senza lock: ED/FEC non hanno bit validi", "injection transmitted but RX is unlocked: ED/FEC have no valid bits"));
+      }
+    } else {
+      const busy = !!active || !!p.pendingInjectionId;
+      p.injectBtn.disabled = busy;
+      p.injectBtn.textContent = busy ? L("in attesa del RX…", "waiting for RX…") : L("Inserisci errori", "Insert errors");
+    }
   },
   syncOutput(p) {
     if (!p.outBtn || !S.cfg) return;
@@ -2804,6 +3000,7 @@ PANEL_DEFS.bert = {
         p.gateInfo.innerHTML = `${p.gate ? "⏺" : "⏹"} ${eng(g.bits)}b · ${g.errs} err · BER ${g.ber == null ? "—" : sci(g.ber)} · ${fix(g.secs, 0)}s · CL(BER<${sci(g.target, 0)}) ${fix(Math.min(g.cl, 99.9), 1)}%`;
       }
       const d = await GET(`/api/panel/bert?source=${S.running ? "live" : "auto"}`);
+      this.updateInjectionState(p, d.injection);
       if (p.errAn && d.error_analysis) {
         const ea = d.error_analysis;
         p.errAn.innerHTML = `<table class="mini"><tr><th>${L("analisi errori (ED)", "error analysis (ED)")}</th><th>burst</th><th>${L("isolati", "isolated")}</th><th>max burst</th><th>% in burst</th><th>EFI min/mean</th></tr>` +
@@ -2817,7 +3014,7 @@ PANEL_DEFS.bert = {
         { l: L("sync pattern", "pattern sync"), v: d.sync ? "LOCK" : "LOSS", cls: d.sync ? "ok" : "fail" },
         { l: "BER / SER", v: `${sci(d.ber)} / ${sci(d.ser)}`, big: true, sub: `${d.bit_errors} bit · ${d.symbol_errors} sym` },
         { l: "MSB / LSB", v: d.bit_errors_by_lane.map((v, i) => `${laneNames[i]} ${v}`).join(" · ") },
-        { l: L("inseriti (record)", "inserted (record)"), v: String(d.inserted.length), cls: d.inserted.length ? "warn" : "" },
+        { l: L("inseriti (record latched)", "inserted (latched record)"), v: String(d.inserted.length), cls: d.inserted.length ? "warn" : "" },
         { l: L("inseriti (totale)", "inserted (total)"), v: String(a.injected_total || 0), sub: `${eng(d.n_bits)}b ${L("nel record", "in record")}` },
       ]));
       const shapes = [vline(d.validation_start, COL.muted, "dot")];
@@ -2841,7 +3038,7 @@ PANEL_DEFS.bert = {
       { l: "UI", v: fix(uiPs, 2) + " ps" },
     ]));
   },
-  onConfig(p) { syncParams(p.body); this.updateTxSummary(p); this.syncOutput(p); this.refetch(p); },
+  onConfig(p) { syncParams(p.body); this.syncRoute(p); this.updateSourceSummary(p); this.updateTxSummary(p); this.syncOutput(p); this.updateInjectionState(p); this.refetch(p); },
   updateEd(p) {
     const a = S.acc; if (!a || !p.edDisplay) return;
     const locked = a.last && a.last.link_up !== false && a.last.cdr_locked !== false;
@@ -2853,7 +3050,7 @@ PANEL_DEFS.bert = {
       <span class="ed-num">${a.bits_total ? sci(a.ber_cum) : "—"}<small>BER</small></span>
       <span class="ed-num warn2">${a.sync_losses ?? 0}<small>${L("perdite sync", "sync losses")}</small></span>`;
   },
-  onTick(p) { this.updateEd(p); if (throttled(p, 1800)) this.refetch(p); },
+  onTick(p) { this.updateEd(p); this.updateInjectionState(p); if (throttled(p, 1800)) this.refetch(p); },
 };
 
 /* --- Ethernet L2 (traffic analyzer) --- */
@@ -3221,7 +3418,7 @@ const GROUPS = [L("PANORAMICA", "OVERVIEW"), L("SORGENTE · TX", "SOURCE · TX")
 // [tipo, nome, dominio, gruppo, ordine nel gruppo]
 const PALETTE = [
   ["chain", L("Catena del segnale", "Signal chain"), null, 0, 0],
-  ["bert", "BERT · PPG (TX) ↔ ED (RX)", "digital", 1, 0],
+  ["bert", L("BERT · generatore TX + analizzatore errori", "BERT · TX generator + error analyzer"), "digital", 1, 0],
   ["tx", "TX: FIR·DAC·driver", "electrical", 1, 2],
   ["channel", L("Canale elettrico", "Electrical channel"), "electrical", 2, 0],
   ["com", "COM · IEEE 802.3 Annex 93A", "electrical", 2, 0.5],
@@ -3277,7 +3474,7 @@ const PANEL_EN = {
   ctle: "CTLE · configurable sections", adc: "Interleaved ADC", timing: "Timing · CDR",
   eq: "RX FFE (T/2 FSE) + DFE", decisions: "Decisions · slicer", scope: "Scope · DCA",
   jitter: "Jitter · TIE", spectrum: "Spectrum analyzer", berlive: "Live BER · accumulated",
-  bert: "BERT · PPG (TX) ↔ ED (RX)", feclive: "Live FEC · accumulated",
+  bert: "BERT · TX generator + error analyzer", feclive: "Live FEC · accumulated",
   l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",
   jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent", anlt: "AN/LT · Clause 73 + training",
   standards: "IEEE / OIF standards", checks: "Checkpoints & signal ledger",
@@ -3296,6 +3493,14 @@ let _buildingLayout = false;
 let _layoutGeneration = 0;
 const CUSTOM_VIEW = "__custom__";
 const SIZES = ["s4", "s6", "s8", "s12"];
+// Compatibilità di navigazione senza card duplicate: Academy, vecchi layout
+// e URL ?panels=stimulus/serpll aprono una vista della SOLA console BERT.
+const PANEL_ALIASES = {
+  stimulus: { type: "bert", tab: "source" },
+  serpll: { type: "bert", tab: "stress" },
+  bertcheck: { type: "bert", tab: "checker" },
+  bertproc: { type: "bert", tab: "procedures" },
+};
 
 function groupGrid(gi) {
   let g = $(`#wb-group-${gi} .wb-grid`);
@@ -3314,11 +3519,15 @@ function groupGrid(gi) {
 }
 
 function addPanel(type, size) {
+  const alias = PANEL_ALIASES[type];
+  const requestedBertTab = alias ? alias.tab : null;
+  if (alias) type = alias.type;
   const def = PANEL_DEFS[type]; if (!def) return;
   const existing = S.panels.filter(p => p.type === type);
   // i pannelli "multi" (Scope) possono avere più istanze: canale A/B per
   // confrontare due nodi fianco a fianco
   if (existing.length && !def.multi) {
+    if (requestedBertTab && def.showTab) def.showTab(existing[0], requestedBertTab);
     existing[0].el.scrollIntoView({ behavior: "smooth", block: "center" });
     flash(existing[0].el); return existing[0];
   }
@@ -3326,6 +3535,7 @@ function addPanel(type, size) {
   const pal = PALETTE.find(x => x[0] === type);
   const p = { id: ++PANEL_SEQ, type, def, size: size || def.size || "s6",
     group: pal ? pal[3] : 4, order: (pal ? pal[4] : 99) + existing.length * 0.1 };
+  p.requestedBertTab = requestedBertTab;
   p.el = CE("section", "panel " + p.size);
   p.el.dataset.order = p.order;
   p.head = CE("div", "panel-head");
@@ -3675,9 +3885,15 @@ async function boot() {
   document.addEventListener("click", () => { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); }
-    // scorciatoia da strumento: R = RUN/STOP (solo fuori dagli input)
-    if ((e.key === "r" || e.key === "R") && e.target === document.body
-        && !e.metaKey && !e.ctrlKey && !e.altKey) $("#btn-run").click();
+    // scorciatoia da strumento: R = RUN/STOP ovunque, tranne mentre l'utente
+    // sta scrivendo o scegliendo un valore. Il focus su un normale bottone non
+    // deve disattivare silenziosamente la shortcut.
+    const editing = e.target instanceof Element
+      && e.target.matches("input, textarea, select, [contenteditable='true']");
+    if ((e.key === "r" || e.key === "R") && !editing
+        && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault(); $("#btn-run").click();
+    }
   });
   const menu = $("#panel-menu");
   // filtro del catalogo: 34 card in lista piatta erano difficili da scandire

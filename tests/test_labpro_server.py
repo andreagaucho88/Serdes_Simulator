@@ -7,6 +7,7 @@ che non richiedono simulazioni costose.
 
 import json
 import sys
+from concurrent.futures import Future
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -14,6 +15,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tornado.testing import AsyncHTTPTestCase     # noqa: E402
 
 from labpro import server                          # noqa: E402
+
+
+def test_broadcast_removes_client_on_async_websocket_failure():
+    """write_message fallisce su Future: non deve produrre task fantasma."""
+    future = Future()
+
+    class DeadClient:
+        def write_message(self, message):
+            json.loads(message)
+            return future
+
+    client = DeadClient()
+    before = set(server.CLIENTS)
+    try:
+        server.CLIENTS.add(client)
+        server.broadcast({"type": "tick", "acc": {}})
+        assert client in server.CLIENTS
+        future.set_exception(ConnectionError("closed"))
+        assert client not in server.CLIENTS
+    finally:
+        server.CLIENTS.clear()
+        server.CLIENTS.update(before)
 
 
 class ApiContractTest(AsyncHTTPTestCase):

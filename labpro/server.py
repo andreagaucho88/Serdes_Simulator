@@ -100,11 +100,26 @@ def persist():
             log.warning("persistenza sessione fallita", exc_info=True)
 
 
+def _ws_write_done(client, future):
+    """Rimuove client morti anche quando write_message fallisce async.
+
+    Tornado restituisce un Future: il try/except sincrono da solo non vedeva
+    StreamClosedError e ogni tick produceva una task exception non recuperata.
+    """
+    try:
+        future.result()
+    except Exception:
+        CLIENTS.discard(client)
+
+
 def broadcast(payload: dict):
     msg = json.dumps(payload)
     for c in list(CLIENTS):
         try:
-            c.write_message(msg)
+            future = c.write_message(msg)
+            if future is not None:
+                future.add_done_callback(
+                    lambda done, client=c: _ws_write_done(client, done))
         except Exception:
             CLIENTS.discard(c)
 
@@ -564,15 +579,34 @@ class ApiChamber(Base):
 class ApiInject(Base):
     def post(self):
         body = self.body_json()
-        n = int(body.get("bits", 10))
+        raw_n = body.get("bits", 10)
+        try:
+            if isinstance(raw_n, bool) or not str(raw_n).strip().lstrip("+-").isdigit():
+                raise ValueError
+            n = int(raw_n)
+        except (TypeError, ValueError):
+            self.set_status(400)
+            return self.write_json({"error": "bits deve essere un intero fra 1 e 200"})
+        if not 1 <= n <= 200:
+            self.set_status(400)
+            return self.write_json({"error": "bits deve essere un intero fra 1 e 200"})
         target = body.get("target", "random")
         if target not in ("random", "msb", "lsb", "rs_symbol"):
             self.set_status(400)
             return self.write_json(
                 {"error": "target deve essere random/msb/lsb/rs_symbol"})
-        BENCH.inject_errors(n, burst=bool(body.get("burst", False)),
-                            target=target)
-        self.write_json({"ok": True, "bits": n, "target": target})
+        try:
+            request = BENCH.inject_errors(
+                n, burst=bool(body.get("burst", False)), target=target)
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
+        except RuntimeError as exc:
+            self.set_status(409)
+            return self.write_json({"error": str(exc)})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
+        self.write_json({"ok": True, "request": request,
+                         "bits": request["bits"], "target": request["target"]})
 
 
 class ApiTrain(Base):
@@ -708,8 +742,14 @@ class ApiPanel(Base):
         if builder is None:
             self.set_status(404)
             return self.write_json({"error": f"pannello sconosciuto: {name}"})
-        cfg, live_sim, records, _ = BENCH.capture()
         source = self.get_argument("source", "auto")
+        injection_report = None
+        bert_source = None
+        if name == "bert" and source in ("auto", "live"):
+            cfg, live_sim, records, _, bert_source, injection_report = \
+                BENCH.capture_bert()
+        else:
+            cfg, live_sim, records, _ = BENCH.capture()
         kwargs = {}
         params = inspect.signature(builder).parameters
         if "node" in params:
@@ -731,7 +771,7 @@ class ApiPanel(Base):
                     "eyecontour", "physics", "tx"):
                 sim = live_sim
                 if cfg_matches_live(sim, cfg):
-                    source_used = "live"
+                    source_used = bert_source or "live"
             if name in ("education", "com"):
                 sim = None  # cataloghi/config analysis: niente datapath
                 source_used = "static" if name == "education" else "config"
@@ -739,11 +779,16 @@ class ApiPanel(Base):
                 sim = paneldata.ref_sim(cfg)
             payload = builder(sim, cfg, **kwargs)
             if isinstance(payload, dict):
+                if name == "bert":
+                    payload["injection"] = injection_report
                 payload["_acquisition"] = {
                     "seed": (int(sim.seed) if sim is not None else None),
                     "depth": (sim.depth if sim is not None else None),
                     "source": source_used,
                     "records": records,
+                    "record": (injection_report.get("record")
+                               if source_used == "injection"
+                               and injection_report is not None else records),
                 }
             return payload
 

@@ -66,13 +66,15 @@ _add("tx_output_on", "TX driver", "driver output stage",
      "OUTPUT enable dello stadio TX come sul pannello di un PPG: OFF = il "
      "driver non pilota nulla (mute elettrico, P/N al solo common-mode). La "
      "sorgente ottica resta accesa: al PD arriva la CW filtrata dal bias, "
-     "senza dati — il CDR perde l'aggancio e il link va DOWN davvero. Per "
-     "spegnere anche la luce porta laser_dbm al minimo.",
+     "senza dati — il CDR perde l'aggancio e il link va DOWN davvero. "
+     "laser_dbm riduce la potenza solo fino a -6 dBm: un vero LASER OFF non "
+     "è modellato da questo comando.",
      "TX OUTPUT enable as on a PPG front panel: OFF = the driver drives "
      "nothing (electrical mute, P/N at common-mode only). The optical "
      "source stays on: the PD receives bias-filtered CW light with no data "
-     "— the CDR loses lock and the link goes truly DOWN. To kill the light "
-     "too, drop laser_dbm to its minimum.",
+     "— the CDR loses lock and the link goes truly DOWN. laser_dbm only "
+     "reduces power down to -6 dBm: this command does not model a true "
+     "LASER OFF state.",
      active="sempre / always")
 
 _add("err_insert_target", "BERT PPG", "TX bits after reference copy",

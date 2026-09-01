@@ -34,6 +34,7 @@ class LiveBench:
         self._stop_evt = threading.Event()
         self.on_record = None          # callback(snapshot) dopo ogni record
         self.latest = None             # ultimo SimResult (per scope/spettro)
+        self._inject_seq = 0           # transaction id monotono del BERT
         # camera climatica: profilo di temperatura del RICEVITORE nel tempo.
         # Il die insegue la camera con un lag del 1° ordine (tau termico);
         # lo stato NON si azzera al cambio config (la camera è "fisica")
@@ -113,13 +114,16 @@ class LiveBench:
         self.l2_lost = 0
         self.l2_thr_sum = 0.0
         self.l2_records = 0
-        # BERT error insertion (one-shot sul prossimo record)
-        self._inject_bits = 0
-        self._inject_target = "random"
+        # BERT error insertion: transazione single-flight sul prossimo record.
+        # Il risultato resta latched: il record live successivo non deve far
+        # sparire l'unica evidenza che l'errore ha attraversato il RX fisico.
+        self._inject_pending = None
+        self._inject_active = None
+        self.last_injection = None
+        self.last_injection_sim = None
         self._disrupt_pending = False
         self._disrupt_started = None
         self.last_disruption_ms = None
-        self._inject_burst = False
         self.injected_total = 0
         self.postfec_bits = 0
         self.postfec_errors = 0
@@ -177,15 +181,89 @@ class LiveBench:
 
     def inject_errors(self, n_bits: int, burst: bool = False,
                       target: str = "random"):
-        """BERT: inverte n bit del pattern TX (vs riferimento ED) al
-        prossimo record. One-shot; burst=True li mette consecutivi;
-        target sceglie dove cadono (random/msb/lsb/rs_symbol)."""
+        """Accoda una transazione BERT one-shot e ne restituisce il ticket.
+
+        Il PPG inverte i bit di linea DOPO l'encoder FEC. Un solo RX fisico
+        (AFE/ADC/CDR/FSE/DFE) li riceve; il checker BERT misura il tap pre-FEC
+        e, quando il decoder è attivo, il tap post-FEC. Non esiste un secondo
+        ricevitore analogico nascosto nel modello.
+        """
+        n_bits = int(n_bits)
+        if not 1 <= n_bits <= 200:
+            raise ValueError("bits deve essere un intero fra 1 e 200")
+        if target not in ("random", "msb", "lsb", "rs_symbol"):
+            raise ValueError("target deve essere random/msb/lsb/rs_symbol")
         with self._lock:
-            self._inject_bits = int(max(0, min(n_bits, 200)))
-            self._inject_burst = bool(burst)
-            self._inject_target = (target if target in
-                                   ("random", "msb", "lsb", "rs_symbol")
-                                   else "random")
+            if not self._running:
+                raise RuntimeError("BERT non in RUN: nessun RX fisico acquisisce")
+            if self._inject_pending is not None or self._inject_active is not None:
+                raise RuntimeError("error injection già in corso")
+            self._inject_seq += 1
+            request = {
+                "id": self._inject_seq,
+                "bits": n_bits,
+                "burst": bool(burst),
+                "target": target,
+                "queued_at": time.time(),
+            }
+            self._inject_pending = request
+            return dict(request)
+
+    def _finish_injection_locked(self, request, result):
+        """Latch del percorso TX → RX fisico → FEC per la transazione."""
+        actual = (int(len(result.err_positions))
+                  if result.err_positions is not None else 0)
+        report = {
+            **request,
+            "status": "measured" if result.link_up else "sync_loss",
+            "record": int(self.records),
+            "seed": int(result.seed),
+            "tx_inserted": actual,
+            "tx_positions_bits": (result.err_positions.astype(int).tolist()
+                                  if result.err_positions is not None else []),
+            "physical_rx_locked": bool(result.link_up),
+            "cdr_locked": bool(result.cdr is not None and result.cdr.locked),
+            "pattern_locked": bool(result.cdr is not None
+                                   and result.cdr.pattern_locked),
+            "pre_fec_bits": None,
+            "pre_fec_errors": None,
+            "pre_fec_ber": None,
+            "fec_mode": result.cfg.fec_mode,
+            "fec_input_errors": None,
+            "fec_frames": None,
+            "fec_frames_corrected": None,
+            "fec_frames_uncorrectable": None,
+            "fec_frames_miscorrected": None,
+            "fec_symbols_corrected": None,
+            "post_fec_bits": None,
+            "post_fec_errors": None,
+            "post_fec_ber": None,
+        }
+        if result.link_up:
+            row = result.metrics_rows[2]
+            report.update({
+                "pre_fec_bits": int(row["bits"]),
+                "pre_fec_errors": int(row["bit_errors"]),
+                "pre_fec_ber": float(row["BER"]),
+            })
+            fl = result.fec_link
+            if fl is not None:
+                report.update({
+                    "fec_input_errors": int(fl.pre_fec_bit_errors),
+                    "fec_frames": int(fl.n_frames),
+                    "fec_frames_corrected": int(fl.frames_corrected),
+                    "fec_frames_uncorrectable": int(fl.frames_uncorrectable),
+                    "fec_frames_miscorrected": int(fl.frames_miscorrected),
+                    "fec_symbols_corrected": int(fl.symbols_corrected),
+                    "post_fec_bits": int(fl.n_frames * 5140),
+                    "post_fec_errors": int(fl.post_fec_bit_errors),
+                    "post_fec_ber": float(fl.post_fec_ber),
+                })
+        self.injected_total += actual
+        self.last_injection = report
+        self.last_injection_sim = result
+        self._inject_active = None
+        return report
 
     @property
     def cfg(self) -> LinkConfig:
@@ -195,8 +273,20 @@ class LiveBench:
     def set_config(self, cfg: LinkConfig):
         with self._lock:
             if cfg != self._cfg:
+                cancelled = self._inject_active or self._inject_pending
                 self._cfg = cfg
                 self._reset_locked()
+                if cancelled is not None:
+                    # Una modifica della chain invalida il record one-shot,
+                    # ma la transazione deve chiudersi esplicitamente: senza
+                    # questo ACK negativo la UI restava "in attesa del RX".
+                    self.last_injection = {
+                        **cancelled,
+                        "status": "discarded_config_change",
+                        "record": 0,
+                        "seed": None,
+                        "tx_inserted": 0,
+                    }
 
     # -------------------------------------------------------------- lifecycle
     def start(self):
@@ -237,14 +327,14 @@ class LiveBench:
                 cfg = self._cfg
                 self._seed += 1
                 seed = self._seed
-                inject = self._inject_bits
-                inject_burst = self._inject_burst
-                inject_target = self._inject_target
-                self._inject_bits = 0
-            run_cfg = (cfg if inject == 0
-                       else cfg.with_updates(err_insert_bits=inject,
-                                             err_insert_burst=inject_burst,
-                                             err_insert_target=inject_target))
+                inject_request = self._inject_pending
+                if inject_request is not None:
+                    self._inject_pending = None
+                    self._inject_active = inject_request
+            run_cfg = (cfg if inject_request is None else cfg.with_updates(
+                err_insert_bits=inject_request["bits"],
+                err_insert_burst=inject_request["burst"],
+                err_insert_target=inject_request["target"]))
             with self._lock:
                 die_t = (self._chamber_step(time.time())
                          if self.chamber["on"] else None)
@@ -266,6 +356,12 @@ class LiveBench:
                 log.exception("livebench: record fallito (seed %d), "
                               "acquisizione fermata", seed)
                 with self._lock:
+                    if inject_request is not None:
+                        self.last_injection = {
+                            **inject_request, "status": "simulation_error",
+                            "record": self.records, "seed": seed,
+                        }
+                        self._inject_active = None
                     self._running = False
                     snap = self._snapshot_locked()
                 if self.on_record:
@@ -276,6 +372,14 @@ class LiveBench:
                 return
             with self._lock:
                 if cfg != self._cfg or gen != self._gen:
+                    if (inject_request is not None
+                            and self._inject_active is not None
+                            and self._inject_active["id"] == inject_request["id"]):
+                        self.last_injection = {
+                            **inject_request, "status": "discarded",
+                            "record": self.records, "seed": seed,
+                        }
+                        self._inject_active = None
                     continue  # config cambiata / stop a metà record: scarta
                 if (self.latest is not None and self.latest.link_up
                         and not r.link_up):
@@ -286,8 +390,8 @@ class LiveBench:
                     self._disrupt_started = None
                 self.latest = r
                 self.records += 1
-                if inject:
-                    self.injected_total += inject
+                if inject_request is not None:
+                    self._finish_injection_locked(inject_request, r)
                 if not r.link_up:
                     # niente lock CDR/pattern: il record non produce bit validi
                     self.link_down_records += 1
@@ -407,6 +511,14 @@ class LiveBench:
             "chamber": {**self.chamber, "die_t": round(self._die_t, 2)},
             "last_disruption_ms": self.last_disruption_ms,
             "injected_total": self.injected_total,
+            "injection": {
+                "pending": (dict(self._inject_pending)
+                            if self._inject_pending is not None else None),
+                "active": (dict(self._inject_active)
+                           if self._inject_active is not None else None),
+                "last": (dict(self.last_injection)
+                         if self.last_injection is not None else None),
+            },
             "l2": {
                 "active": bool(self._cfg.pattern == "eth"),
                 "frames_expected": self.l2_expected,
@@ -462,3 +574,17 @@ class LiveBench:
         """
         with self._lock:
             return self._cfg, self.latest, self.records, self._running
+
+    def capture_bert(self):
+        """Record latched dell'ultima transazione BERT, se presente.
+
+        I pannelli generici seguono `latest`; il BERT deve invece conservare
+        la misura one-shot finché l'utente non lancia una nuova iniezione o
+        azzera/cambia configurazione.
+        """
+        with self._lock:
+            sim = self.last_injection_sim or self.latest
+            source = "injection" if self.last_injection_sim is not None else "live"
+            report = (dict(self.last_injection)
+                      if self.last_injection is not None else None)
+            return self._cfg, sim, self.records, self._running, source, report

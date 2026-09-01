@@ -40,11 +40,11 @@ _a("tx_output", "TX OUTPUT on/off", "TX OUTPUT on/off",
    "in topbar e SYNC LOSS all'ED; alla riaccensione il lock torna da solo.",
    "With OUTPUT OFF: flat scope at the driver node, no CDR lock, LINK DOWN "
    "in the topbar and ED SYNC LOSS; lock returns on its own at re-enable.",
-   "È un mute del DRIVE elettrico, non lo spegnimento del laser: per "
-   "togliere anche la luce porta laser_dbm al minimo. Cambio config: "
+   "È un mute del DRIVE elettrico, non lo spegnimento del laser. laser_dbm "
+   "arriva solo a -6 dBm: LASER OFF non è modellato. Cambio config: "
    "l'accumulo riparte.",
-   "It mutes the electrical DRIVE, it does not turn the laser off: to kill "
-   "the light too, drop laser_dbm to its minimum. Config change: "
+   "It mutes the electrical DRIVE, it does not turn the laser off. "
+   "laser_dbm only reaches -6 dBm: LASER OFF is not modeled. Config change: "
    "accumulators restart.",
    "/api/config", "tx_output_on")
 _a("panel_export", "Esporta card", "Export card",
@@ -252,14 +252,23 @@ _a("academy_open", "Apri pannello associato", "Open associated panel", "Academy"
    "The card must appear once and retain signal-flow ordering.",
    "Cambia solo il layout, non la fisica.", "Changes layout only, not physics.",
    mutates="layout only")
-_a("bert_inject", "Inserisci errori", "Insert errors", "BERT", "line bits after reference copy",
-   "Inverte bit singoli o in burst dopo aver salvato il riferimento ED.",
-   "Flips individual or burst bits after saving the ED reference.",
-   "Errori, burst e FEC devono reagire; il riferimento TX resta immutato.",
-   "Errors, bursts, and FEC must react; the TX reference remains unchanged.",
-   "L'iniezione vale per il prossimo record, non per una durata continua.",
-   "Injection applies to the next record, not continuously.",
-   "/api/inject", "next-record impairment")
+_a("bert_inject", "Inserisci errori", "Insert errors", "BERT PPG + ED",
+   "coded TX bits → physical RX → pre/post-FEC checker",
+   "Inverte bit di linea dopo l'encoder FEC al TX. Il record attraversa "
+   "l'unico RX fisico (AFE/ADC/CDR/FSE/DFE); l'ED confronta il tap pre-FEC e, "
+   "se attivo, quello post-FEC.",
+   "Flips coded line bits after the TX FEC encoder. The record crosses the "
+   "single physical RX (AFE/ADC/CDR/FSE/DFE); the ED checks the pre-FEC tap "
+   "and, when enabled, the post-FEC tap.",
+   "Il risultato latched deve mostrare bit TX inseriti, lock RX, errori "
+   "pre-FEC, frame/simboli corretti o persi ed errori post-FEC.",
+   "The latched result must show inserted TX bits, RX lock, pre-FEC errors, "
+   "corrected/lost frames or symbols, and post-FEC errors.",
+   "Transazione single-flight sul prossimo record. Con FEC=none il tap "
+   "post-FEC è BYPASS; senza lock l'ED non dichiara una BER valida.",
+   "Single-flight transaction on the next record. With FEC=none the post-FEC "
+   "tap is BYPASS; without lock the ED reports no valid BER.",
+   "/api/inject", "one physical record + latched report")
 _a("bert_gate", "Gate START / STOP", "Gate START / STOP", "BERT", "ED accumulation window",
    "Apre o chiude una finestra statistica indipendente dai contatori globali.",
    "Opens or closes a statistical window independent of global counters.",

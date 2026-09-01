@@ -1344,16 +1344,34 @@ def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
               "labpro/static/app.js").read_text(encoding="utf-8")
     bert = source[source.index("PANEL_DEFS.bert ="):
                   source.index("PANEL_DEFS.l2 =")]
-    assert 'paramsBlock(["pattern", "prbs_order", "modulation"' in bert
+    assert 'paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation"' in bert
     assert 'paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui"' in bert
-    assert "BERT TX · SERIALIZER / JITTER / NOISE / P-N" in bert
-    assert "BERT RX · ERROR DETECTOR / ANALYZER" in bert
+    assert "SORGENTE TX · PPG, mapping e FEC encoder" in bert
+    assert "STRESS TX · serializer, clock, jitter, rumore e uscita P/N" in bert
+    assert "CHECKER RX · dopo l'unico RX fisico" in bert
+    assert "PROCEDURE RX · ricerche" in bert
+    assert "UN SOLO STRUMENTO E UN SOLO RX FISICO" in bert
+    assert '["source", L("1 · SORGENTE TX"' in bert
+    assert '["stress", L("2 · STRESS TX"' in bert
+    assert '["checker", L("3 · CHECKER RX/FEC"' in bert
+    assert '["procedures", L("4 · PROCEDURE RX"' in bert
+    assert "p.ppgEditor" in bert and "custom_pattern_hex" in bert
+    assert "ED PRE-FEC" in bert and "ED POST-FEC" in bert
+    assert "RESULT LATCHED" in bert
+    assert "p.pendingInjectionId" in bert
+    assert 'this.refetch(p);  // carica la mappa del record latched' in bert
+    assert 'INJECTION #${a2.record}' in source
     assert "openSource(" not in bert
     assert '"BERT e traffico": ["chain", "bert", "l2"' in source
     palette = source[source.index("const PALETTE ="):
                      source.index("const VIEWS =")]
     assert '["stimulus",' not in palette and '["serpll",' not in palette
-    assert '<a data-target="bert"><rect' in source
+    assert 'stimulus: { type: "bert", tab: "source" }' in source
+    assert 'serpll: { type: "bert", tab: "stress" }' in source
+    assert 'bertcheck: { type: "bert", tab: "checker" }' in source
+    assert '<a data-target="serpll"><rect' in source
+    assert '["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"]' in source
+    assert '["err", "ERR ADD", "dg", "bertcheck"]' in source
     loader = source[source.index("async function loadNamedConfig"):
                     source.index("const sci =")]
     assert 'GET("/api/panel/decisions")' in loader
