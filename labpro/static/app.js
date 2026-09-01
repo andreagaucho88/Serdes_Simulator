@@ -188,10 +188,18 @@ const TR_FRAGMENTS = [
   ["clip=", "clip="], ["sat=", "sat="],
   ["peak ratio=", "peak ratio="],
 ];
+// memoizzata: 190 split/join per stringa dentro i loop di rendering delle
+// tabelle (checks: ~40 righe × 2 chiamate ogni 2.5 s) erano puro spreco
+const _trCache = new Map();
 const tr = (txt) => {
   if (LANG !== "en" || typeof txt !== "string") return txt;
-  let out = txt;
-  for (const [it, en] of TR_FRAGMENTS) out = out.split(it).join(en);
+  let out = _trCache.get(txt);
+  if (out === undefined) {
+    out = txt;
+    for (const [it, en] of TR_FRAGMENTS) out = out.split(it).join(en);
+    if (_trCache.size > 1000) _trCache.clear();
+    _trCache.set(txt, out);
+  }
   return out;
 };
 
@@ -229,7 +237,7 @@ async function loadNamedConfig(name, otherSelect) {
     if (otherSelect) otherSelect.value = "";
   } catch (e) { toast(e.message); }
 }
-const sci = (v, d = 2) => (v == null || !isFinite(v)) ? "—" : Number(v).toExponential(d).replace("e", "e");
+const sci = (v, d = 2) => (v == null || !isFinite(v)) ? "—" : Number(v).toExponential(d);
 const fix = (v, d = 2) => (v == null || !isFinite(v)) ? "—" : Number(v).toFixed(d);
 const eng = (v) => {
   if (v == null || !isFinite(v)) return "—";
@@ -239,8 +247,16 @@ const eng = (v) => {
 };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-const COL = { bg: "#0E141B", grid: "#1D2A36", ink: "#D7E1E8", muted: "#7E93A2",
-  el: "#56C8E8", op: "#FF7A59", dg: "#B49CFF", am: "#E8C55A", ok: "#3ECF8E", fail: "#FF5470" };
+// palette letta dai token CSS: style.css è l'UNICA sorgente di verità dei
+// colori (prima gli stessi esadecimali vivevano anche qui e potevano divergere)
+const _rootCss = getComputedStyle(document.documentElement);
+const cssVar = (name, fallback) => (_rootCss.getPropertyValue(name) || fallback).trim();
+const COL = {
+  bg: cssVar("--panel", "#0E141B"), grid: cssVar("--grid", "#1D2A36"),
+  ink: cssVar("--ink", "#D7E1E8"), muted: cssVar("--muted", "#7E93A2"),
+  el: cssVar("--electrical", "#56C8E8"), op: cssVar("--optical", "#FF7A59"),
+  dg: cssVar("--digital", "#B49CFF"), am: cssVar("--amber", "#E8C55A"),
+  ok: cssVar("--ok", "#3ECF8E"), fail: cssVar("--fail", "#FF5470") };
 const DOMC = { electrical: COL.el, optical: COL.op, digital: COL.dg };
 
 function PL(overrides = {}) {
@@ -282,7 +298,13 @@ function cfgChips() {
   $("#sb-cfg-hash").textContent = "cfg#" + hashCfg(S.cfg) + (S.acc ? " · seed base 500000" : "");
 }
 function hashCfg(cfg) {
-  const s = JSON.stringify(cfg); let h = 0;
+  // s2p_text può essere un Touchstone da centinaia di KB e questo hash gira
+  // a ogni broadcast di config: nel digest le stringhe enormi entrano come
+  // lunghezza + estremi (bastano a distinguere due upload diversi)
+  const s = JSON.stringify(cfg, (k, v) =>
+    (typeof v === "string" && v.length > 512)
+      ? `len${v.length}:${v.slice(0, 64)}${v.slice(-64)}` : v);
+  let h = 0;
   for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
   return (h >>> 0).toString(16).slice(0, 8);
 }
@@ -308,19 +330,35 @@ function tickTopbar() {
 }
 
 /* ---------------- WebSocket ---------------- */
+let _wsRetry = 0;
 function connectWS() {
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
   S.ws = ws;
-  ws.onopen = () => $("#conn-banner").classList.add("hidden");
+  ws.onopen = () => { _wsRetry = 0; S._wsLast = Date.now(); $("#conn-banner").classList.add("hidden"); };
   ws.onmessage = (ev) => {
+    S._wsLast = Date.now();
     const m = JSON.parse(ev.data);
     if (m.type === "hello") { S.cfg = m.cfg; S.running = m.running; S.acc = m.acc; cfgChips(); tickTopbar(); notify("config"); }
     if (m.type === "tick") { S.acc = m.acc; S.running = m.acc.running; tickTopbar(); notify("tick"); }
     if (m.type === "config") { S.cfg = m.cfg; cfgChips(); notify("config"); }
     if (m.type === "run") { S.running = m.running; tickTopbar(); }
   };
-  ws.onclose = () => { $("#conn-banner").classList.remove("hidden"); setTimeout(connectWS, 1500); };
+  // riconnessione con backoff esponenziale (prima: retry fisso 1.5 s per sempre)
+  ws.onclose = () => {
+    $("#conn-banner").classList.remove("hidden");
+    const delay = Math.min(1500 * Math.pow(1.6, _wsRetry++), 15000);
+    setTimeout(connectWS, delay + Math.random() * 400);
+  };
 }
+// watchdog: in RUN i tick arrivano a cadenza record; una connessione TCP
+// morta in silenzio (sleep del laptop) lasciava la UI "connessa" con dati
+// fermi e nessun banner — qui la chiudiamo per forzare la riconnessione
+setInterval(() => {
+  if (!S.ws || S.ws.readyState !== WebSocket.OPEN) return;
+  if (S.running && Date.now() - (S._wsLast || 0) > 20000) {
+    try { S.ws.close(); } catch (e) { /* già chiusa */ }
+  }
+}, 10000);
 // in RUN i pannelli si aggiornano a cadenza record (~0.9 s), da fermi
 // restano alla cadenza lenta originale (nessun lavoro inutile)
 let _inflight = 0;
@@ -368,9 +406,47 @@ function acqBadge(p, d) {
   p.acqEl.textContent = live ? `LIVE #${a2.records}` : (a2.source === "static" ? "" : "REF");
   p.acqEl.classList.toggle("on", live);
 }
+// --- coalescing dei refresh da config -------------------------------------
+// Un drag di slider produce ~4 broadcast "config" al secondo e OGNI pannello
+// con onConfig rifetchava subito: ~20 richieste simultanee per step, fuori
+// dal budget di throttled(). Qui la raffica diventa una passata scaglionata
+// (4 pannelli per frame) con intervallo minimo per pannello; i dirty rimasti
+// generano sempre una passata di coda: l'ULTIMA config vince comunque.
+const _cfgDirty = new Set();
+let _cfgPassActive = false, _cfgPassTimer = null;
+function _scheduleCfgPass(delay = 120) {
+  if (_cfgPassActive || _cfgPassTimer || !_cfgDirty.size) return;
+  _cfgPassTimer = setTimeout(_runCfgPass, delay);
+}
+function _runCfgPass() {
+  _cfgPassTimer = null; _cfgPassActive = true;
+  const now = Date.now(), batch = [];
+  for (const p of _cfgDirty) {
+    if (!S.panels.includes(p)) { _cfgDirty.delete(p); continue; }
+    if (now - (p._cfgLast || 0) < 600) continue;   // resta dirty → passata di coda
+    _cfgDirty.delete(p); p._cfgLast = now; batch.push(p);
+  }
+  let i = 0;
+  const step = () => {
+    const stop = Math.min(i + 4, batch.length);
+    for (; i < stop; i++) {
+      try { batch[i].def.onConfig(batch[i]); }
+      catch (e) { console.warn("panel", batch[i].type, e); }
+    }
+    if (i < batch.length) { setTimeout(() => requestAnimationFrame(step), 90); return; }
+    _cfgPassActive = false;
+    _scheduleCfgPass(320);
+  };
+  step();
+}
 function notify(kind) {
+  if (kind === "config") {
+    for (const p of S.panels) if (p.def.onConfig) _cfgDirty.add(p);
+    _scheduleCfgPass();
+    return;
+  }
   for (const p of S.panels) {
-    try { if (kind === "config" && p.def.onConfig) p.def.onConfig(p); if (kind === "tick" && p.def.onTick) p.def.onTick(p); }
+    try { if (p.def.onTick) p.def.onTick(p); }
     catch (e) { console.warn("panel", p.type, e); }
   }
 }
@@ -711,7 +787,12 @@ function syncParams(root) {
   }
 }
 function paramsBlock(fields) { const g = CE("div", "params"); for (const f of fields) g.appendChild(mkParam(f)); return g; }
-function toast(msg) { $("#sb-note").innerHTML = `<span class="fail">${msg}</span>`; setTimeout(() => { $("#sb-note").textContent = L("Laboratorio didattico con proxy dichiarati.", "Educational lab with declared proxies."); }, 5000); }
+let _toastTimer = null;
+function toast(msg) {
+  $("#sb-note").innerHTML = `<span class="fail">${msg}</span>`;
+  clearTimeout(_toastTimer);   // due toast ravvicinati non si accorciano più a vicenda
+  _toastTimer = setTimeout(() => { $("#sb-note").textContent = L("Laboratorio didattico con proxy dichiarati.", "Educational lab with declared proxies."); }, 5000);
+}
 
 /* ---------------- readout helper ---------------- */
 function readout(items) {
@@ -1756,7 +1837,7 @@ PANEL_DEFS.com = {
     p.body.innerHTML = "";
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.table = CE("div", "standard-table"); p.body.appendChild(p.table);
-    const grid = CE("div"); grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    const grid = CE("div", "grid2");
     p.plotGrid = grid;
     p.plotP = CE("div", "plot"); p.plotN = CE("div", "plot"); grid.append(p.plotP, p.plotN);
     p.body.appendChild(grid);
@@ -1815,7 +1896,7 @@ PANEL_DEFS.optical = {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
-    const grid = CE("div"); grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    const grid = CE("div", "grid2");
     p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
     p.plot3 = CE("div", "plot"); p.plot4 = CE("div", "plot");
     grid.append(p.plot1, p.plot2, p.plot3, p.plot4);
@@ -1890,7 +1971,7 @@ PANEL_DEFS.adc = {
   make(p) {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs"]));
-    const g = CE("div"); g.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    const g = CE("div", "grid2");
     p.plotHist = CE("div", "plot"); p.plotScat = CE("div", "plot");
     g.append(p.plotHist, p.plotScat); p.body.appendChild(g);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
@@ -1955,7 +2036,7 @@ PANEL_DEFS.timing = {
     p.body.innerHTML = "";
     p.body.appendChild(paramsBlock(["cdr_mode", "cdr_bw", "cdr_damping", "rx_ppm_offset"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
-    const g = CE("div"); g.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    const g = CE("div", "grid2");
     p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
     p.plot3 = CE("div", "plot"); p.plot4 = CE("div", "plot");
     g.append(p.plot1, p.plot2, p.plot3, p.plot4);
@@ -2116,14 +2197,14 @@ PANEL_DEFS.standards = {
     const d = await GET("/api/panel/standards"); acqBadge(p, d);
     p.host.innerHTML = "";
     const items = [
-      { l: L(L("corsia", "lane"), "lane"), v: fix(d.gbd, 3) + " GBd", sub: d.modulation + " · " + fix(d.lane_gbs, 1) + " Gb/s" },
-      { l: L(L("famiglia più vicina", "closest family"), "nearest family"), v: d.family ? d.family.split("—")[0] : "—", sub: d.deviation_pct != null ? fix(d.deviation_pct, 1) + "%" : "" },
+      { l: L("corsia", "lane"), v: fix(d.gbd, 3) + " GBd", sub: d.modulation + " · " + fix(d.lane_gbs, 1) + " Gb/s" },
+      { l: L("famiglia più vicina", "closest family"), v: d.family ? d.family.split("—")[0] : "—", sub: d.deviation_pct != null ? fix(d.deviation_pct, 1) + "%" : "" },
       { l: L("modello FEC", "FEC model"), v: d.fec_name },
     ];
     if (!d.link_up) items.push({ l: "confronto", v: "LINK DOWN", cls: "fail", sub: L("nessuna BER da confrontare", "no BER to compare") });
     else if (d.threshold) items.push(
-      { l: L(L("soglia pre-FEC (modello iid)", "pre-FEC threshold (iid model)"), "pre-FEC threshold (iid model)"), v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
-      { l: "posizione", v: d.below ? L(L("SOTTO la soglia del modello", "BELOW the model threshold"), "BELOW the model threshold") : L(L("SOPRA la soglia del modello", "ABOVE the model threshold"), "ABOVE the model threshold"), cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + L(" dB (non è un margine di conformità)", " dB (not a compliance margin)"), title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
+      { l: L("soglia pre-FEC (modello iid)", "pre-FEC threshold (iid model)"), v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
+      { l: "posizione", v: d.below ? L("SOTTO la soglia del modello", "BELOW the model threshold") : L("SOPRA la soglia del modello", "ABOVE the model threshold"), cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + L(" dB (non è un margine di conformità)", " dB (not a compliance margin)"), title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
     p.host.appendChild(readout(items));
     const manifest = (d.manifest || []).map(r => `<tr>
       <td><b>${r.block}</b></td><td>${r.value}</td>
@@ -2439,7 +2520,7 @@ PANEL_DEFS.bert = {
     const btn = CE("button", "btn btn-accent", L("Inserisci errori", "Insert errors"));
     btn.dataset.action = "bert_inject";
     btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked })
-      .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "bits flipped at TX on the next record: watch the spike in the map and (with FEC) the corrections.")}</span>`}</span>`; })
+      .then(() => { p.note.innerHTML = `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "TX bits will be inverted in the next record: inspect the error map and FEC counters.")}</span>`; })
       .catch(e => toast(e.message));
     btn.textContent = L("Inserisci errori", "Insert errors");
         p.burstChk = CE("input"); p.burstChk.type = "checkbox";
@@ -2990,15 +3071,18 @@ function addPanel(type, size) {
   if (PANEL_LEARN[type]) {
     const learn = CE("button", "icon-btn", "?");
     learn.title = L("spiega blocco, formula, misura ed esperimento", "explain block, formula, measurement, and experiment");
+    learn.setAttribute("aria-label", L("apri Academy per questo blocco", "open Academy for this block"));
     learn.onclick = () => openEducation(PANEL_LEARN[type]);
     p.head.appendChild(learn);
   }
   const btnSize = CE("button", "icon-btn", "◱"); btnSize.title = TT("ridimensiona la card senza cambiare il banco", "resizes the card without changing the bench");
+  btnSize.setAttribute("aria-label", L("ridimensiona pannello", "resize panel"));
   btnSize.onclick = () => { const i = SIZES.indexOf(p.size); p.el.classList.remove(p.size); p.size = SIZES[(i + 1) % SIZES.length]; p.el.classList.add(p.size); saveLayout(); };
   const btnClose = CE("button", "icon-btn", "×"); btnClose.title = TT("chiude la card senza spegnere il blocco", "closes the card without disabling the block");
+  btnClose.setAttribute("aria-label", L("chiudi pannello", "close panel"));
   btnClose.onclick = () => {
     const grid = p.el.parentElement;
-    p.el.remove(); S.panels = S.panels.filter(x => x !== p);
+    destroyPanel(p); S.panels = S.panels.filter(x => x !== p);
     if (p.type === "scope") refreshDcaProbes();
     if (grid && !grid.children.length) grid.parentElement.remove();
     saveLayout();
@@ -3018,6 +3102,7 @@ function addPanel(type, size) {
   if (p.body.querySelector(".param, [data-ffe]")) {
     const btnReset = CE("button", "icon-btn", "↺");
     btnReset.title = L("riporta le manopole di questo pannello ai valori default", "reset this panel's knobs to their defaults");
+    btnReset.setAttribute("aria-label", L("reset manopole ai default", "reset knobs to defaults"));
     btnReset.onclick = () => {
       const updates = {};
       for (const el of p.body.querySelectorAll(".param")) {
@@ -3034,8 +3119,20 @@ function addPanel(type, size) {
   return p;
 }
 function flash(el) { el.style.outline = "2px solid " + COL.op; setTimeout(() => el.style.outline = "", 900); }
+// distruzione pulita: senza Plotly.purge ogni chiusura di pannello o cambio
+// vista (21 card in "Banco completo") lasciava vivi dati e resize-handler di
+// tutti i grafici — memoria in crescita monotona a ogni switch
+function destroyPanel(p) {
+  if (window.Plotly) {
+    for (const gd of p.el.querySelectorAll(".js-plotly-plot")) {
+      try { Plotly.purge(gd); } catch (e) { /* grafico mai inizializzato */ }
+    }
+  }
+  _cfgDirty.delete(p);
+  p.el.remove();
+}
 function applyView(name) {
-  for (const p of [...S.panels]) { p.el.remove(); }
+  for (const p of [...S.panels]) { destroyPanel(p); }
   for (const sec of document.querySelectorAll(".wb-group")) sec.remove();
   S.panels = [];
   addPanelsStaggered(VIEWS[name] || VIEWS["Banco completo"]);
@@ -3074,6 +3171,37 @@ function loadLayout() {
   else applyView("Banco completo");
 }
 
+/* ---------------- errori dei pannelli visibili ---------------- */
+// prima: 18 refetch su 22 senza try/catch → unhandled rejection e pannello
+// che congela mostrando dati vecchi come fossero validi. Ogni refetch è ora
+// avvolto una volta sola qui: un errore diventa un badge ⚠ sull'header (con
+// il messaggio nel tooltip), il successivo refetch riuscito lo toglie.
+function panelError(p, e) {
+  if (!p || !p.head) return;
+  if (!e) { if (p.errEl) { p.errEl.remove(); p.errEl = null; } return; }
+  console.warn("panel", p.type, e);
+  if (!p.errEl) {
+    p.errEl = CE("span", "panel-err", "⚠");
+    const sp = p.head.querySelector(".spacer");
+    if (sp) p.head.insertBefore(p.errEl, sp); else p.head.appendChild(p.errEl);
+  }
+  p.errEl.title = L("ultimo aggiornamento fallito: ", "last refresh failed: ") + (e.message || e);
+}
+for (const def of Object.values(PANEL_DEFS)) {
+  if (!def.refetch) continue;
+  const orig = def.refetch;
+  def.refetch = function (p, ...args) {
+    let r;
+    try { r = orig.call(this, p, ...args); }
+    catch (e) { panelError(p, e); return; }
+    if (r && typeof r.then === "function")
+      return r.then(v => { panelError(p, null); return v; },
+                    e => panelError(p, e));
+    panelError(p, null);
+    return r;
+  };
+}
+
 /* ---------------- avvio ---------------- */
 async function boot() {
   const st = await GET("/api/state");
@@ -3108,6 +3236,7 @@ async function boot() {
     anltBtn.disabled = false; anltBtn.textContent = prev;
   };
   $("#btn-reset").onclick = () => POST("/api/reset").catch(e => toast(e.message));
+  document.documentElement.lang = LANG;   // screen reader: fonetica giusta anche in EN
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };
   $("#preset-select").title = TT("carica una configurazione didattica completa", "loads a complete educational configuration");
@@ -3126,8 +3255,16 @@ async function boot() {
   for (const name of Object.keys(VIEWS)) { const o = CE("option"); o.value = name; o.textContent = L(name, VIEW_EN[name]); vs.appendChild(o); }
   vs.onchange = () => applyView(vs.value);
   const dd = $(".dropdown");
-  $("#btn-add").onclick = (e) => { e.stopPropagation(); dd.classList.toggle("open"); };
-  document.addEventListener("click", () => dd.classList.remove("open"));
+  $("#btn-add").setAttribute("aria-haspopup", "true");
+  $("#btn-add").onclick = (e) => {
+    e.stopPropagation();
+    const open = dd.classList.toggle("open");
+    $("#btn-add").setAttribute("aria-expanded", String(open));
+  };
+  document.addEventListener("click", () => { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); }
+  });
   const menu = $("#panel-menu");
   let lastGroup = -1;
   for (const [type, name, dom, group] of PALETTE) {

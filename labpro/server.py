@@ -9,12 +9,15 @@ Avvio:  cd simulatore && python -m labpro.server [--port 8640]
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import inspect
 import json
+import logging
 import shutil
 import sys
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 import tornado.ioloop
 import tornado.web
@@ -34,33 +37,49 @@ from labpro.control_help import CONTROL_HELP  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PERSIST = Path(__file__).resolve().parent / ".labpro_session.json"
+SESSION_VERSION = 1     # bump se il formato del payload cambia in modo incompatibile
 
 BENCH = LiveBench()
 CLIENTS: set = set()
 MAIN_LOOP = None
 _persist_lock = threading.Lock()
+log = logging.getLogger("labpro")
 
 
 def load_persisted():
+    if not PERSIST.exists():
+        return
     try:
         d = json.loads(PERSIST.read_text())
-        d["cfg"]["tx_ffe_taps"] = tuple(d["cfg"]["tx_ffe_taps"])
+        cfg_d = d.get("cfg", {})
+        # LinkConfig cresce di iterazione in iterazione: i campi rimossi da
+        # una sessione precedente non devono buttare via TUTTA la config
+        known = {f.name for f in dataclasses.fields(LinkConfig)}
+        dropped = sorted(set(cfg_d) - known)
+        cfg_d = {k: v for k, v in cfg_d.items() if k in known}
+        if "tx_ffe_taps" in cfg_d:
+            cfg_d["tx_ffe_taps"] = tuple(cfg_d["tx_ffe_taps"])
         for name in ("ctle_zeros_hz", "ctle_poles_hz"):
-            if name in d["cfg"]:
-                d["cfg"][name] = tuple(d["cfg"][name])
-        BENCH.set_config(LinkConfig(**d["cfg"]))
+            if name in cfg_d:
+                cfg_d[name] = tuple(cfg_d[name])
+        BENCH.set_config(LinkConfig(**cfg_d))
+        if dropped:
+            log.warning("sessione ripristinata ignorando campi non più esistenti: %s",
+                        ", ".join(dropped))
     except Exception:
-        pass
+        log.warning("sessione %s non ripristinabile: si riparte dai default",
+                    PERSIST.name, exc_info=True)
 
 
 def persist():
     with _persist_lock:
         try:
             tmp = PERSIST.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"cfg": BENCH.cfg.to_dict()}))
+            tmp.write_text(json.dumps({"version": SESSION_VERSION,
+                                       "cfg": BENCH.cfg.to_dict()}))
             tmp.replace(PERSIST)
         except Exception:
-            pass
+            log.warning("persistenza sessione fallita", exc_info=True)
 
 
 def broadcast(payload: dict):
@@ -107,6 +126,27 @@ class Base(tornado.web.RequestHandler):
             return json.loads(self.request.body or b"{}")
         except Exception:
             return {}
+
+    def write_error(self, status_code, **kwargs):
+        # contratto d'errore UNIFORME: sempre {"error": ...} — la pagina HTML
+        # 500 di Tornado rompeva GET() lato client ("Unexpected token '<'")
+        err = f"HTTP {status_code}"
+        exc_info = kwargs.get("exc_info")
+        if exc_info and exc_info[1] is not None:
+            exc = exc_info[1]
+            if isinstance(exc, tornado.web.HTTPError):
+                err = exc.log_message or f"HTTP {status_code}"
+            else:
+                err = f"{type(exc).__name__}: {exc}"
+        self.set_header("Content-Type", "application/json")
+        self.finish(json.dumps({"error": err}))
+
+
+class NotFound(Base):
+    """Route inesistente → 404 JSON (mai la pagina HTML di Tornado)."""
+
+    def prepare(self):
+        raise tornado.web.HTTPError(404)
 
 
 class Index(Base):
@@ -395,7 +435,10 @@ class ApiTrain(Base):
 class ApiTraffic(Base):
     def post(self):
         body = self.body_json()
-        sizes = body.get("frame_sizes") or [64, 128, 256, 512, 1024]
+        sizes = body.get("frame_sizes")
+        if sizes is None:
+            sizes = [64, 128, 256, 512, 1024]
+        # una lista vuota è un errore del chiamante, non "usa i default"
         if not isinstance(sizes, list) or not 1 <= len(sizes) <= 8:
             self.set_status(400)
             return self.write_json({"error": "frame_sizes deve contenere 1..8 valori"})
@@ -526,7 +569,9 @@ class ApiScope(Base):
 
 class WS(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin):
-        return True
+        # solo pagine servite in locale: una pagina web qualunque aperta nel
+        # browser non deve poter agganciare il banco via WebSocket
+        return urlparse(origin).hostname in ("localhost", "127.0.0.1", "::1")
 
     def open(self):
         CLIENTS.add(self)
@@ -547,10 +592,18 @@ class WS(tornado.websocket.WebSocketHandler):
 def ensure_plotly():
     """Copia plotly.min.js dal pacchetto python (nessuna CDN)."""
     target = STATIC_DIR / "plotly.min.js"
-    if not target.exists():
-        import plotly
-        src = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
-        shutil.copy(src, target)
+    if target.exists():
+        return
+    import plotly
+    src = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
+    if not src.exists():
+        # plotly 6.x non spedisce più package_data/plotly.min.js: meglio un
+        # errore leggibile all'avvio che un FileNotFoundError nudo
+        raise SystemExit(
+            f"plotly.min.js non trovato nel pacchetto plotly {plotly.__version__} "
+            f"({src}). Installa 'plotly>=5.24,<6' oppure copia manualmente un "
+            f"plotly.min.js in {STATIC_DIR}/.")
+    shutil.copy(src, target)
 
 
 def make_app():
@@ -578,7 +631,8 @@ def make_app():
         (r"/ws", WS),
         (r"/static/(.*)", tornado.web.StaticFileHandler,
          {"path": str(STATIC_DIR)}),
-    ])
+    ], websocket_ping_interval=20, websocket_ping_timeout=60,
+       compress_response=True, default_handler_class=NotFound)
 
 
 def main():
@@ -588,6 +642,10 @@ def main():
     parser.add_argument("--no-autostart", action="store_true",
                         help="non avviare l'acquisizione continua all'avvio")
     args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("tornado.access").setLevel(logging.WARNING)
     ensure_plotly()
     load_persisted()
     app = make_app()

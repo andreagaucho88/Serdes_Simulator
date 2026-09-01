@@ -9,6 +9,7 @@ e riparte.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -17,6 +18,8 @@ from scipy import stats as sp_stats
 
 from .config import LinkConfig
 from .engine import simulate
+
+log = logging.getLogger("serdes_sim.livebench")
 
 
 class LiveBench:
@@ -27,6 +30,7 @@ class LiveBench:
         self._seed = seed0
         self._running = False
         self._thread = None
+        self._gen = 0                  # generazione del thread di acquisizione
         self._stop_evt = threading.Event()
         self.on_record = None          # callback(snapshot) dopo ogni record
         self.latest = None             # ultimo SimResult (per scope/spettro)
@@ -188,26 +192,36 @@ class LiveBench:
         with self._lock:
             if self._running:
                 return
+            self._gen += 1
             self._running = True
             self._stop_evt.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True,
-                                            name="livebench")
+                                            name="livebench",
+                                            args=(self._gen,))
             self._thread.start()
 
     def stop(self):
         with self._lock:
             self._running = False
+            # invalida il thread corrente: uno stop()+start() ravvicinati non
+            # devono lasciare DUE thread che incrementano gli stessi contatori
+            self._gen += 1
+            t = self._thread
         self._stop_evt.set()
+        # chi chiama stop() vuole la CPU libera (sweep/procedure): attendi la
+        # fine del record in corso invece di proseguire in sovrapposizione
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=3.0)
 
     @property
     def running(self) -> bool:
         with self._lock:
             return self._running
 
-    def _loop(self):
+    def _loop(self, gen):
         while True:
             with self._lock:
-                if not self._running:
+                if not self._running or gen != self._gen:
                     return
                 cfg = self._cfg
                 self._seed += 1
@@ -218,8 +232,10 @@ class LiveBench:
             run_cfg = (cfg if inject == 0
                        else cfg.with_updates(err_insert_bits=inject,
                                              err_insert_burst=inject_burst))
-            if self.chamber["on"]:
-                die_t = self._chamber_step(time.time())
+            with self._lock:
+                die_t = (self._chamber_step(time.time())
+                         if self.chamber["on"] else None)
+            if die_t is not None:
                 run_cfg = run_cfg.with_updates(pvt_temp_c=round(die_t, 2))
             with self._lock:
                 if self._disrupt_pending:
@@ -232,13 +248,22 @@ class LiveBench:
             try:
                 r = simulate(run_cfg, seed=seed, depth="light")
             except Exception:
-                # config al limite: ferma l'acquisizione invece di girare a vuoto
+                # config al limite: ferma l'acquisizione invece di girare a
+                # vuoto — con traceback nel log e stato RUN aggiornato in UI
+                log.exception("livebench: record fallito (seed %d), "
+                              "acquisizione fermata", seed)
                 with self._lock:
                     self._running = False
+                    snap = self._snapshot_locked()
+                if self.on_record:
+                    try:
+                        self.on_record(snap)
+                    except Exception:
+                        pass
                 return
             with self._lock:
-                if cfg != self._cfg:
-                    continue  # config cambiata a metà record: scarta
+                if cfg != self._cfg or gen != self._gen:
+                    continue  # config cambiata / stop a metà record: scarta
                 if (self.latest is not None and self.latest.link_up
                         and not r.link_up):
                     self.sync_losses += 1     # SYNC LOSS stile ED

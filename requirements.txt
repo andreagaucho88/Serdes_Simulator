@@ -1,14 +1,17 @@
-# Runtime (tutte già presenti in <local-user>/anaconda3, Python 3.12)
-numpy>=1.26
-scipy>=1.13
-pandas>=2.0
-streamlit>=1.45      # UI didattica (porta anche tornado)
-tornado>=6.4         # server Lab PRO (labpro/)
-plotly>=5.24
+# Python 3.12 — versioni PINNATE: la baseline di regressione numerica
+# (BER 2.026e-2 ±2%, metriche congelate per seed) dipende da numpy/scipy;
+# un bump non vincolato può spostarla in silenzio. Aggiorna CONSAPEVOLMENTE
+# (esegui suite + selftest e dichiara l'eventuale ricalibrazione nell'handoff).
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.3
+streamlit==1.45.0    # UI didattica legacy (porta anche tornado)
+tornado==6.4.1       # server Lab PRO (labpro/)
+plotly==5.24.1       # >=6 non spedisce più package_data/plotly.min.js
 
 # Sviluppo/test
-pytest>=7.4
+pytest==8.3.5
 
-# Opzionali (pagina canale / riferimenti)
-scikit-rf>=2.0
-serdespy>=1.0
+# Opzionali (pagina canale / riferimenti, non usati dal motore)
+scikit-rf==2.1.0
+serdespy==1.0

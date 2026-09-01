@@ -1,0 +1,22 @@
+[project]
+name = "serdes-optical-lab"
+version = "0.1.0"
+description = "Simulatore didattico della catena SerDes elettro-ottica 112G PAM4 con banco strumenti web (Lab PRO)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+# la suite completa è ~5 min: i marker permettono un giro rapido locale
+# (pytest -m "not slow") mantenendo tutto in CI
+markers = [
+    "slow: test che eseguono simulazioni full-depth o procedure lunghe",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E402: gli import dopo sys.path.insert sono deliberati (progetto non installato)
+ignore = ["E402"]
