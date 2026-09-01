@@ -344,6 +344,21 @@ function tickTopbar() {
   $("#btn-run-label").textContent = S.running ? "STOP" : "RUN";
 }
 
+// chip "esperimento in corso" nella topbar: durante sweep/JTOL/AN-LT/DR4 il
+// bench si ferma davvero (BENCH.stop() lato server) — prima la UI non lo
+// comunicava e i pannelli sembravano solo "fermi". Il bottone ANNULLA invoca
+// la cancellazione cooperativa.
+function expBadge(m) {
+  const chip = $("#exp-chip");
+  if (!chip) return;
+  if (m && m.state === "start" && m.name) {
+    $("#exp-name").textContent = "⏳ " + m.name;
+    chip.classList.remove("hidden");
+  } else {
+    chip.classList.add("hidden");
+  }
+}
+
 /* ---------------- WebSocket ---------------- */
 let _wsRetry = 0;
 function connectWS() {
@@ -353,10 +368,11 @@ function connectWS() {
   ws.onmessage = (ev) => {
     S._wsLast = Date.now();
     const m = JSON.parse(ev.data);
-    if (m.type === "hello") { S.cfg = m.cfg; S.running = m.running; S.acc = m.acc; cfgChips(); tickTopbar(); notify("config"); }
+    if (m.type === "hello") { S.cfg = m.cfg; S.running = m.running; S.acc = m.acc; cfgChips(); tickTopbar(); notify("config"); expBadge(m.experiment ? { state: "start", name: m.experiment } : { state: "end" }); }
     if (m.type === "tick") { S.acc = m.acc; S.running = m.acc.running; tickTopbar(); notify("tick"); }
     if (m.type === "config") { S.cfg = m.cfg; cfgChips(); notify("config"); }
     if (m.type === "run") { S.running = m.running; tickTopbar(); }
+    if (m.type === "experiment") expBadge(m);
   };
   // riconnessione con backoff esponenziale (prima: retry fisso 1.5 s per sempre)
   ws.onclose = () => {
@@ -3355,6 +3371,17 @@ async function boot() {
     anltBtn.disabled = false; anltBtn.textContent = prev;
   };
   $("#btn-reset").onclick = () => POST("/api/reset").catch(e => toast(e.message));
+  const expCancel = $("#exp-cancel");
+  if (expCancel) {
+    expCancel.textContent = L("ANNULLA", "CANCEL");
+    // il tooltip arriva dal contratto experiment_cancel via decorateControls
+    expCancel.onclick = () => POST("/api/experiment/cancel")
+      .then(d => toast(d.cancelled
+        ? L("annullamento richiesto: l'esperimento si ferma al prossimo record", "cancellation requested: the experiment stops at the next record")
+        : L("nessun esperimento in corso", "no experiment running")))
+      .catch(e => toast(e.message));
+  }
+  expBadge(st.experiment ? { state: "start", name: st.experiment } : { state: "end" });
   document.documentElement.lang = LANG;   // screen reader: fonetica giusta anche in EN
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };

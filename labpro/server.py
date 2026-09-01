@@ -16,6 +16,7 @@ import logging
 import shutil
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -27,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
 from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
-from serdes_sim.engine import (anlt_session, jitter_tolerance, jitter_transfer,  # noqa: E402
+from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
+                               jitter_tolerance, jitter_transfer,
                                l2_ont_report, link_train, traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
@@ -89,6 +91,91 @@ def broadcast(payload: dict):
             c.write_message(msg)
         except Exception:
             CLIENTS.discard(c)
+
+
+# --- worker pool degli esperimenti -----------------------------------------
+# Le procedure lunghe (sweep/JTOL/JTF/AN-LT/ONT/train/traffic/DR4) giravano
+# DENTRO il thread dell'IOLoop: server congelato per l'intera durata, niente
+# tick WS, nessun altro pannello, nessuna cancellazione. Ora girano in un
+# worker dedicato (uno solo: gli esperimenti si serializzano, come sul banco
+# vero) con token di cancellazione cooperativo; le sim di riferimento dei
+# pannelli hanno un worker separato così un DR4 non blocca lo Scope.
+EXPERIMENT_POOL = ThreadPoolExecutor(max_workers=1,
+                                     thread_name_prefix="experiment")
+REF_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="refsim")
+
+
+class ExperimentRegistry:
+    """Un solo esperimento alla volta, cancellabile da /api/experiment/cancel."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._name = None
+        self._evt = None
+
+    def begin(self, name):
+        with self._lock:
+            if self._name is not None:
+                return None
+            self._name = name
+            self._evt = threading.Event()
+            return self._evt
+
+    def end(self):
+        with self._lock:
+            self._name = None
+            self._evt = None
+
+    def cancel(self):
+        with self._lock:
+            if self._evt is None:
+                return False
+            self._evt.set()
+            return True
+
+    @property
+    def current(self):
+        with self._lock:
+            return self._name
+
+
+EXPERIMENT = ExperimentRegistry()
+
+
+async def run_experiment(handler, name, fn, restart=True):
+    """Esegue fn(cancel_event) nel worker pool degli esperimenti.
+
+    Ferma il bench dentro il worker (l'IOLoop resta libero), lo riavvia alla
+    fine se era in RUN — salvo restart=False: il chiamante gestisce il
+    riavvio da sé (es. AN/LT/train che prima applicano la config).
+    Ritorna (result, ok); con ok=False la risposta è già stata scritta
+    (409 esperimento concorrente, oppure 400 annullato dall'utente).
+    """
+    evt = EXPERIMENT.begin(name)
+    if evt is None:
+        handler.set_status(409)
+        handler.write_json(
+            {"error": f"esperimento già in corso: {EXPERIMENT.current}"})
+        return None, False
+    was_running = BENCH.running
+    broadcast({"type": "experiment", "name": name, "state": "start"})
+    try:
+        def work():
+            BENCH.stop()          # niente contesa CPU durante l'esperimento
+            return fn(evt)
+        result = await tornado.ioloop.IOLoop.current().run_in_executor(
+            EXPERIMENT_POOL, work)
+        return result, True
+    except ExperimentCancelled:
+        handler.set_status(400)
+        handler.write_json({"error": f"{name}: annullato dall'utente",
+                            "cancelled": True})
+        return None, False
+    finally:
+        EXPERIMENT.end()
+        if restart and was_running:
+            BENCH.start()
+        broadcast({"type": "experiment", "name": name, "state": "end"})
 
 
 def cfg_matches_live(sim, cfg):
@@ -171,11 +258,12 @@ class ApiState(Base):
                           for k, v in SWEEPABLE_FIELDS.items()},
             "control_help": CONTROL_HELP,
             "action_help": ACTION_HELP,
+            "experiment": EXPERIMENT.current,
         })
 
 
 class ApiSweep(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         field = body.get("field")
         if field not in SWEEPABLE_FIELDS:
@@ -185,23 +273,24 @@ class ApiSweep(Base):
         hi = float(body.get("hi", SWEEPABLE_FIELDS[field][2]))
         n = max(3, min(int(body.get("n", 9)), 15))
         import numpy as np
-        was_running = BENCH.running
-        BENCH.stop()          # niente contesa CPU durante lo sweep
+        cfg = BENCH.cfg
         try:
-            rows = sweep(BENCH.cfg, field, np.linspace(lo, hi, n))
+            rows, ok = await run_experiment(
+                self, "sweep",
+                lambda evt: sweep(cfg, field, np.linspace(lo, hi, n),
+                                  cancel=evt))
         except ValueError as exc:
             self.set_status(400)
             return self.write_json({"error": str(exc)})
-        finally:
-            if was_running:
-                BENCH.start()
+        if not ok:
+            return
         self.write_json({"ok": True, "field": field,
                          "label": SWEEPABLE_FIELDS[field][0],
                          "rows": paneldata.J(rows)})
 
 
 class ApiJtol(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         freqs = body.get("freqs_mhz") or [50, 200, 800, 2000]
         # sotto ~3 cicli per record la "tolleranza" misurerebbe solo un offset
@@ -210,13 +299,13 @@ class ApiJtol(Base):
         f_min_mhz = 3.0 / record_s / 1e6
         freqs = [max(float(f), f_min_mhz) for f in freqs][:6]
         target = float(body.get("target_ber", 4e-2))
-        was_running = BENCH.running
-        BENCH.stop()
-        try:
-            points = jitter_tolerance(BENCH.cfg, freqs, target_ber=target)
-        finally:
-            if was_running:
-                BENCH.start()
+        cfg = BENCH.cfg
+        points, ok = await run_experiment(
+            self, "JTOL",
+            lambda evt: jitter_tolerance(cfg, freqs, target_ber=target,
+                                         cancel=evt))
+        if not ok:
+            return
         ui_ps = 1e12 / BENCH.cfg.symbol_rate_hz
         for pt in points:
             pt["amp_ps"] = (pt["amp_ui"] * ui_ps
@@ -323,65 +412,73 @@ class ApiS2P(Base):
 
 
 class ApiJtf(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         freqs = [float(f) for f in (body.get("freqs_mhz")
                                     or [10, 30, 60, 120, 300, 800])][:8]
-        was_running = BENCH.running
-        BENCH.stop()
+        cfg = BENCH.cfg
         try:
-            points = jitter_transfer(BENCH.cfg, freqs,
-                                     amp_ui=float(body.get("amp_ui", 0.04)))
+            points, ok = await run_experiment(
+                self, "JTF",
+                lambda evt: jitter_transfer(
+                    cfg, freqs, amp_ui=float(body.get("amp_ui", 0.04)),
+                    cancel=evt))
         except ValueError as exc:
             self.set_status(400)
             return self.write_json({"error": str(exc)})
-        finally:
-            if was_running:
-                BENCH.start()
+        if not ok:
+            return
         self.write_json({"ok": True, "points": paneldata.J(points),
                          "loop_bw_mhz": BENCH.cfg.cdr_bw
                          * BENCH.cfg.symbol_rate_hz / 1e6})
 
 
 class ApiAnlt(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         was_running = BENCH.running
-        BENCH.stop()
+        cfg = BENCH.cfg
         try:
-            out = anlt_session(BENCH.cfg,
-                               partner_abilities=body.get("partner_abilities"),
-                               lt_rounds=int(body.get("lt_rounds", 4)),
-                               lt_step=float(body.get("lt_step", 0.03)))
-        finally:
-            if was_running and not body.get("apply"):
+            out, ok = await run_experiment(
+                self, "AN/LT",
+                lambda evt: anlt_session(
+                    cfg, partner_abilities=body.get("partner_abilities"),
+                    lt_rounds=int(body.get("lt_rounds", 4)),
+                    lt_step=float(body.get("lt_step", 0.03)), cancel=evt),
+                restart=False)   # il riavvio segue l'eventuale apply dei tap
+        except Exception:
+            if was_running:
                 BENCH.start()
+            raise
+        if not ok:
+            if was_running:
+                BENCH.start()
+            return
         cfg_after = out.pop("cfg_after")
         if body.get("apply") and out["lt"]["link_up_after"]:
             BENCH.set_config(cfg_after)
             persist()
             broadcast({"type": "config", "cfg": cfg_after.to_dict()})
             broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
-            if was_running:
-                BENCH.start()
             out["applied"] = True
         else:
             out["applied"] = False
+        if was_running:
+            BENCH.start()
         self.write_json(paneldata.J({"ok": True, **out}))
 
 
 class ApiOnt(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         grid = [int(v) for v in (body.get("ipg_grid")
                                  or [12, 96, 384, 1024, 2000])][:8]
-        was_running = BENCH.running
-        BENCH.stop()
-        try:
-            out = l2_ont_report(BENCH.cfg, ipg_grid=grid)
-        finally:
-            if was_running:
-                BENCH.start()
+        cfg = BENCH.cfg
+        out, ok = await run_experiment(
+            self, "ONT", lambda evt: l2_ont_report(cfg, ipg_grid=grid,
+                                                   cancel=evt))
+        if not ok:
+            return
         self.write_json(paneldata.J({"ok": True, **out}))
 
 
@@ -410,15 +507,22 @@ class ApiInject(Base):
 
 
 class ApiTrain(Base):
-    def post(self):
+    async def post(self):
         was_running = BENCH.running
-        BENCH.stop()
+        cfg = BENCH.cfg
         try:
-            new_cfg, steps, base, final = link_train(BENCH.cfg)
+            res, ok = await run_experiment(
+                self, "link training",
+                lambda evt: link_train(cfg, cancel=evt), restart=False)
         except Exception:
             if was_running:
                 BENCH.start()
             raise
+        if not ok:
+            if was_running:
+                BENCH.start()
+            return
+        new_cfg, steps, base, final = res
         BENCH.set_config(new_cfg)
         persist()
         broadcast({"type": "config", "cfg": new_cfg.to_dict()})
@@ -433,7 +537,7 @@ class ApiTrain(Base):
 
 
 class ApiTraffic(Base):
-    def post(self):
+    async def post(self):
         body = self.body_json()
         sizes = body.get("frame_sizes")
         if sizes is None:
@@ -442,16 +546,16 @@ class ApiTraffic(Base):
         if not isinstance(sizes, list) or not 1 <= len(sizes) <= 8:
             self.set_status(400)
             return self.write_json({"error": "frame_sizes deve contenere 1..8 valori"})
-        was_running = BENCH.running
-        BENCH.stop()
+        cfg = BENCH.cfg
         try:
-            rows = traffic_sweep(BENCH.cfg, sizes)
+            rows, ok = await run_experiment(
+                self, "traffic",
+                lambda evt: traffic_sweep(cfg, sizes, cancel=evt))
         except ValueError as exc:
             self.set_status(400)
             return self.write_json({"error": str(exc)})
-        finally:
-            if was_running:
-                BENCH.start()
+        if not ok:
+            return
         self.write_json({"ok": True, "kind": "PHY frame-size benchmark",
                          "normative": False, "rows": paneldata.J(rows)})
 
@@ -459,7 +563,7 @@ class ApiTraffic(Base):
 class ApiDr4Procedure(Base):
     """Procedura versionata DR4, deliberatamente on-demand e non live."""
 
-    def post(self):
+    async def post(self):
         body = self.body_json()
         try:
             seed = int(body.get("seed", 500283))
@@ -469,46 +573,29 @@ class ApiDr4Procedure(Base):
         if not 0 <= seed <= 2 ** 32 - 1:
             self.set_status(400)
             return self.write_json({"error": "seed fuori range uint32"})
-        was_running = BENCH.running
-        BENCH.stop()
-        try:
-            report = run_dr4_tdecq_e2e(seed=seed)
-        except Exception as exc:
-            self.set_status(500)
-            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
-        finally:
-            if was_running:
-                BENCH.start()
+        report, ok = await run_experiment(
+            self, "DR4",
+            lambda evt: run_dr4_tdecq_e2e(seed=seed, cancel=evt))
+        if not ok:
+            return
         self.write_json({"ok": True, "report": paneldata.J(report)})
 
 
+class ApiExperimentCancel(Base):
+    def post(self):
+        name = EXPERIMENT.current
+        hit = EXPERIMENT.cancel()
+        self.write_json({"ok": True, "cancelled": hit, "experiment": name})
+
+
 class ApiPanel(Base):
-    def get(self, name):
+    async def get(self, name):
         builder = paneldata.PANEL_BUILDERS.get(name)
         if builder is None:
             self.set_status(404)
             return self.write_json({"error": f"pannello sconosciuto: {name}"})
         cfg, live_sim, records, _ = BENCH.capture()
         source = self.get_argument("source", "auto")
-        # live: ultimo record del bench (nuovo rumore); ref: sim full cache
-        sim = None
-        source_used = "reference"
-        if source in ("auto", "live") and name in (
-                "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical",
-                "timing", "eq", "decisions", "bert", "checks", "adc", "l2",
-                "eyecontour", "physics", "tx"):
-            sim = live_sim
-            if cfg_matches_live(sim, cfg):
-                source_used = "live"
-        if name in ("education", "com"):
-            sim = None  # cataloghi/config analysis: nessun datapath necessario
-            source_used = "static" if name == "education" else "config"
-        elif not cfg_matches_live(sim, cfg):
-            try:
-                sim = paneldata.ref_sim(cfg)
-            except ValueError as exc:
-                self.set_status(400)
-                return self.write_json({"error": str(exc)})
         kwargs = {}
         params = inspect.signature(builder).parameters
         if "node" in params:
@@ -517,7 +604,25 @@ class ApiPanel(Base):
             kwargs["n_traces"] = int(self.get_argument("n", "500"))
         if "nperseg" in params:
             kwargs["nperseg"] = int(self.get_argument("nperseg", "4096"))
-        try:
+
+        def work():
+            # live: ultimo record del bench (nuovo rumore); ref: sim full
+            # cache — la ref_sim è una simulate full-depth: gira nel worker,
+            # non sull'IOLoop (prima congelava tick WS e tutti i pannelli)
+            sim = None
+            source_used = "reference"
+            if source in ("auto", "live") and name in (
+                    "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical",
+                    "timing", "eq", "decisions", "bert", "checks", "adc", "l2",
+                    "eyecontour", "physics", "tx"):
+                sim = live_sim
+                if cfg_matches_live(sim, cfg):
+                    source_used = "live"
+            if name in ("education", "com"):
+                sim = None  # cataloghi/config analysis: niente datapath
+                source_used = "static" if name == "education" else "config"
+            elif not cfg_matches_live(sim, cfg):
+                sim = paneldata.ref_sim(cfg)
             payload = builder(sim, cfg, **kwargs)
             if isinstance(payload, dict):
                 payload["_acquisition"] = {
@@ -526,15 +631,23 @@ class ApiPanel(Base):
                     "source": source_used,
                     "records": records,
                 }
-            self.write_json(payload)
+            return payload
+
+        try:
+            payload = await tornado.ioloop.IOLoop.current().run_in_executor(
+                REF_POOL, work)
+        except ValueError as exc:
+            self.set_status(400)
+            return self.write_json({"error": str(exc)})
         except Exception as exc:
             self.set_status(500)
-            self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+        self.write_json(payload)
 
 
 class ApiScope(Base):
     """Acquisizione DCA coerente: fino a quattro nodi dallo stesso record."""
-    def get(self):
+    async def get(self):
         requested = [v.strip() for v in self.get_argument(
             "nodes", "vctle").split(",") if v.strip()]
         if not requested or len(requested) > 4 or any(
@@ -543,18 +656,24 @@ class ApiScope(Base):
             return self.write_json({"error": "nodes richiede 1..4 nodi validi"})
         cfg, live_sim, records, running = BENCH.capture()
         source = self.get_argument("source", "auto")
-        sim = live_sim if source in ("auto", "live") else None
-        source_used = "live"
-        if not cfg_matches_live(sim, cfg):
-            sim = paneldata.ref_sim(cfg)
-            source_used = "reference"
-        try:
-            rf = self.get_argument("rf", "")
+        rf = self.get_argument("rf", "")
+        n_traces = min(int(self.get_argument("n", "600")), 800)
+
+        def work():
+            sim = live_sim if source in ("auto", "live") else None
+            source_used = "live"
+            if not cfg_matches_live(sim, cfg):
+                sim = paneldata.ref_sim(cfg)
+                source_used = "reference"
             channels = [paneldata.eye_panel(sim, cfg, node=n,
-                                             n_traces=min(int(self.get_argument(
-                                                 "n", "600")), 800),
-                                             ref_filter=rf)
+                                            n_traces=n_traces, ref_filter=rf)
                         for n in requested]
+            return sim, source_used, channels
+
+        try:
+            sim, source_used, channels = await (
+                tornado.ioloop.IOLoop.current().run_in_executor(REF_POOL,
+                                                                work))
         except Exception as exc:
             self.set_status(400)
             return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
@@ -600,6 +719,7 @@ class WS(tornado.websocket.WebSocketHandler):
             "cfg": BENCH.cfg.to_dict(),
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
+            "experiment": EXPERIMENT.current,
         }))
 
     def on_close(self):
@@ -643,6 +763,7 @@ def make_app():
         (r"/api/experiment/dr4-tdecq", ApiDr4Procedure),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
+        (r"/api/experiment/cancel", ApiExperimentCancel),
         (r"/api/chamber", ApiChamber),
         (r"/api/disrupt", ApiDisrupt),
         (r"/api/inject", ApiInject),

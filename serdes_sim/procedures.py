@@ -23,7 +23,7 @@ from .blocks.ssprq_data import (SSPRQ_PERIOD_SYMBOLS, SSPRQ_SOURCE_URL,
                                 SSPRQ_SYMBOL_SHA256)
 from .blocks.stimulus import ssprq_symbol_indices
 from .config import STANDARD_PROFILES
-from .engine import simulate
+from .engine import check_cancel, simulate
 
 
 DR4_PROFILE_NAME = "IEEE 802.3bs — 400GBASE-DR4 · 100G/λ ottico 500 m"
@@ -85,7 +85,7 @@ def _step(step_id, label, status, requirement, evidence, source=None):
     }
 
 
-def run_dr4_tdecq_e2e(seed: int = 500283) -> dict:
+def run_dr4_tdecq_e2e(seed: int = 500283, cancel=None) -> dict:
     """Esegue la procedura DR4 v1 su entrambi gli estremi di dispersione.
 
     Ogni caso percorre davvero PPG → TX → canale elettrico → E/O → fibra di
@@ -121,6 +121,7 @@ def run_dr4_tdecq_e2e(seed: int = 500283) -> dict:
 
     for label, total_dispersion in zip(("minimum", "maximum"),
                                        dispersion_bounds):
+        check_cancel(cancel)
         cfg = test_cfg.with_updates(
             dispersion_ps_nm_km=total_dispersion / test_cfg.fiber_km)
         sim = simulate(cfg, seed=seed, depth="light")

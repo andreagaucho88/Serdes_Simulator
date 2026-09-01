@@ -30,6 +30,21 @@ _a("bench_run", "RUN / STOP", "RUN / STOP", "LiveBench", "acquisition scheduler"
    "STOP congela nuovi record; non cancella quelli accumulati.",
    "STOP freezes new records; it does not clear accumulated data.",
    "/api/run", "running state")
+_a("experiment_cancel", "Annulla esperimento", "Cancel experiment",
+   "Experiment", "worker pool scheduler",
+   "Chiede l'interruzione cooperativa dell'esperimento in corso: si ferma "
+   "al confine del record successivo, mai a metà di una simulate.",
+   "Requests cooperative cancellation of the running experiment: it stops "
+   "at the next record boundary, never mid-simulate.",
+   "Il chip ⏳ deve sparire e il pannello dell'esperimento mostrare "
+   "l'annullamento; il bench riparte se era in RUN.",
+   "The ⏳ chip must disappear and the experiment panel must report the "
+   "cancellation; the bench restarts if it was running.",
+   "I punti già misurati vengono scartati: l'esperimento annullato non "
+   "produce un report parziale.",
+   "Already-measured points are discarded: a cancelled experiment does not "
+   "produce a partial report.",
+   "/api/experiment/cancel", "report only")
 _a("bench_reset", "Azzera statistiche", "Reset statistics", "LiveBench", "accumulators",
    "Azzera BER, FEC, frame, istogrammi e history del banco.",
    "Clears BER, FEC, frame, histogram, and bench-history accumulators.",

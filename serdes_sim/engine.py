@@ -644,8 +644,22 @@ SWEEPABLE_FIELDS = {
 
 
 
+class ExperimentCancelled(RuntimeError):
+    """Esperimento interrotto dal token di cancellazione cooperativo."""
+
+
+def check_cancel(cancel):
+    """Solleva ExperimentCancelled se il token (threading.Event) è settato.
+
+    Le procedure lunghe lo controllano fra una simulate e l'altra: la
+    cancellazione è cooperativa, mai a metà di un record."""
+    if cancel is not None and cancel.is_set():
+        raise ExperimentCancelled("esperimento annullato dall'utente")
+
+
 def jitter_transfer(cfg: LinkConfig, freqs_mhz=(10, 30, 60, 120, 300, 800),
-                    amp_ui=0.04, seed=20240731, progress_callback=None):
+                    amp_ui=0.04, seed=20240731, progress_callback=None,
+                    cancel=None):
     """OJTF misurata del CDR: inietta un PJ piccolo al TX e misura quanto il
     clock recuperato (la traccia di fase del NCO) lo insegue.
 
@@ -656,6 +670,7 @@ def jitter_transfer(cfg: LinkConfig, freqs_mhz=(10, 30, 60, 120, 300, 800),
         raise ValueError("la JTF richiede il CDR reale (gardner/mm)")
     points = []
     for i, f_mhz in enumerate(freqs_mhz):
+        check_cancel(cancel)
         r = simulate(cfg.with_updates(tx_pj_amp_ui=float(amp_ui),
                                       tx_pj_freq_mhz=float(f_mhz)),
                      seed=seed, depth="light")
@@ -684,12 +699,13 @@ def jitter_transfer(cfg: LinkConfig, freqs_mhz=(10, 30, 60, 120, 300, 800),
 
 def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
                      amp_max_ui=0.35, iters=6, seed=20240731,
-                     progress_callback=None):
+                     progress_callback=None, cancel=None):
     """JTOL-lite (dichiaratamente NON normativa): per ogni frequenza di PJ,
     bisezione sull'ampiezza per trovare la massima con BER ≤ target e link UP.
 
     Un punto è None se il link fallisce già senza PJ aggiunto."""
     def passes(amp, f_mhz):
+        check_cancel(cancel)
         r = simulate(cfg.with_updates(tx_pj_amp_ui=float(amp),
                                       tx_pj_freq_mhz=float(f_mhz)),
                      seed=seed, depth="light")
@@ -730,7 +746,7 @@ def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
 
 
 def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
-               verification_seeds=(3303, 4404)):
+               verification_seeds=(3303, 4404), cancel=None):
     """Link training didattico: coordinate descent multi-seed su CTLE
     (zero, gain DC) e TX FFE (pre, post). NON è l'AN/LT di clause (nessuno
     scambio di coefficienti col partner): è un tuning locale onesto.
@@ -763,6 +779,7 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
         return c.with_updates(**{field: v})
 
     def score(c):
+        check_cancel(cancel)
         tot = 0.0
         for s in seeds:
             r = simulate(c, seed=s, depth="light")
@@ -813,7 +830,7 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
 
 
 def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
-                 seed=1101, lt_rounds=8, lt_step=0.02):
+                 seed=1101, lt_rounds=8, lt_step=0.02, cancel=None):
     """AN/LT: Auto-Negotiation Clause 73 (protocollo) + Link Training con
     handshake dei coefficienti in stile Clause 72/136.
 
@@ -869,6 +886,7 @@ def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
         allena il TX del partner). La direzione inversa usa lo stesso
         canale (dichiarato simmetrico) con rumore indipendente."""
         def lt_metric(c):
+            check_cancel(cancel)
             r = simulate(c, seed=seed_dir, depth="light")
             locked = r.link_up and (r.cdr is None or r.cdr.locked)
             if not locked or r.snr_dfe is None:
@@ -1040,7 +1058,7 @@ def anlt_session(cfg: LinkConfig, partner_abilities=None, partner_fec=(),
 
 
 def l2_ont_report(cfg: LinkConfig, ipg_grid=(12, 96, 384, 1024, 2000),
-                  seed=73101):
+                  seed=73101, cancel=None):
     """Test L2 in stile ONT (Viavi/EXFO): load ramp via IPG, latency budget
     deterministico e service-disruption proxy dal lock del CDR.
 
@@ -1054,6 +1072,7 @@ def l2_ont_report(cfg: LinkConfig, ipg_grid=(12, 96, 384, 1024, 2000),
     # --- load ramp: IPG grande = offered load piccolo ----------------------
     ramp = []
     for ipg in ipg_grid:
+        check_cancel(cancel)
         c = cfg.with_updates(pattern="eth", l2_ipg_bytes=int(ipg))
         r = simulate(c, seed=seed + int(ipg), depth="light")
         l2 = r.l2
@@ -1144,7 +1163,7 @@ def acquisition_batch(cfg: LinkConfig, seeds=(500283, 500354, 500401)):
 
 
 def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),
-                  seed=73001):
+                  seed=73001, cancel=None):
     """Benchmark L2/PHY sulla frame size, ispirato al workflow di un traffic
     analyzer ma deliberatamente NON chiamato RFC 2544.
 
@@ -1154,6 +1173,7 @@ def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),
     """
     rows = []
     for size in frame_sizes:
+        check_cancel(cancel)
         size = int(size)
         if not 64 <= size <= 1024:
             raise ValueError("frame size fuori range [64, 1024] B")
@@ -1181,7 +1201,7 @@ def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),
 
 
 def sweep(cfg: LinkConfig, field_name: str, values, seed=20240731,
-          progress_callback=None):
+          progress_callback=None, cancel=None):
     """Ripete la simulazione light variando un solo parametro effettivo.
 
     ``ctle_zero_hz`` è il nome pubblico storico dello sweep. Se è attiva una
@@ -1192,6 +1212,7 @@ def sweep(cfg: LinkConfig, field_name: str, values, seed=20240731,
         raise ValueError(f"campo non sweepable: {field_name}")
     rows = []
     for i, v in enumerate(values):
+        check_cancel(cancel)
         v_cast = int(v) if field_name == "adc_bits" else float(v)
         if field_name == "ctle_zero_hz" and cfg.ctle_zeros_hz:
             zeros = list(cfg.ctle_zeros_effective_hz)

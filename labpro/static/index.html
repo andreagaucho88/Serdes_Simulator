@@ -6,7 +6,7 @@
 <title>SerDes Optical Lab Pro</title>
 <!-- font locali: l'app funziona anche senza rete (come plotly.min.js) -->
 <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=18">
+<link rel="stylesheet" href="/static/style.css?v=19">
 <script src="/static/plotly.min.js"></script>
 </head>
 <body>
@@ -23,6 +23,7 @@
     </button>
     <button id="btn-reset" class="btn" data-action="bench_reset">AZZERA</button>
     <button id="btn-anlt" class="btn" data-action="anlt_apply">AN/LT</button>
+    <span id="exp-chip" class="chip chip-exp hidden" role="status"><span id="exp-name"></span><button id="exp-cancel" type="button" data-action="experiment_cancel">ANNULLA</button></span>
   </div>
   <div class="tb-live" id="tb-live">
     <div class="tb-cell"><label>record</label><b id="tb-records">0</b></div>
@@ -53,6 +54,6 @@
   <span id="sb-cfg-hash"></span>
 </footer>
 
-<script src="/static/app.js?v=34"></script>
+<script src="/static/app.js?v=35"></script>
 </body>
 </html>

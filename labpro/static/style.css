@@ -73,6 +73,13 @@ input[type=checkbox] { accent-color: var(--optical); }
 .chip { font-family: var(--mono); font-size: 11px; padding: 4px 10px;
   border: 1px solid var(--grid); border-radius: 99px; color: var(--muted); }
 .chip-fec.active { border-color: var(--digital); color: var(--digital); }
+/* esperimento in corso (bench fermo) + cancellazione cooperativa */
+.chip-exp { display: inline-flex; align-items: center; gap: 8px;
+  border-color: var(--amber); color: var(--amber); }
+.chip-exp button { background: none; border: 1px solid var(--amber);
+  color: var(--amber); border-radius: 5px; font: 600 10px var(--mono);
+  padding: 1px 7px; cursor: pointer; }
+.chip-exp button:hover { background: rgba(232,197,90,.12); }
 
 .dropdown { position: relative; }
 .dropdown-menu { display: none; position: absolute; right: 0; top: 110%;
