@@ -186,13 +186,14 @@ _a("disrupt", "Service disruption", "Service disruption", "Traffic", "laser/chan
    "Intentionally disrupts the next record but recovers automatically.",
    "/api/disrupt", "one-record impairment")
 _a("anlt_panel", "Esegui AN + LT", "Run AN + LT", "AN/LT", "partner + TX/RX",
-   "Esegue il protocollo senza applicare automaticamente i tap.",
-   "Runs the protocol without automatically applying taps.",
-   "Controlla pagine base, timeline, richieste coefficienti e both-ready.",
-   "Check base pages, timeline, coefficient requests, and both-ready.",
+   "Esegue il protocollo; con la checkbox attiva applica i tap negoziati dopo il holdout.",
+   "Runs the protocol; when checked, it applies negotiated taps after holdout.",
+   "Controlla pagine base, timeline, richieste, both-ready, holdout e flag applied.",
+   "Check base pages, timeline, requests, both-ready, holdout, and the applied flag.",
    "Ottica: risultato contestuale; Clause 73 appartiene a KR/CR.",
    "Optics: contextual result; Clause 73 belongs to KR/CR.",
-   "/api/experiment/anlt", "report only")
+   "/api/experiment/anlt",
+   "report; TX FIR/CTLE when ‘apply negotiated taps’ is checked")
 _a("local_train", "Training locale", "Local training", "Optimizer", "full TX → RX chain",
    "Ottimizza CTLE e FIR con coordinate descent e verifica su holdout.",
    "Optimizes CTLE and FIR by coordinate descent and verifies on holdout.",
@@ -217,4 +218,3 @@ _a("jtol", "Misura JTOL-lite", "Measure JTOL-lite", "CDR", "TX PJ → link BER",
    "Pattern, durata e maschera non sono quelli di una procedura normativa.",
    "Pattern, duration, and mask are not a normative procedure.",
    "/api/experiment/jtol", "report only")
-

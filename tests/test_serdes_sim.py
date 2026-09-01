@@ -1255,9 +1255,7 @@ def test_control_help_covers_every_engine_knob_and_visible_param():
     assert set(CONTROL_HELP) == expected
     for name, item in CONTROL_HELP.items():
         assert item["it"] and item["en"] and item["block"] and item["plane"], name
-        assert item["observe_it"] and item["observe_en"], name
-        assert item["verify_it"] and item["verify_en"], name
-        assert item["boundary_it"] and item["boundary_en"], name
+        assert set(item) == {"block", "plane", "it", "en", "formula", "active"}, name
 
     source = (Path(__file__).resolve().parent.parent /
               "labpro/static/app.js").read_text(encoding="utf-8")
@@ -1266,6 +1264,7 @@ def test_control_help_covers_every_engine_knob_and_visible_param():
     visible = set(re.findall(r"^\s{2}([a-z][a-z0-9_]*):", params,
                              flags=re.MULTILINE))
     assert visible <= set(CONTROL_HELP), sorted(visible - set(CONTROL_HELP))
+    assert "function controlHelpDetails(field, h)" in source
 
 
 def test_every_declared_ui_action_has_a_rich_help_contract():
@@ -1289,6 +1288,17 @@ def test_every_declared_ui_action_has_a_rich_help_contract():
         assert required <= set(item), action
         assert all(item[k] for k in required), action
         assert item["endpoint"] or item["mutates"], action
+
+
+def test_dynamic_action_controls_are_redecorated_and_phase_apply_is_awaited():
+    """I controlli ricreati dopo addPanel conservano help/tooltip e la fase
+    BERT viene confermata dal server prima del messaggio di successo."""
+    source = (Path(__file__).resolve().parent.parent /
+              "labpro/static/app.js").read_text(encoding="utf-8")
+    assert "decorateControls(p.ffe);" in source
+    assert "decorateControls(p.host);" in source
+    assert "await postConfigAndWait({ adc_phase_ui: best.adc_phase_ui });" in source
+    assert 'updates: { pattern: "custom_hex", custom_pattern_hex:' in source
 
 
 def test_physics_audit_closes_current_record_invariants():

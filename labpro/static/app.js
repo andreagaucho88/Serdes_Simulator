@@ -551,11 +551,36 @@ const OPTION_EN = {
 const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "custom_pattern_hex": "User HEX pattern", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
 Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
-const _flushCfg = debounce(() => {
-  const updates = _pendingCfg; _pendingCfg = {};
-  POST("/api/config", { updates }).catch(e => toast(e.message));
+let _cfgWaiters = [];
+const _flushCfg = debounce(async () => {
+  const updates = _pendingCfg, waiters = _cfgWaiters;
+  _pendingCfg = {}; _cfgWaiters = [];
+  try {
+    const result = await POST("/api/config", { updates });
+    waiters.forEach(w => w.resolve(result));
+  } catch (e) {
+    if (!waiters.length) toast(e.message);
+    waiters.forEach(w => w.reject(e));
+  }
 }, 260);
 function postConfig(updates) { Object.assign(_pendingCfg, updates); _flushCfg(); }
+function postConfigAndWait(updates) {
+  return new Promise((resolve, reject) => {
+    _cfgWaiters.push({ resolve, reject });
+    postConfig(updates);
+  });
+}
+
+function controlHelpDetails(field, h) {
+  return {
+    observe_it: `Osserva ${h.plane}: waveform, metrica primaria e checkpoint a valle devono reagire; i piani a monte devono restare invariati.`,
+    observe_en: `Observe ${h.plane}: waveform, primary metric, and downstream checkpoints must react; upstream planes must remain unchanged.`,
+    verify_it: `Confronto paired: stesso seed e stessi prerequisiti, varia solo ${field}; ripeti vicino al default e a un valore di stress.`,
+    verify_en: `Paired check: same seed and prerequisites, vary only ${field}; repeat near default and at a stress value.`,
+    boundary_it: "Il risultato è del modello system-level; un limite di standard vale solo dentro una procedura versionata.",
+    boundary_en: "This is a system-level model result; a standard limit applies only inside a versioned procedure.",
+  };
+}
 
 function showHelpRecord(h, title) {
   if (!h) return toast(L("Spiegazione mancante", "Missing help"));
@@ -583,40 +608,40 @@ function showHelpRecord(h, title) {
 function showControlHelp(field) {
   const h = S.controlHelp[field];
   if (!h) return toast(L(`Spiegazione mancante per ${field}`, `Missing help for ${field}`));
-  showHelpRecord(h, L(PARAMS[field]?.l || field, PARAM_EN[field]));
+  showHelpRecord({ ...h, ...controlHelpDetails(field, h) },
+    L(PARAMS[field]?.l || field, PARAM_EN[field]));
 }
 function showActionHelp(action) {
   const h = S.actionHelp[action];
   if (!h) return toast(L(`Azione non documentata: ${action}`, `Undocumented action: ${action}`));
   showHelpRecord(h, L(h.title_it, h.title_en));
 }
-function controlHelpButton(field) {
-  const b = CE("button", "control-help-btn", "?");
+function helpButton(key, h, action = false) {
+  const b = CE("button", `control-help-btn${action ? " action-help-btn" : ""}`, "?");
   b.type = "button";
-  const h = S.controlHelp[field];
-  b.title = h
-    ? `IT: ${h.it}\nEN: ${h.en}`
-    : L("spiegazione fisica del controllo", "physical control explanation");
-  b.setAttribute("aria-label", `help ${field}`);
-  b.onclick = e => { e.preventDefault(); e.stopPropagation(); showControlHelp(field); };
+  if (action) b.dataset.helpFor = key;
+  b.title = h ? TT(h.it, h.en) : L(
+    action ? "contratto dell'azione" : "spiegazione fisica del controllo",
+    action ? "action contract" : "physical control explanation");
+  b.setAttribute("aria-label", `${action ? "action help" : "help"} ${key}`);
+  b.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    if (action) showActionHelp(key); else showControlHelp(key);
+  };
   return b;
 }
+function controlHelpButton(field) { return helpButton(field, S.controlHelp[field]); }
 function actionHelpButton(action) {
-  const b = CE("button", "control-help-btn action-help-btn", "?");
-  b.type = "button"; b.dataset.helpFor = action;
-  const h = S.actionHelp[action];
-  b.title = h ? `IT: ${h.it}\nEN: ${h.en}` : L("contratto dell'azione", "action contract");
-  b.setAttribute("aria-label", `action help ${action}`);
-  b.onclick = e => { e.preventDefault(); e.stopPropagation(); showActionHelp(action); };
-  return b;
+  return helpButton(action, S.actionHelp[action], true);
 }
 function decorateControls(root) {
   for (const b of root.querySelectorAll("button")) {
     const h = b.dataset.action ? S.actionHelp[b.dataset.action] : null;
-    if (h) b.title = `IT: ${h.it}\nEN: ${h.en}`;
     if (!b.title) {
       const action = (b.textContent || b.dataset.k || "action").trim();
-      b.title = `IT: esegue “${action}” sul banco condiviso; verifica il readout del pannello.\nEN: runs “${action}” on the shared bench; verify the panel readout.`;
+      b.title = h ? TT(h.it, h.en) : TT(
+        `esegue “${action}” sul banco condiviso; verifica il readout del pannello.`,
+        `runs “${action}” on the shared bench; verify the panel readout.`);
     }
   }
   for (const b of root.querySelectorAll("button[data-action]")) {
@@ -1548,7 +1573,9 @@ PANEL_DEFS.stimulus = {
     p.hexStatus = CE("span", "sub");
     const applyHex = async () => {
       try {
-        const out = await POST("/api/config", { updates: { custom_pattern_hex: p.hexInput.value } });
+        const out = await POST("/api/config", {
+          updates: { pattern: "custom_hex", custom_pattern_hex: p.hexInput.value },
+        });
         S.cfg = out.cfg; cfgChips(); notify("config");
         p.hexStatus.textContent = L("applicato · ripetizione ciclica", "applied · cyclic repeat");
       } catch (e) { toast(e.message); }
@@ -1627,6 +1654,7 @@ PANEL_DEFS.tx = {
         postConfig({ tx_ffe_taps: t2.length === 3 ? [0, t2[0], t2[1], t2[2], 0] : [t2[1], t2[2], t2[3]] });
       };
       w2.appendChild(tog); p.ffe.appendChild(w2);
+      decorateControls(p.ffe);
     };
     p.buildFfe();
     p.body.appendChild(p.ffe);
@@ -2234,6 +2262,7 @@ PANEL_DEFS.education = {
     </article>`;
     const ob = p.host.querySelector("[data-open]");
     if (ob) { ob.dataset.action = "academy_open"; ob.onclick = () => addPanel(ob.dataset.open); }
+    decorateControls(p.host);
   },
 };
 
@@ -2442,7 +2471,7 @@ PANEL_DEFS.bert = {
         const ok = d.rows.filter(r => r.link_up);
         if (!ok.length) throw new Error(L("nessuna fase con link UP", "no phase with link UP"));
         const best = ok.reduce((a2, b) => (b.BER_FSE_DFE < a2.BER_FSE_DFE ? b : a2));
-        await postConfig({ adc_phase_ui: best.adc_phase_ui });
+        await postConfigAndWait({ adc_phase_ui: best.adc_phase_ui });
         toast(`${L("fase ottima", "best phase")}: ${fix(best.adc_phase_ui, 2)} UI · BER ${sci(best.BER_FSE_DFE)}`);
       } catch (e) { toast(e.message); }
       p.autoBtn.disabled = false; p.autoBtn.textContent = L("Auto search fase (~5 s)", "Phase auto search (~5 s)");
@@ -3081,13 +3110,10 @@ async function boot() {
   $("#btn-reset").onclick = () => POST("/api/reset").catch(e => toast(e.message));
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };
-  $("#btn-run").title = L("Avvia/ferma acquisizione continua", "Start/stop continuous acquisition");
   $("#preset-select").title = TT("carica una configurazione didattica completa", "loads a complete educational configuration");
   $("#profile-select").title = TT("carica un contesto per-lane IEEE/OIF; non equivale a compliance di clause", "loads an IEEE/OIF per-lane context; this is not clause compliance");
   $("#view-select").title = TT("cambia solo il layout delle card", "changes card layout only");
   $("#btn-add").title = TT("apre il catalogo delle card; non altera il datapath", "opens the card catalog; does not alter the datapath");
-  $("#btn-reset").title = TT("azzera statistiche e istogrammi senza cambiare configurazione", "clears statistics and histograms without changing configuration");
-  $("#btn-anlt").title = TT("esegue AN didattica e link training con holdout prima di applicare i tap", "runs educational AN and link training with holdout before applying taps");
   $("#btn-reset").textContent = L("AZZERA", "RESET");
   $("#btn-add").textContent = L("＋ Pannello", "＋ Panel");
   const topLabels = [L("record", "records"), L("bit", "bits"), "BER cum.",

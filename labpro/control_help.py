@@ -199,31 +199,3 @@ _add("cdr_mode cdr_bw cdr_damping rx_ppm_offset", "CDR", "recovered sampling clo
 _add("fse_taps dfe_taps training_start training_stop", "RX DSP", "post-ADC equalization",
      "imposta memoria e finestra di adattamento; la validation resta separata dal training per evitare una BER ottimistica.",
      "sets equalizer memory and adaptation window; validation stays separate from training to avoid optimistic BER.")
-
-
-# Ogni help di manopola include anche una procedura paired e il vincolo di
-# località. Sono informazioni operative: aiutano a distinguere un effetto
-# fisico reale da una variazione casuale fra seed o da una manopola scollegata.
-for _field, _item in CONTROL_HELP.items():
-    _plane = _item["plane"]
-    _active = _item["active"]
-    _item.update({
-        "observe_it": (
-            f"Osserva {_plane}: waveform, metrica primaria e checkpoint a "
-            "valle devono reagire; i piani a monte devono restare invariati."),
-        "observe_en": (
-            f"Observe {_plane}: waveform, primary metric, and downstream "
-            "checkpoints must react; upstream planes must remain unchanged."),
-        "verify_it": (
-            "Confronto paired: stesso seed e stessi prerequisiti, varia solo "
-            f"{_field}; ripeti vicino al default e a un valore di stress."),
-        "verify_en": (
-            "Paired check: same seed and prerequisites, vary only "
-            f"{_field}; repeat near default and at a stress value."),
-        "boundary_it": (
-            f"Attivo quando: {_active}. Il risultato è del modello system-level; "
-            "un limite di standard vale solo dentro una procedura versionata."),
-        "boundary_en": (
-            f"Active when: {_active}. This is a system-level model result; a "
-            "standard limit applies only inside a versioned procedure."),
-    })
