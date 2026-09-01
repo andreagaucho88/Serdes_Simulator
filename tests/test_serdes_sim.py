@@ -482,6 +482,126 @@ def test_bert_error_insertion_counted():
     assert 15 <= delta <= 20     # quasi tutte le inserzioni contate dall'ED
 
 
+def test_rx_pvt_corners_order_and_identity():
+    """PVT del ricevitore: TT/0%/25°C = identità (fattori 1.0, baseline
+    intatta); il worst case SS+caldo+VDD basso peggiora la BER, FF+freddo
+    la migliora — l'ordine fisico di una qualifica RX."""
+    cfgs = dict(fiber_km=0.0, chirp_alpha=0.0, channel_il_nyquist_db=12.0)
+    f = LinkConfig().pvt_factors
+    assert f == {"bw": 1.0, "noise": 1.0, "mismatch": 1.0, "cdr_gain": 1.0}
+    tt = simulate(LinkConfig(**cfgs), seed=7, depth="light")
+    ss = simulate(LinkConfig(pvt_process="ss", pvt_temp_c=125.0,
+                             pvt_vdd_pct=-10.0, **cfgs), seed=7,
+                  depth="light")
+    ff = simulate(LinkConfig(pvt_process="ff", pvt_temp_c=-40.0, **cfgs),
+                  seed=7, depth="light")
+    assert ss.ber_post_dfe > tt.ber_post_dfe > ff.ber_post_dfe
+    assert LinkConfig(pvt_process="xx").validate()
+    assert LinkConfig(pvt_temp_c=200.0).validate()
+
+
+def test_acquisition_batch_frozen_per_seed():
+    """CONGELAMENTO batch per seed (roadmap punto 1): questi numeri sono
+    l'ancora deterministica del banco sulla config default. Se una modifica
+    al motore li cambia, il cambiamento va dichiarato e i valori aggiornati
+    QUI, consapevolmente."""
+    from serdes_sim.engine import acquisition_batch
+    rows = acquisition_batch(LinkConfig(), seeds=(500283, 500354))
+    frozen = {
+        500283: dict(ber=2.005616e-02, q_min=1.855421, snr_db=12.742197,
+                     tie_rms_ps=4.379432),
+        500354: dict(ber=2.085840e-02, q_min=1.936855, snr_db=12.581927,
+                     tie_rms_ps=4.392091),
+    }
+    for row in rows:
+        exp = frozen[row["seed"]]
+        assert row["link_up"]
+        for key, val in exp.items():
+            assert row[key] == pytest.approx(val, rel=1e-4), (row["seed"], key)
+
+
+def test_tdecq_golden_vectors():
+    """TDECQ (struttura clause 121.8.5.3) contro vettori sintetici
+    indipendenti dalla catena: (a) waveform PAM4 ideale → TDECQ al floor
+    dello strumento reale (BT4+doppia fase+Ceq≥1 ⇒ ~1 dB, NON 0); (b)
+    rumore per-UI crescente → TDECQ strettamente crescente; (c) OMA
+    misurata entro il 7% dal vero."""
+    from serdes_sim.blocks.metrics import tdecq_report
+    from serdes_sim.blocks.stimulus import PAM4_GRAY, generate_stimulus
+    rng = np.random.default_rng(5)
+    sym = generate_stimulus(6000, 13, PAM4_GRAY)
+    p_lin = np.interp(sym, PAM4_GRAY.levels_array,
+                      np.linspace(0.2, 1.2, 4))
+    wave = np.repeat(p_lin, 16)
+    r0 = tdecq_report(wave, sym, PAM4_GRAY, 16, 56e9, 56e9 * 16)
+    assert r0["tdecq_db"] is not None
+    assert 0.8 <= r0["tdecq_db"] <= 1.6
+    assert abs(r0["oma_outer"] - 1.0) < 0.07
+    prev = r0["tdecq_db"]
+    for frac in (0.3, 0.5, 0.7):
+        noisy = wave + np.repeat(
+            rng.normal(0, frac * r0["sigma_ideal"], len(sym)), 16)
+        r = tdecq_report(noisy, sym, PAM4_GRAY, 16, 56e9, 56e9 * 16)
+        assert r["tdecq_db"] > prev
+        prev = r["tdecq_db"]
+
+
+def test_tdecq_on_real_chain_and_dispersion():
+    from serdes_sim.blocks.metrics import tdecq_report
+    from serdes_sim.config import STANDARD_PROFILES
+    dr4 = [v[0] for k, v in STANDARD_PROFILES.items() if "DR4" in k][0]
+    s0 = simulate(dr4, seed=42, depth="light")
+    r0 = tdecq_report(s0.optical.P_fiber_w, s0.pam4_symbols, s0.spec,
+                      dr4.analog_sps, dr4.symbol_rate_hz, dr4.fs_analog_hz)
+    assert r0["tdecq_db"] is not None and 1.0 < r0["tdecq_db"] < 6.0
+    # dispersione seria → TDECQ peggiora o fallisce
+    bad = dr4.with_updates(fiber_km=4.0, wavelength_nm=1550.0,
+                           dispersion_ps_nm_km=17.0)
+    s1 = simulate(bad, seed=42, depth="light")
+    r1 = tdecq_report(s1.optical.P_fiber_w, s1.pam4_symbols, s1.spec,
+                      bad.analog_sps, bad.symbol_rate_hz, bad.fs_analog_hz)
+    assert r1["tdecq_db"] is None or r1["tdecq_db"] > r0["tdecq_db"]
+
+
+def test_fec_codeword_interleaving_splits_bursts():
+    """Il motivo per cui lo standard interleava: un burst di 24 simboli RS
+    contigui sulla linea uccide un codeword (t=15) senza interleaving, ma
+    con depth 2 si divide 12/12 e viene corretto."""
+    from serdes_sim.blocks import fec
+    rng = np.random.default_rng(3)
+    payload = rng.integers(0, 2, 4 * fec.KP4.k * fec.GF_M).astype(np.uint8)
+    coded = fec.encode_stream(payload, fec.KP4, 4)
+    burst_sym = 24
+    start_bit = 5 * fec.GF_M          # dentro il primo gruppo
+    for depth, expect_unc in ((1, 1), (2, 0)):
+        line = fec.interleave_symbols(coded, fec.KP4, depth)
+        hit = line.copy()
+        hit[start_bit:start_bit + burst_sym * fec.GF_M] ^= 1
+        rx = fec.deinterleave_symbols(hit, fec.KP4, depth)
+        tx = fec.deinterleave_symbols(line, fec.KP4, depth)
+        res = fec.decode_stream(rx, tx, fec.KP4, 4)
+        assert res.frames_uncorrectable == expect_unc, depth
+        if depth == 2:
+            assert res.post_fec_ber == 0.0
+            assert max(res.errors_per_frame) <= 15
+
+
+def test_fec_interleave_roundtrip_and_e2e():
+    from serdes_sim.blocks import fec
+    rng = np.random.default_rng(1)
+    bits = rng.integers(0, 2, 4 * 5440 + 123).astype(np.uint8)
+    for d in (2, 4):
+        rt = fec.deinterleave_symbols(
+            fec.interleave_symbols(bits, fec.KP4, d), fec.KP4, d)
+        assert np.array_equal(rt, bits)
+    r = simulate(LinkConfig(fec_mode="kp4", fec_interleave=2,
+                            n_symbols=20000, **GOOD_LINK),
+                 seed=7, depth="light")
+    fl = r.fec_link
+    assert fl is not None and fl.n_frames % 2 == 0
+    assert fl.frames_uncorrectable == 0 and fl.post_fec_ber == 0.0
+
+
 def test_burst_insertion_is_contiguous_and_stresses_fec():
     """Stesso numero di bit, ma il burst deve costare di più al RS in
     simboli/frame colpiti rispetto agli errori sparsi."""

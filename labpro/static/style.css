@@ -207,3 +207,19 @@ canvas.scope { width: 100%; display: block; background: #04070A;
   font-size: 11px; line-height: 1.4; }
 .lesson-act .do { color: var(--acc, #3ecf8e); font-weight: 500; }
 .lesson-act .see { color: var(--muted, #7e93a2); padding-left: 12px; }
+
+/* BERT / ED instrument display */
+.ed-display { display: flex; align-items: baseline; gap: 14px; padding: 8px 10px;
+  background: #04070a; border: 1px solid rgba(126,147,162,.3); border-radius: 4px;
+  margin-bottom: 8px; font-family: "IBM Plex Mono", monospace; }
+.ed-led { width: 11px; height: 11px; border-radius: 50%; align-self: center; }
+.ed-led.on { background: #3ecf8e; box-shadow: 0 0 7px #3ecf8e; }
+.ed-led.off { background: #e05252; box-shadow: 0 0 7px #e05252; animation: edblink 1s infinite; }
+@keyframes edblink { 50% { opacity: 0.35; } }
+.ed-lab { font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted, #7e93a2); }
+.ed-num { font-size: 19px; font-weight: 600; color: #d7e1e8; }
+.ed-num small { font-size: 9px; color: var(--muted, #7e93a2); margin-left: 4px; font-weight: 400; }
+.ed-num.err { color: #e8c55a; }
+.ed-num.warn2 { color: #e05252; }
+.sec-tag { font-size: 9px; letter-spacing: 1px; color: var(--muted, #7e93a2);
+  border-right: 1px solid rgba(126,147,162,.3); padding-right: 8px; margin-right: 2px; }

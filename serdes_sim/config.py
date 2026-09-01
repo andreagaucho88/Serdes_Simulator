@@ -22,6 +22,7 @@ class LinkConfig:
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
     fec_mode: str = "none"        # "none" | "kp4" RS(544,514) | "kr4" RS(528,514)
+    fec_interleave: int = 1       # codeword interleaving 1|2|4 (802.3ck/dj)
                                   # con kp4/kr4 l'encoder è NEL percorso TX e il
                                   # decoder gira sui frame interamente coperti
 
@@ -116,6 +117,12 @@ class LinkConfig:
     tia_bw_hz: float = 35e9
     tia_clip_v: float = 0.8
     agc_target_rms_v: float = 0.22
+    # PVT del ricevitore (process corner, supply, temperatura). Default =
+    # TT / 0% / 25 °C: fattori identità, baseline intatta. Le sensibilità
+    # sono del PRIMO ORDINE e dichiarate (i valori veri sono design-specific)
+    pvt_process: str = "tt"       # "ss" | "tt" | "ff"
+    pvt_vdd_pct: float = 0.0      # deviazione supply [-10..+10] %
+    pvt_temp_c: float = 25.0      # temperatura die [-40..125] °C
     agc_min_gain_db: float = -12.0
     agc_max_gain_db: float = 24.0
 
@@ -164,6 +171,23 @@ class LinkConfig:
     causal_filters: bool = False
 
     @property
+    def pvt_factors(self):
+        """Fattori PVT del ricevitore (primo ordine, dichiarati):
+        - bw: velocità dei device — corner (SS −15% / FF +15%), mobilità
+          ∝ T^-1.5 (≈ −0.15%/°C) e supply (−10% VDD ≈ −5% BW);
+        - noise: termico ∝ √T assoluta (4kTR);
+        - mismatch: offset/gain ADC peggiori ai corner e con |ΔT|;
+        - cdr_gain: guadagno del loop (VCO/charge pump) coi device."""
+        corner = {"ss": 0.85, "tt": 1.0, "ff": 1.15}[self.pvt_process]
+        d_t = self.pvt_temp_c - 25.0
+        bw = corner * (1.0 - 0.0015 * d_t) * (1.0 + 0.005 * self.pvt_vdd_pct)
+        noise = (max(self.pvt_temp_c + 273.15, 1.0) / 298.15) ** 0.5
+        mismatch = (1.0 + 0.006 * abs(d_t)) * (
+            1.3 if self.pvt_process != "tt" else 1.0)
+        return {"bw": bw, "noise": noise, "mismatch": mismatch,
+                "cdr_gain": corner * (1.0 + 0.004 * self.pvt_vdd_pct)}
+
+    @property
     def ui_s(self):
         return 1.0 / self.symbol_rate_hz
 
@@ -202,6 +226,8 @@ class LinkConfig:
             problems.append("pam4_mapping deve essere gray o binary")
         if self.fec_mode not in ("none", "kp4", "kr4"):
             problems.append("fec_mode deve essere none/kp4/kr4")
+        if self.fec_interleave not in (1, 2, 4):
+            problems.append("fec_interleave deve essere 1, 2 o 4")
         if len(self.tx_ffe_taps) not in (3, 5, 7):
             problems.append("tx_ffe_taps: FIR TX a 3, 5 o 7 tap "
                             "(main cursor al centro)")
@@ -319,6 +345,12 @@ class LinkConfig:
             problems.append("tia_vga_range_db fuori range [0, 30] dB")
         if not (0.2 <= self.tia_headroom_ratio <= 0.95):
             problems.append("tia_headroom_ratio fuori range [0.2, 0.95]")
+        if self.pvt_process not in ("ss", "tt", "ff"):
+            problems.append("pvt_process deve essere ss/tt/ff")
+        if not (-10 <= self.pvt_vdd_pct <= 10):
+            problems.append("pvt_vdd_pct fuori range [-10, 10] %")
+        if not (-40 <= self.pvt_temp_c <= 125):
+            problems.append("pvt_temp_c fuori range [-40, 125] °C")
         if not (-40 <= self.agc_min_gain_db <= self.agc_max_gain_db <= 60):
             problems.append("richiesto -40 <= agc_min_gain_db <= "
                             "agc_max_gain_db <= 60")

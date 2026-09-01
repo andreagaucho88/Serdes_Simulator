@@ -83,7 +83,10 @@ def run_cdr(cfg, adc_samples, mode="gardner", levels=None) -> CdrResult:
                          pos_data_samples=np.zeros(1), delay_ui_est=0.0,
                          detail="S-curve piatta: nessuna informazione di timing")
     zeta = cfg.cdr_damping
-    wnT = 2 * cfg.cdr_bw / (zeta + 1 / (4 * zeta))
+    # il guadagno analogico del loop (VCO/CP) scala coi device: la banda
+    # effettiva devia dal valore di design ai corner PVT (dichiarato)
+    bw_eff = cfg.cdr_bw * cfg.pvt_factors["cdr_gain"]
+    wnT = 2 * bw_eff / (zeta + 1 / (4 * zeta))
     kp = 2 * zeta * wnT / K      # errore in UI (ted normalizzato / K)
     ki = wnT * wnT / K
     slope = K

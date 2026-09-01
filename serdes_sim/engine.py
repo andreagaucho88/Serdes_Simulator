@@ -192,6 +192,8 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
         payload_need = n_frames_tx * codec.k * fec_block.GF_M
         raw = _payload_bits(payload_need + total_bits)
         coded = fec_block.encode_stream(raw[:payload_need], codec, n_frames_tx)
+        coded = fec_block.interleave_symbols(coded, codec,
+                                             cfg.fec_interleave)
         filler = raw[payload_need:payload_need + (total_bits - len(coded))]
         tx_bits = np.concatenate([coded, filler])
         result.fec_codec_name = codec.name
@@ -492,6 +494,13 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
         covered = [f for f in range(result.fec_n_frames_tx)
                    if f * frame_syms >= k_start
                    and (f + 1) * frame_syms - 1 <= k1]
+        # con l'interleaving il gruppo di `depth` codeword è l'unità di
+        # linea: la copertura si restringe a gruppi interi
+        d_int = cfg.fec_interleave
+        if d_int > 1 and covered:
+            lo = ((covered[0] + d_int - 1) // d_int) * d_int
+            hi = ((covered[-1] + 1) // d_int) * d_int
+            covered = list(range(lo, hi))
         if covered:
             decided_full = np.zeros(cfg.n_symbols)
             decided_full[eq.symbol_k_fse] = stimulus.hard_slice(
@@ -501,6 +510,11 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
             decided_bits_cov = stimulus.symbols_to_bits(decided_full[sl], spec)
             tx_bits_cov = result.tx_bits[sl.start * spec.bits_per_symbol:
                                          sl.stop * spec.bits_per_symbol]
+            if d_int > 1:
+                decided_bits_cov = fec_block.deinterleave_symbols(
+                    decided_bits_cov, codec, d_int)
+                tx_bits_cov = fec_block.deinterleave_symbols(
+                    tx_bits_cov, codec, d_int)
             result.fec_link = fec_block.decode_stream(
                 decided_bits_cov, tx_bits_cov, codec, len(covered))
             result.fec_frames_covered = tuple(covered)
@@ -608,6 +622,8 @@ SWEEPABLE_FIELDS = {
     "tx_rj_rms_fs": ("RJ TX [fs rms]", 0.0, 1200.0),
     "cdr_bw": ("Banda loop CDR [·f_baud]", 0.0004, 0.005),
     "adc_phase_ui": ("Fase di campionamento ADC [UI]", -0.35, 0.35),
+    "pvt_temp_c": ("Temperatura die RX [°C]", -40.0, 125.0),
+    "pvt_vdd_pct": ("Supply RX [Δ%]", -10.0, 10.0),
     "rx_ppm_offset": ("Offset clock RX [ppm]", -300.0, 300.0),
     "mzm_bias_rad": ("Bias MZM [rad]", 0.9, 2.2),
 }
@@ -1073,6 +1089,30 @@ def l2_ont_report(cfg: LinkConfig, ipg_grid=(12, 96, 384, 1024, 2000),
             total_ns, "cdr_lock_us": lock_us,
             "line_rate_gbps": line_gbps,
             "frame_bytes": cfg.l2_frame_bytes}
+
+
+def acquisition_batch(cfg: LinkConfig, seeds=(500283, 500354, 500401)):
+    """Batch di acquisizione CONGELATA per seed: stessa config, seed
+    dichiarati, metriche deterministiche per record. È l'ancora di
+    regressione del banco (il collaudo "freeze" della roadmap): ogni
+    modifica al motore che cambia questi numeri deve dichiararlo."""
+    from .blocks.jitter import tie_analysis
+    rows = []
+    for sd in seeds:
+        r = simulate(cfg, seed=int(sd), depth="light")
+        row = {"seed": int(sd), "link_up": bool(r.link_up)}
+        if r.link_up:
+            t = tie_analysis(r.receiver.v_ctle_v, cfg.analog_sps,
+                             cfg.symbol_rate_hz, delay_ui=r.rx_delay_ui)
+            row.update({
+                "ber": float(r.ber_post_dfe),
+                "q_min": float(r.snr_dfe["q_min"]),
+                "snr_db": float(r.snr_dfe["snr_slicer_db"]),
+                "tie_rms_ps": float(t.tie_rms_ui * 1e12
+                                    / cfg.symbol_rate_hz),
+            })
+        rows.append(row)
+    return rows
 
 
 def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),

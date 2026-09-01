@@ -424,6 +424,43 @@ class FecLinkResult:
     post_payload_bits: np.ndarray = None   # payload decodificato (per L2)
 
 
+def interleave_symbols(coded_bits, codec: "RSCodec", depth: int):
+    """Codeword interleaving a livello di simbolo RS (10 bit), come in
+    802.3ck/dj: i simboli di `depth` codeword consecutive vengono alternati
+    sulla linea (A0 B0 A1 B1 …). Un burst di linea lungo L simboli si
+    ripartisce quindi in ~L/depth simboli per codeword: è ESATTAMENTE il
+    motivo per cui lo standard interleava. I frame di coda oltre l'ultimo
+    gruppo completo restano non interleavati (dichiarato)."""
+    depth = int(depth)
+    if depth <= 1:
+        return np.asarray(coded_bits, dtype=np.uint8)
+    bits = np.asarray(coded_bits, dtype=np.uint8)
+    fb = codec.n * GF_M
+    n_frames = len(bits) // fb
+    g = n_frames // depth
+    if g == 0:
+        return bits
+    head = bits[:g * depth * fb].reshape(g, depth, codec.n, GF_M)
+    inter = head.transpose(0, 2, 1, 3).reshape(-1)
+    return np.concatenate([inter, bits[g * depth * fb:]])
+
+
+def deinterleave_symbols(line_bits, codec: "RSCodec", depth: int):
+    """Inversa esatta di interleave_symbols (stessa geometria)."""
+    depth = int(depth)
+    if depth <= 1:
+        return np.asarray(line_bits, dtype=np.uint8)
+    bits = np.asarray(line_bits, dtype=np.uint8)
+    fb = codec.n * GF_M
+    n_frames = len(bits) // fb
+    g = n_frames // depth
+    if g == 0:
+        return bits
+    head = bits[:g * depth * fb].reshape(g, codec.n, depth, GF_M)
+    deint = head.transpose(0, 2, 1, 3).reshape(-1)
+    return np.concatenate([deint, bits[g * depth * fb:]])
+
+
 def decode_stream(decided_bits, tx_coded_bits, codec: RSCodec,
                   n_frames: int) -> FecLinkResult:
     """Decodifica il flusso deciso frame per frame e confronta col trasmesso.

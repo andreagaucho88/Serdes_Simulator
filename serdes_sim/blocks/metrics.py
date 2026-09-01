@@ -310,3 +310,150 @@ def eye_density(x, sps, start_symbol=80, traces=2000, bins_v=120):
         t_flat, v_flat, bins=[n_t, bins_v],
         range=[[t_ui[0] - 0.5 / sps, t_ui[-1] + 0.5 / sps], [v_lo - pad, v_hi + pad]])
     return H.T, t_edges, v_edges, segs, t_ui
+
+
+def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
+                 target_ser=4.8e-4, q_t=3.414):
+    """TDECQ con la struttura di clause 121.8.5.3 — DICHIARATO non certificato.
+
+    Procedura implementata (ogni passo come da clause, con le deviazioni
+    dichiarate): filtro di ricezione Bessel-Thomson 4° ordine a 0.5·baud
+    (qui zero-fase); equalizzatore di riferimento FFE 5 tap T-spaced
+    adattato MMSE; campionamento a DUE fasi ±0.05 UI attorno al centro
+    strumento; rumore gaussiano σ_G aggiunto ALL'INGRESSO dell'equalizzatore
+    (quindi amplificato di C_eq = ‖tap‖₂); si cerca il σ_G che porta il SER
+    medio sulle due fasi al target 4.8e-4.
+
+    TDECQ = 10·log10(σ_ideal / σ_G),  σ_ideal = OMA_outer/(6·Q_t), Q_t=3.414.
+    Deviazioni dichiarate: BT4 zero-fase; adattamento con i simboli noti
+    (bench, non pattern lock dello strumento); niente ricerca della fase
+    ottima dell'equalizzatore di clause.
+    """
+    from scipy import signal as _sig
+    P = np.asarray(P_w, dtype=float)
+    sym = np.asarray(symbols)
+    levels = spec.levels_array
+    m = len(levels)
+
+    # 1. filtro di ricezione BT4 0.5·baud (zero-fase, dichiarato)
+    wn = min(0.5 * symbol_rate_hz / (fs_hz / 2), 0.99)
+    b, a = _sig.bessel(4, wn, btype="low", norm="mag")
+    Pf = _sig.filtfilt(b, a, P)
+
+    # 2. allineamento: offset intero via correlazione, poi fase fine a
+    # passi di 0.02 UI (il campionamento è frazionario, non troncato)
+    k = np.arange(200, len(sym) - 200)
+    grid = np.arange(len(Pf), dtype=float)
+
+    def sample_at(off, sub=1):
+        pos = (k[::sub] + 0.5 + off) * sps
+        ok = (pos > 2) & (pos < len(Pf) - 2)
+        return np.interp(pos[ok], grid, Pf), sym[k[::sub][ok]]
+
+    best = (0.0, 0.0)
+    for d_int in (-2, -1, 0, 1, 2):
+        y, t = sample_at(float(d_int), sub=7)
+        c = float(np.corrcoef(y, t)[0, 1])
+        if abs(c) > abs(best[1]):
+            best = (float(d_int), c)
+    delay = best[0]
+    if best[1] < 0:          # catena non invertente sull'ottica, ma guardia
+        sym = -sym
+    # fase fine: massimizza la correlazione (proxy del centro occhio)
+    fine = (0.0, -1.0)
+    for ph in np.arange(-0.45, 0.451, 0.02):
+        y, t = sample_at(delay + ph, sub=7)
+        c = abs(float(np.corrcoef(y, t)[0, 1]))
+        if c > fine[1]:
+            fine = (ph, c)
+    delay += fine[0]
+
+    def sample(ph):
+        return sample_at(delay + ph)
+
+    # 3. FFE di riferimento 5 tap T-spaced. Come da clause, l'equalizzatore
+    # è scelto per MINIMIZZARE il TDECQ: un fit MMSE puro inverte il droop
+    # del BT4 gonfiando C_eq (noise enhancement) anche quando non serve.
+    # Si esplora una griglia di regolarizzazione ridge e si tiene il minimo.
+    y0, t0 = sample(0.0)
+    X = np.stack([np.roll(y0, sh) for sh in (-2, -1, 0, 1, 2)], axis=1)
+    Xv, tv = X[4:-4], t0[4:-4]
+    p_levels = np.interp(tv, levels, np.linspace(0.0, 1.0, m))
+    scale = float(np.percentile(y0, 99.5) - np.percentile(y0, 0.5))
+    base = float(np.percentile(y0, 0.5))
+    target = base + scale * p_levels
+    XtX = Xv.T @ Xv
+    Xty = Xv.T @ target
+    trace_n = float(np.trace(XtX)) / XtX.shape[0]
+
+    y_m, t_m = sample(-0.05)
+    y_p, t_p = sample(+0.05)
+
+    def clusters_for(taps, y, t):
+        Xp = np.stack([np.roll(y, sh) for sh in (-2, -1, 0, 1, 2)], axis=1)
+        ye = (Xp @ taps)[4:-4]
+        tt = t[4:-4]
+        mus, sig = [], []
+        for lv in levels:
+            x = ye[np.isclose(tt, lv)]
+            if len(x) < 30:
+                return None
+            mus.append(float(np.mean(x)))
+            sig.append(float(np.std(x)))
+        order = np.argsort(mus)
+        return np.asarray(mus)[order], np.asarray(sig)[order]
+
+    def ser_with(cl, ceq, sigma_g):
+        tot = 0.0
+        for mus, sig in cl:
+            thr = 0.5 * (mus[:-1] + mus[1:])
+            bounds = np.r_[-np.inf, thr, np.inf]
+            ser = 0.0
+            for i in range(m):
+                s_eff = max(float(np.sqrt(sig[i] ** 2
+                                          + (sigma_g * ceq) ** 2)), 1e-30)
+                cdf = stats.norm.cdf((bounds - mus[i]) / s_eff)
+                probs = np.diff(cdf)
+                ser += (1.0 - probs[i]) / m
+            tot += ser / len(cl)
+        return tot
+
+    best_out = None
+    for lam in (0.0, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.3):
+        try:
+            taps = np.linalg.solve(
+                XtX + lam * trace_n * np.eye(5), Xty)
+        except np.linalg.LinAlgError:
+            continue
+        ceq = float(np.sqrt(np.sum(taps ** 2)))
+        cl = [clusters_for(taps, y_m, t_m), clusters_for(taps, y_p, t_p)]
+        if any(c is None for c in cl):
+            continue
+        oma_outer = float(np.mean([c[0][-1] - c[0][0] for c in cl]))
+        if oma_outer <= 0:
+            continue
+        sigma_ideal = oma_outer / (6.0 * q_t)
+        if ser_with(cl, ceq, 0.0) > target_ser:
+            continue
+        lo, hi = 0.0, 4.0 * sigma_ideal
+        while ser_with(cl, ceq, hi) < target_ser and hi < 64 * sigma_ideal:
+            hi *= 2
+        for _ in range(45):
+            mid = 0.5 * (lo + hi)
+            if ser_with(cl, ceq, mid) < target_ser:
+                lo = mid
+            else:
+                hi = mid
+        sigma_g = 0.5 * (lo + hi)
+        tdecq = float(10 * np.log10(sigma_ideal / max(sigma_g, 1e-30)))
+        if best_out is None or tdecq < best_out["tdecq_db"]:
+            best_out = {"tdecq_db": tdecq, "sigma_ideal": sigma_ideal,
+                        "sigma_g": sigma_g, "oma_outer": oma_outer,
+                        "ceq_db": float(20 * np.log10(ceq)),
+                        "taps": [float(v) for v in taps],
+                        "ridge_lambda": lam,
+                        "target_ser": target_ser, "q_t": q_t}
+    if best_out is None:
+        return {"tdecq_db": None,
+                "reason": "SER oltre il target per ogni equalizzatore provato"}
+    return best_out

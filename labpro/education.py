@@ -125,9 +125,10 @@ TOPICS = [
                  "crosstalk: bounded, non-Gaussian, uncorrelated with the data."),
         numbers=[("UI @ 56 GBd", "17.86 ps"),
                  ("RJ budget TX tipico", "≲ 300 fs RMS"),
-                 ("TJ(1e-12)", "DJ + 14.07·RJ_rms"),
-                 ("SSC standard", "−5000 ppm @ 30–33 kHz"),
-                 ("JTOL corner tipico", "~ f_baud/2500")],
+                 ("TJ(p) dual-Dirac", "2·Q_p·σ + DJ(δδ) — Derickson 2-41"),
+                 ("RJ di sistema", "σ_tot = √Σσᵢ² (indip., Derickson 2-42)"),
+                 ("DJ di sistema", "DJ(δδ) ≈ Σ DJᵢ(δδ) (~10%, Derickson 2-45)"),
+                 ("SSC standard", "−5000 ppm @ 30–33 kHz")],
         actions=[("RJ 500 fs, guarda jitter panel", "RJ 500 fs, watch the jitter panel",
                   "tail-fit RJ ≈ 0.5 ps e TJ@1e-12 cresce di 7 ps", "tail-fit RJ ≈ 0.5 ps and TJ@1e-12 grows by 7 ps"),
                  ("SSC 2500 ppm + strip CDR", "SSC 2500 ppm + CDR strip",
@@ -420,13 +421,13 @@ TOPICS = [
                  "errore. Per questo gli strumenti estrapolano: il Q-scale assume code gaussiane e proietta "
                  "l'apertura al BER target (qui EH@2.4e-4 = soglia KP4). Il contour è la stessa idea in 2D: le "
                  "curve chiuse concentriche sono 'l'occhio al BER x'. Attenzione all'ISI multimodale: le code NON "
-                 "sono gaussiane vicino ai cursori, e l'estrapolazione è ottimista — il tail-fit dual-Dirac del "
+                 "sono gaussiane vicino ai cursori, e l'estrapolazione è ottimista (da 1e-6 misurata a 1e-12 sono ≥6 ordini: Derickson §2.5.4) — il tail-fit dual-Dirac del "
                  "pannello jitter separa proprio RJ (gaussiano) da DJ (bounded)."),
         deep_en=("An eye that looks 'open' says nothing at 1e-12: you would need 10¹² UI to SEE one error. Hence "
                  "extrapolation: the Q-scale assumes Gaussian tails and projects the opening to the target BER "
                  "(here EH@2.4e-4 = the KP4 threshold). The contour is the same idea in 2D: the concentric closed "
                  "curves are 'the eye at BER x'. Beware multimodal ISI: tails are NOT Gaussian near cursors and "
-                 "the extrapolation is optimistic — the jitter panel's dual-Dirac tail-fit separates exactly RJ "
+                 "the extrapolation is optimistic (a measured 1e-6 to 1e-12 is a ≥6-order extrapolation: Derickson §2.5.4) — the jitter panel's dual-Dirac tail-fit separates exactly RJ "
                  "(Gaussian) from DJ (bounded)."),
         numbers=[("banda DCA reale", "50-70 GHz (+ SW 100G+)"),
                  ("EH@BER target", "2.4e-4 (KP4) · 1e-6"),
@@ -467,6 +468,7 @@ TOPICS = [
                  ("1e-9 al 95%", "3e9 bit ≈ 27 ms @112G"),
                  ("BER LSB/MSB Gray", "≈ 2:1"),
                  ("burst gap ED", "≤ 8 simboli (firma DFE)"),
+                 ("bathtub = BERT scan", "sample delay scan, Derickson cap. 5"),
                  ("MP1900A stress", "RJ+SJ+BUJ+SSC+CM/DM")],
         actions=[("Inietta 20 bit + burst", "Inject 20 bits + burst",
                   "error analysis: 1 burst lungo vs 20 isolati", "error analysis: 1 long burst vs 20 isolated"),

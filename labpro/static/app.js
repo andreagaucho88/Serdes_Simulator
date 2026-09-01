@@ -314,6 +314,10 @@ const PARAMS = {
   tia_bw_hz: { l: "Banda TIA", u: "GHz", min: 15, max: 60, step: 1, scale: 1e9 },
   tia_clip_v: { l: "Clip TIA", u: "±V", min: 0.2, max: 1.5, step: 0.05 },
   agc_target_rms_v: { l: "Target AGC", u: "Vrms", min: 0.05, max: 0.5, step: 0.01 },
+  pvt_process: { l: "Process corner", type: "select", opts: ["tt", "ss", "ff"],
+    names: { tt: "TT (tipico)", ss: "SS (slow)", ff: "FF (fast)" } },
+  pvt_vdd_pct: { l: "Supply RX", u: "Δ%", min: -10, max: 10, step: 0.5 },
+  pvt_temp_c: { l: "Temperatura die", u: "°C", min: -40, max: 125, step: 5 },
   agc_min_gain_db: { l: "Gain AGC min", u: "dB", min: -24, max: 6, step: 1 },
   agc_max_gain_db: { l: "Gain AGC max", u: "dB", min: 0, max: 40, step: 1 },
   ctle_zero_hz: { l: "Zero", u: "GHz", min: 2, max: 24, step: 0.5, scale: 1e9 },
@@ -395,7 +399,7 @@ const OPTION_EN = {
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
   "VCSEL direct": "direct VCSEL",
 };
-const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)"};
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)"};
 Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
 const _flushCfg = debounce(() => {
@@ -695,6 +699,7 @@ PANEL_DEFS.scope = {
     p.acc = new Float32Array(p.canvas.width * p.canvas.height);
     const bar = CE("div", "scope-bar");
     bar.innerHTML = `
+      <b class="sec-tag">${L("ACQUISIZIONE · MISURA", "ACQUIRE · MEASURE")}</b>
       <select data-k="mode"><option>densità</option><option>fosforo</option></select>
       <span>persist <input type="range" min="1" max="30" value="8" data-k="persist"></span>
       <span>rate <input type="range" min="1" max="40" value="12" data-k="rate"></span>
@@ -1000,6 +1005,8 @@ PANEL_DEFS.scope = {
       if (m.rlm_proxy != null) items.push({ l: "RLM proxy", v: fix(m.rlm_proxy, 3) });
       if (m.sndr_db != null) items.push({ l: "SNDR", v: fix(m.sndr_db, 1) + " dB", sub: L("fit lineare del pulse (stile 120D/162)", "linear pulse fit (120D/162-style)"), title: L("SNDR = p_max²/σ²residuo dopo fit lineare ai centri simbolo: esclude l'ISI lineare come la procedura di clause (spec TX ck ≈ 32.5 dB al driver)", "SNDR = p_max²/σ²residual after a linear fit at symbol centers: excludes linear ISI like the clause procedure (ck TX spec ≈ 32.5 dB at the driver)") });
       if (m.p_levels_dbm) items.push({ l: "P0..P3", v: m.p_levels_dbm.map(v => fix(v, 1)).join(" · ") + " dBm", sub: `avg ${fix(m.p_avg_dbm, 2)} dBm` });
+      if (m.tdecq && m.tdecq.tdecq_db != null) items.push({ l: "TDECQ", v: fix(m.tdecq.tdecq_db, 2) + " dB", cls: m.tdecq.tdecq_db <= 3.4 ? "ok" : "fail", sub: `Ceq ${fix(m.tdecq.ceq_db, 1)} dB · OMA ${fix(m.tdecq.oma_outer, 3)}`, title: L("TDECQ con la struttura di IEEE 802.3 clause 121.8.5.3: BT4 0.5·Bd, FFE riferimento 5 tap T scelto per minimizzare il TDECQ, doppia fase ±0.05 UI, SER target 4.8e-4, Qt=3.414. Limite DR4/FR4: ≤3.4 dB. DICHIARATO: BT4 zero-fase, adattamento con simboli noti — non certificato.", "TDECQ with the IEEE 802.3 clause 121.8.5.3 structure: BT4 0.5·Bd, 5-tap T reference FFE chosen to minimize TDECQ, dual phase ±0.05 UI, target SER 4.8e-4, Qt=3.414. DR4/FR4 limit: ≤3.4 dB. DECLARED: zero-phase BT4, known-symbol adaptation — not certified.") });
+      else if (m.tdecq && m.tdecq.tdecq_db == null) items.push({ l: "TDECQ", v: "FAIL", cls: "fail", sub: L("SER oltre il target già senza rumore aggiunto", "SER above target even with no added noise") });
       if (m.oma_outer_mw != null) { items.push({ l: "OMA outer", v: fix(m.oma_outer_mw, 3) + " mW", cls: "warn" }); items.push({ l: "ER", v: fix(m.er_db, 2) + " dB", cls: "warn" }); }
       // statistiche di misura per acquisizione, stile DCA reale
       const skey = p.node + "|" + hashCfg(S.cfg);
@@ -1249,9 +1256,9 @@ PANEL_DEFS.jitter = {
         { l: "RJ est.", v: fix(d.rj_est_ps, 2) + " ps", sub: "iniettato " + fix(d.injected.rj_fs / 1000, 2) + " ps", title: "stima dual-Dirac grezza: include il DDJ del pattern" },
         { l: "DJ est.", v: fix(d.dj_est_ps, 2) + " ps pp", sub: "PJ inj " + fix(d.injected.pj_ui * d.ui_ps, 2) + " ps · DCD " + fix(d.injected.dcd_pct / 100 * d.ui_ps, 2) + " ps" },
         ...(d.tail_fit ? [
-          { l: "RJ tail-fit", v: fix(d.tail_fit.rj_ps, 3) + " ps", sub: `σL ${fix(d.tail_fit.sigma_left_ps, 3)} · σR ${fix(d.tail_fit.sigma_right_ps, 3)}`, title: L("fit Q-scale delle code della CDF del TIE (dual-Dirac): pendenza = σ del RJ", "Q-scale fit of the TIE CDF tails (dual-Dirac): slope = RJ σ") },
-          { l: "DJ(δδ)", v: fix(d.tail_fit.dj_dd_ps, 2) + " ps", sub: "dual-Dirac", title: L("distanza fra le due Dirac equivalenti (intercette del fit)", "distance between the two equivalent Diracs (fit intercepts)") },
-          { l: "TJ@1e-12", v: fix(d.tail_fit.tj_1e12_ps, 2) + " ps", sub: `TJ@2.4e-4 ${fix(d.tail_fit.tj_2p4e4_ps, 2)} ps`, title: "TJ(BER) = DJ(δδ) + 2·Q(BER)·RJ" },
+          { l: "RJ tail-fit", v: fix(d.tail_fit.rj_ps, 3) + " ps", sub: `σL ${fix(d.tail_fit.sigma_left_ps, 3)} · σR ${fix(d.tail_fit.sigma_right_ps, 3)}`, title: L("fit Q-scale delle code della CDF del TIE (dual-Dirac, Derickson §2.5.4): pendenza asintotica = σ del RJ; ATTENZIONE, fit vicino al centro sovrastima RJ", "Q-scale fit of the TIE CDF tails (dual-Dirac, Derickson §2.5.4): asymptotic slope = RJ σ; BEWARE, fitting near the center overestimates RJ") },
+          { l: "DJ(δδ)", v: fix(d.tail_fit.dj_dd_ps, 2) + " ps", sub: "dual-Dirac", title: L("distanza fra le intercette a Q=0 (Derickson eq. 2-41); per costruzione DJ(δδ) ≤ DJ(pp)", "distance between the Q=0 intercepts (Derickson eq. 2-41); by construction DJ(δδ) ≤ DJ(pp)") },
+          { l: "TJ@1e-12", v: fix(d.tail_fit.tj_1e12_ps, 2) + " ps", sub: `TJ@2.4e-4 ${fix(d.tail_fit.tj_2p4e4_ps, 2)} ps`, title: "TJ(p) = 2·Q_p·σ + DJ(δδ) — Derickson & Müller eq. 2-41" },
           { l: "EW@2.4e-4", v: fix(d.tail_fit.ew_2p4e4_ui, 3) + " UI", cls: d.tail_fit.ew_2p4e4_ui > 0 ? "" : "fail", sub: L("apertura orizzontale alla soglia FEC", "horizontal opening at the FEC threshold") },
         ] : []),
       ]));
@@ -1283,8 +1290,8 @@ PANEL_DEFS.jitter = {
       plot(p.plotB, [{ x: d.bathtub_x_ui, y: d.bathtub_ber_proxy, line: { color: COL.ok, width: 1.6 } }], lb);
       const alignText = LANG === "en" ? (d.align === "fase acquisita" ? "acquired phase" : "nominal TX center") : d.align;
       p.note.innerHTML = LANG === "en"
-        ? `Alignment: ${alignText}. PAM4 central-threshold crossings contain intrinsic <b>pattern-dependent DDJ</b>. RJ/DJ is a coarse dual-Dirac estimate; the bathtub is empirical and limited by ${sci(d.bathtub_floor)} per record, not a compliance result.`
-        : `Allineamento: ${d.align}. Su PAM4 i crossing della soglia centrale portano <b>DDJ pattern-dependent</b> intrinseco. RJ/DJ è un dual-Dirac grezzo; la bathtub è empirica e limitata a ${sci(d.bathtub_floor)} per record, non è una misura di conformità.`;
+        ? `Alignment: ${alignText}. <b>Dual-Dirac model</b> (Derickson &amp; Müller, <i>Digital Communications T&amp;M</i>, §2.5): the tails of ANY jitter distribution with a Gaussian RJ component approach straight asymptotes on the Q scale Q(x)=√2·erf⁻¹(2CDF−1); their slope gives σ (RJ), their Q=0 intersections give DJ(δδ), and <b>TJ(p) = 2·Q_p·σ + DJ(δδ)</b> extrapolates total jitter to any BER. Two honest caveats from the book: DJ(δδ) ≤ DJ(pp) by construction (convolution pulls the edges inward), and fitting tails that have not yet reached the asymptotes OVERESTIMATES RJ (~15% in the book's example) — this bench fits at p&lt;0.08/p&gt;0.92, so treat TJ@1e-12 as a ≥6-orders extrapolation, not a measurement. PAM4 central-threshold crossings carry intrinsic pattern-dependent DDJ; none of this is a compliance result.`
+        : `Allineamento: ${d.align}. <b>Modello dual-Dirac</b> (Derickson &amp; Müller, <i>Digital Communications T&amp;M</i>, §2.5): le code di QUALUNQUE distribuzione di jitter con una componente RJ gaussiana tendono a rette sul Q-scale Q(x)=√2·erf⁻¹(2CDF−1); la pendenza dà σ (RJ), le intersezioni a Q=0 danno il DJ(δδ), e <b>TJ(p) = 2·Q_p·σ + DJ(δδ)</b> estrapola il jitter totale a qualunque BER. Due avvertenze oneste dal libro: DJ(δδ) ≤ DJ(pp) per costruzione (la convoluzione "smussa" i bordi tirandoli verso l'interno), e fittare code che non hanno ancora raggiunto gli asintoti SOVRASTIMA l'RJ (~15% nell'esempio del libro) — questo banco fitta a p&lt;0.08/p&gt;0.92: il TJ@1e-12 è un'estrapolazione di ≥6 ordini di grandezza, non una misura. I crossing della soglia centrale PAM4 portano DDJ pattern-dependent intrinseco; niente di tutto questo è una misura di conformità.`;
     } catch (e) { p.note.innerHTML = e.message; }
   },
   onConfig(p) { p.history = []; p.lastSeed = null; this.refetch(p); },
@@ -1328,12 +1335,20 @@ PANEL_DEFS.berlive = {
 
 /* --- pannelli parametrici + plot --- */
 PANEL_DEFS.stimulus = {
-  title: "PPG — pattern e modulazione", size: "s6",
+  title: "PPG — Pulse Pattern Generator", size: "s6",
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.ro = CE("div"); p.body.appendChild(p.ro); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/stimulus"); acqBadge(p, d);
     p.ro.innerHTML = "";
+    const clauseName = (() => {
+      if (S.cfg.pattern === "ssprq_like") return ["SSPRQ-like", L("meccanismo di stress, NON lo SSPRQ di clause (seed/segmenti prescritti mancanti)", "stress mechanism, NOT clause SSPRQ (prescribed seeds/segments missing)")];
+      if (S.cfg.pattern !== "prbs") return null;
+      if (S.cfg.modulation === "PAM4" && +S.cfg.prbs_order === 13) return ["PRBS13Q = QPRBS13", "IEEE 802.3 Clause 120.5.11.2.1"];
+      if (S.cfg.modulation === "PAM4" && +S.cfg.prbs_order === 31) return ["PRBS31Q", "IEEE 802.3 Clause 120.5.11.2.2"];
+      return [`PRBS${S.cfg.prbs_order}`, "ITU-T O.150 / " + L("uso comune", "common use")];
+    })();
     p.ro.appendChild(readout([
+      ...(clauseName ? [{ l: L("pattern di clause", "clause pattern"), v: clauseName[0], cls: clauseName[0].startsWith("SSPRQ") ? "warn" : "ok", sub: clauseName[1], title: L("PRBS13Q/PRBS31Q: costruzione bit-exact (polinomio di clause + accoppiamento Gray dei bit); la sequenza è unica a meno di shift ciclico — il seed non è normativo.", "PRBS13Q/PRBS31Q: bit-exact construction (clause polynomial + Gray bit pairing); the sequence is unique up to a cyclic shift — the seed is not normative.") }] : []),
       { l: `PRBS${d.prbs} ${L("periodo", "period")}`, v: Number(d.prbs_period).toLocaleString(), sub: d.prbs_poly },
       { l: L("bilanciamento su un periodo", "full-period balance"), v: `${Number(d.prbs_ones).toLocaleString()} / ${Number(d.prbs_zeros).toLocaleString()}`, sub: L("uno / zero (differenza esatta: 1)", "ones / zeros (exact difference: 1)") },
     ]));
@@ -1489,6 +1504,7 @@ PANEL_DEFS.optical = {
       { l: "P @ PD", v: fix(d.budget["PD input"], 2) + " dBm" },
       { l: L("drive picco", "peak drive"), v: fix(d.drive_peak_v, 2) + " V", sub: d.vpi ? fix(d.drive_peak_v / d.vpi, 2) + "·Vπ" : "ER set " + fix(d.er_set_db, 1) + " dB" },
       { l: "1º nullo IM/DD", v: d.f_null_ghz ? fix(d.f_null_ghz, 1) + " GHz" : "∞", cls: d.f_null_ghz && d.f_null_ghz < d.nyquist_ghz ? "fail" : "" },
+      ...(d.tdecq ? [{ l: "TDECQ", v: d.tdecq.tdecq_db == null ? "FAIL" : fix(d.tdecq.tdecq_db, 2) + " dB", cls: d.tdecq.tdecq_db != null && d.tdecq.tdecq_db <= 3.4 ? "ok" : "fail", sub: d.tdecq.tdecq_db != null ? `limite DR/FR ≤ 3.4 dB · Ceq ${fix(d.tdecq.ceq_db, 1)} dB` : L("occhio oltre il target SER", "eye beyond SER target"), title: L("IEEE 802.3 clause 121.8.5.3 (struttura): BT4 0.5·Bd + FFE 5 tap min-TDECQ + doppia fase ±0.05 UI + SER 4.8e-4; dichiarato non certificato", "IEEE 802.3 clause 121.8.5.3 (structure): BT4 0.5·Bd + min-TDECQ 5-tap FFE + dual phase ±0.05 UI + SER 4.8e-4; declared not certified") }] : []),
       { l: L("propagazione", "propagation"), v: d.fiber_type.toUpperCase(), sub: d.modal_bw_ghz ? `modal BW ${fix(d.modal_bw_ghz, 1)} GHz` : `β₂ ${sci(d.beta2_s2_m)} · β₃ ${sci(d.beta3_s3_m)}` },
       { l: "PMD / Kerr", v: `${fix(d.pmd_dgd_ps, 3)} ps / ${sci(d.nonlinear_phase_peak_rad)} rad`, sub: `linewidth ${fix(d.laser_linewidth_mhz, 1)} MHz` },
     ]));
@@ -1771,14 +1787,14 @@ PANEL_DEFS.standards = {
     const d = await GET("/api/panel/standards"); acqBadge(p, d);
     p.host.innerHTML = "";
     const items = [
-      { l: L("corsia", "lane"), v: fix(d.gbd, 3) + " GBd", sub: d.modulation + " · " + fix(d.lane_gbs, 1) + " Gb/s" },
-      { l: L("famiglia più vicina", "nearest family"), v: d.family ? d.family.split("—")[0] : "—", sub: d.deviation_pct != null ? fix(d.deviation_pct, 1) + "%" : "" },
+      { l: L(L("corsia", "lane"), "lane"), v: fix(d.gbd, 3) + " GBd", sub: d.modulation + " · " + fix(d.lane_gbs, 1) + " Gb/s" },
+      { l: L(L("famiglia più vicina", "closest family"), "nearest family"), v: d.family ? d.family.split("—")[0] : "—", sub: d.deviation_pct != null ? fix(d.deviation_pct, 1) + "%" : "" },
       { l: L("modello FEC", "FEC model"), v: d.fec_name },
     ];
     if (!d.link_up) items.push({ l: "confronto", v: "LINK DOWN", cls: "fail", sub: L("nessuna BER da confrontare", "no BER to compare") });
     else if (d.threshold) items.push(
-      { l: L("soglia pre-FEC (modello iid)", "pre-FEC threshold (iid model)"), v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
-      { l: "posizione", v: d.below ? L("SOTTO la soglia del modello", "BELOW the model threshold") : L("SOPRA la soglia del modello", "ABOVE the model threshold"), cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + " dB (non è un margine di conformità)", title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
+      { l: L(L("soglia pre-FEC (modello iid)", "pre-FEC threshold (iid model)"), "pre-FEC threshold (iid model)"), v: sci(d.threshold), sub: "BER contata " + sci(d.ber) },
+      { l: "posizione", v: d.below ? L(L("SOTTO la soglia del modello", "BELOW the model threshold"), "BELOW the model threshold") : L(L("SOPRA la soglia del modello", "ABOVE the model threshold"), "ABOVE the model threshold"), cls: d.below ? "ok" : "fail", sub: "rapporto log " + fix(d.ratio_db, 1) + L(" dB (non è un margine di conformità)", " dB (not a compliance margin)"), title: "indicazione dal modello binomiale iid del nostro codec: NON è una misura normativa (COM/TDECQ richiedono procedure di clause)" });
     p.host.appendChild(readout(items));
     const manifest = (d.manifest || []).map(r => `<tr>
       <td><b>${r.block}</b></td><td>${r.value}</td>
@@ -1906,7 +1922,9 @@ PANEL_DEFS.physics = {
 
 PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"]));
+    p.body.appendChild(CE("div", "note", L("<b>PVT del ricevitore</b>: corner di processo, supply e temperatura scalano banda TIA/CTLE, rumore (∝√T), mismatch ADC e guadagno del loop CDR — sensibilità del primo ordine dichiarate. Prova lo sweep di pvt_temp_c: la BER vs temperatura è la curva di qualifica di un RX vero.", "<b>Receiver PVT</b>: process corner, supply, and temperature scale TIA/CTLE bandwidth, noise (∝√T), ADC mismatch, and CDR loop gain — declared first-order sensitivities. Try sweeping pvt_temp_c: BER vs temperature is a real RX qualification curve.")));
+    p.body.appendChild(paramsBlock(["pvt_process", "pvt_vdd_pct", "pvt_temp_c"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
   onConfig(p) { syncParams(p.body); },
 };
 
@@ -1991,14 +2009,15 @@ PANEL_DEFS.agc = {
 
 /* --- BERT: error detector + error insertion --- */
 PANEL_DEFS.bert = {
-  title: "BERT — Error Detector", size: "s6",
+  title: "BERT — PPG / Error Detector", size: "s6",
   make(p) {
     p.body.innerHTML = "";
+    p.edDisplay = CE("div", "ed-display"); p.body.appendChild(p.edDisplay);
     p.body.appendChild(paramsBlock(["pattern", "prbs_order", "modulation", "pam4_mapping"]));
     p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct", "tx_diff_noise_mv", "vcm_noise_mv", "vcm_offset_v", "pn_gain_mismatch_pct", "pn_skew_ps", "electrical_drive_mode"]));
     const bar = CE("div", "scope-bar");
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
-    const btn = CE("button", "btn btn-accent", "Inserisci errori");
+    const btn = CE("button", "btn btn-accent", L("Inserisci errori", "Insert errors"));
     btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked })
       .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "bits flipped at TX on the next record: watch the spike in the map and (with FEC) the corrections.")}</span>`}</span>`; })
       .catch(e => toast(e.message));
@@ -2092,7 +2111,18 @@ PANEL_DEFS.bert = {
     } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
   },
   onConfig(p) { syncParams(p.body); this.refetch(p); },
-  onTick(p) { if (throttled(p, 1800)) this.refetch(p); },
+  updateEd(p) {
+    const a = S.acc; if (!a || !p.edDisplay) return;
+    const locked = a.last && a.last.link_up !== false && a.last.cdr_locked !== false;
+    p.edDisplay.innerHTML = `
+      <span class="ed-led ${locked ? "on" : "off"}"></span>
+      <span class="ed-lab">${locked ? "SYNC" : "SYNC LOSS"}</span>
+      <span class="ed-num">${eng(a.bits_total)}<small>bit</small></span>
+      <span class="ed-num err">${eng(a.bit_errors_total)}<small>err</small></span>
+      <span class="ed-num">${a.bits_total ? sci(a.ber_cum) : "—"}<small>BER</small></span>
+      <span class="ed-num warn2">${a.sync_losses ?? 0}<small>${L("perdite sync", "sync losses")}</small></span>`;
+  },
+  onTick(p) { this.updateEd(p); if (throttled(p, 1800)) this.refetch(p); },
 };
 
 /* --- Ethernet L2 (traffic analyzer) --- */

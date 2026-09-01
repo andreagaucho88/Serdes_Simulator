@@ -77,17 +77,23 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
     input-referred equivalente vₙ = iₙ·Z_T (dichiarato): stessa manopola
     tia_noise, stesso ordine di grandezza di un AFE reale."""
     n = len(v_in)
-    vn_v_rthz = cfg.tia_noise_a_rt_hz * cfg.tia_transimpedance_ohm
+    pvt = {"tia_bw_hz": cfg.tia_bw_hz * cfg.pvt_factors["bw"],
+           "tia_noise": cfg.tia_noise_a_rt_hz * cfg.pvt_factors["noise"],
+           "ctle_zeros": tuple(v * cfg.pvt_factors["bw"]
+                               for v in cfg.ctle_zeros_effective_hz),
+           "ctle_poles": tuple(v * cfg.pvt_factors["bw"]
+                               for v in cfg.ctle_poles_effective_hz)}
+    vn_v_rthz = pvt["tia_noise"] * cfg.tia_transimpedance_ohm
     S_v2_hz = vn_v_rthz ** 2
     noise_v = white_noise_from_one_sided_psd(S_v2_hz, n, cfg.fs_analog_hz, rng)
 
     f_enbw_hz = np.linspace(0, cfg.fs_analog_hz / 2, 80_001)
-    H_pos = butterworth_magnitude(f_enbw_hz, cfg.tia_bw_hz, order=3)
+    H_pos = butterworth_magnitude(f_enbw_hz, pvt["tia_bw_hz"], order=3)
     enbw_hz = enbw_one_sided_hz(H_pos, f_enbw_hz)
 
     v_filtered, _, _ = apply_frequency_response(
         v_in + noise_v, cfg.fs_analog_hz,
-        lambda f: butterworth_response(f, cfg.tia_bw_hz, order=3,
+        lambda f: butterworth_response(f, pvt["tia_bw_hz"], order=3,
                                        causal=cfg.causal_filters))
     v_afe = np.clip(v_filtered, -cfg.tia_clip_v, cfg.tia_clip_v)
     clip_fraction = float(np.mean(np.abs(v_filtered) > cfg.tia_clip_v))
@@ -105,12 +111,12 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
         v_agc_v, cfg.fs_analog_hz,
         lambda f: ctle_response(
             f, dc_gain_db=dc_gain_db,
-            zeros_hz=cfg.ctle_zeros_effective_hz,
-            poles_hz=cfg.ctle_poles_effective_hz))
+            zeros_hz=pvt["ctle_zeros"],
+            poles_hz=pvt["ctle_poles"]))
     f_noise_hz = np.linspace(0, cfg.fs_analog_hz / 2, 100_001)
     Hct = ctle_response(f_noise_hz, dc_gain_db=dc_gain_db,
-                        zeros_hz=cfg.ctle_zeros_effective_hz,
-                        poles_hz=cfg.ctle_poles_effective_hz)
+                        zeros_hz=pvt["ctle_zeros"],
+                        poles_hz=pvt["ctle_poles"])
     noise_enh_db = float(db10(np.trapz(np.abs(Hct) ** 2, f_noise_hz)
                               / (f_noise_hz[-1] - f_noise_hz[0])))
     zeros = np.zeros(n)
@@ -133,8 +139,20 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
     )
 
 
+def _pvt_rx(cfg):
+    """Banda TIA/CTLE, rumore e soglie scalati dai fattori PVT (dichiarati)."""
+    f = cfg.pvt_factors
+    return {
+        "tia_bw_hz": cfg.tia_bw_hz * f["bw"],
+        "tia_noise": cfg.tia_noise_a_rt_hz * f["noise"],
+        "ctle_zeros": tuple(v * f["bw"] for v in cfg.ctle_zeros_effective_hz),
+        "ctle_poles": tuple(v * f["bw"] for v in cfg.ctle_poles_effective_hz),
+    }
+
+
 def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     # --- Photodiode: square-law, banda, saturazione -------------------------
+    pvt = _pvt_rx(cfg)
     i_pd_unfiltered_a = cfg.pd_responsivity_a_w * P_fiber_w + cfg.pd_dark_current_a
     i_pd_bandlimited_a, _, _ = apply_frequency_response(
         i_pd_unfiltered_a, cfg.fs_analog_hz,
@@ -149,11 +167,11 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     I_mean_a = float(np.mean(i_pd_signal_a))
     RIN_linear_hz_inv = 10 ** (cfg.rin_db_hz / 10)
     S_shot_a2_hz = 2 * Q_E_C * I_mean_a
-    S_tia_a2_hz = cfg.tia_noise_a_rt_hz ** 2
+    S_tia_a2_hz = pvt["tia_noise"] ** 2
     S_rin_a2_hz = I_mean_a ** 2 * RIN_linear_hz_inv
 
     f_enbw_hz = np.linspace(0, cfg.fs_analog_hz / 2, 80_001)
-    H_tia_positive = butterworth_magnitude(f_enbw_hz, cfg.tia_bw_hz, order=3)
+    H_tia_positive = butterworth_magnitude(f_enbw_hz, pvt["tia_bw_hz"], order=3)
     tia_enbw_hz = enbw_one_sided_hz(H_tia_positive, f_enbw_hz)
     noise_rms_after_tia_a = {
         "shot": float(np.sqrt(S_shot_a2_hz * tia_enbw_hz)),
@@ -188,7 +206,7 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     v_tia_unfiltered_v = zt_ohm * i_pd_noisy_a
     v_tia_filtered_v, _, _ = apply_frequency_response(
         v_tia_unfiltered_v, cfg.fs_analog_hz,
-        lambda f: butterworth_response(f, cfg.tia_bw_hz, order=3,
+        lambda f: butterworth_response(f, pvt["tia_bw_hz"], order=3,
                                        causal=cfg.causal_filters))
     v_tia_v = np.clip(v_tia_filtered_v, -cfg.tia_clip_v, cfg.tia_clip_v)
     tia_clip_fraction = float(np.mean(np.abs(v_tia_filtered_v) > cfg.tia_clip_v))
@@ -207,13 +225,13 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
         v_agc_v, cfg.fs_analog_hz,
         lambda f: ctle_response(
             f, dc_gain_db=dc_gain_db,
-            zeros_hz=cfg.ctle_zeros_effective_hz,
-            poles_hz=cfg.ctle_poles_effective_hz))
+            zeros_hz=pvt["ctle_zeros"],
+            poles_hz=pvt["ctle_poles"]))
 
     f_noise_hz = np.linspace(0, cfg.fs_analog_hz / 2, 100_001)
     Hct_pos = ctle_response(f_noise_hz, dc_gain_db=dc_gain_db,
-                            zeros_hz=cfg.ctle_zeros_effective_hz,
-                            poles_hz=cfg.ctle_poles_effective_hz)
+                            zeros_hz=pvt["ctle_zeros"],
+                            poles_hz=pvt["ctle_poles"])
     ctle_noise_enhancement_db = float(db10(
         np.trapz(np.abs(Hct_pos) ** 2, f_noise_hz) / (f_noise_hz[-1] - f_noise_hz[0])))
 

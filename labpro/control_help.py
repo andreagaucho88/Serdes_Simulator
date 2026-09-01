@@ -35,6 +35,14 @@ _add("prbs_order pattern", "PPG", "PCS/PPG output",
 _add("modulation pam4_mapping", "Mapper", "mapper output",
      "sceglie livelli e label di bit; Gray limita a un bit l'errore fra livelli adiacenti, ma non migliora l'occhio analogico.",
      "selects levels and bit labels; Gray limits adjacent-level errors to one bit but does not improve the analog eye.")
+_add("pvt_process pvt_vdd_pct pvt_temp_c", "RX PVT", "TIA/CTLE/ADC/CDR (receiver only)",
+     "corner di processo (SS/TT/FF), supply e temperatura del die RX. Sensibilità del primo ordine dichiarate: banda dei device (SS −15%, mobilità ≈ −0.15%/°C, −10% VDD ≈ −5% BW), rumore termico ∝ √T assoluta, mismatch ADC peggiore ai corner e con |ΔT|, guadagno del loop CDR coi device. Il worst case classico è SS + caldo + VDD basso: la CTLE perde peaking proprio dove serve. Default TT/0%/25 °C = fattori identità (baseline intatta).",
+     "RX die process corner (SS/TT/FF), supply, and temperature. Declared first-order sensitivities: device bandwidth (SS −15%, mobility ≈ −0.15%/°C, −10% VDD ≈ −5% BW), thermal noise ∝ √(absolute T), ADC mismatch worse at corners and with |ΔT|, CDR loop gain with device speed. The classic worst case is SS + hot + low VDD: the CTLE loses peaking exactly where it is needed. Default TT/0%/25 °C = identity factors (baseline intact).",
+     "bw=corner·(1−0.0015ΔT)·(1+0.005ΔV%); noise=√(T/298K)")
+_add("fec_interleave", "FEC", "RS symbol mux on the line",
+     "interleaving di codeword a livello di simbolo RS (802.3ck/dj): i simboli di 2/4 codeword si alternano sulla linea, così un burst di L simboli ne colpisce ~L/depth per codeword. Con depth>1 serve un record lungo (≥16k simboli) perché un gruppo intero cada in validation.",
+     "codeword interleaving at the RS-symbol level (802.3ck/dj): symbols of 2/4 codewords alternate on the line, so an L-symbol burst hits ~L/depth per codeword. With depth>1 a long record (≥16k symbols) is needed for a full group to fall inside validation.",
+     "burst L → ~L/depth per codeword", "fec_mode ≠ none")
 _add("fec_mode", "FEC", "PCS before mapper / after DEMUX",
      "inserisce davvero encoder e decoder nel datapath; cambia overhead, copertura dei codeword e BER post-FEC.",
      "inserts the encoder and decoder in the datapath; changes overhead, codeword coverage, and post-FEC BER.",
@@ -47,8 +55,9 @@ _add("err_insert_bits err_insert_burst", "BERT PPG", "TX bits after reference co
      "flips bits after preserving the error-detector reference; burst mode groups flips consecutively.")
 
 _add("tx_rj_rms_fs", "TX PLL", "serializer time base",
-     "aggiunge TIE gaussiano RMS indipendente a ogni UI; allarga le code senza limite deterministico.",
-     "adds independent Gaussian RMS TIE to each UI; it broadens unbounded tails.", "σUI=RJfs·10⁻¹⁵/UI")
+     "aggiunge TIE gaussiano RMS indipendente a ogni UI; allarga le code senza limite deterministico. Sul Q-scale le code diventano rette di pendenza 1/σ e il TJ estrapola come TJ(p)=2·Q_p·σ+DJ(δδ); gli RJ indipendenti si sommano in quadratura, σ_tot=√Σσᵢ² (Derickson & Müller §2.4-2.5).",
+     "adds independent Gaussian RMS TIE to each UI; it broadens unbounded tails. On the Q scale the tails become straight lines of slope 1/σ and TJ extrapolates as TJ(p)=2·Q_p·σ+DJ(δδ); independent RJs add in quadrature, σ_tot=√Σσᵢ² (Derickson & Müller §2.4-2.5).",
+     "σUI=RJfs·10⁻¹⁵/UI; TJ(p)=2Q_p·σ+DJ(δδ)")
 _add("tx_pj_amp_ui tx_pj_freq_mhz", "TX PLL", "serializer time base",
      "imposta ampiezza e frequenza del tono sinusoidale di jitter; deve apparire alla stessa frequenza nello spettro TIE.",
      "sets sinusoidal jitter amplitude and frequency; the same tone must appear in the TIE spectrum.", "TIE=A·sin(2πfjt)")

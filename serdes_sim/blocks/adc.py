@@ -32,9 +32,13 @@ class AdcResult:
 
 def run_adc(cfg, v_ctle_v, rng) -> AdcResult:
     M = cfg.adc_interleaves
-    lane_gain = centered_rms_pattern(rng, M, cfg.adc_gain_mismatch_rms)
-    lane_offset_v = centered_rms_pattern(rng, M, cfg.adc_offset_mismatch_rms_v)
-    lane_skew_s = centered_rms_pattern(rng, M, cfg.adc_skew_mismatch_rms_fs * 1e-15)
+    # i mismatch fra i lane peggiorano ai corner di processo e con |ΔT|
+    mm = cfg.pvt_factors["mismatch"]
+    lane_gain = centered_rms_pattern(rng, M, cfg.adc_gain_mismatch_rms * mm)
+    lane_offset_v = centered_rms_pattern(
+        rng, M, cfg.adc_offset_mismatch_rms_v * mm)
+    lane_skew_s = centered_rms_pattern(
+        rng, M, cfg.adc_skew_mismatch_rms_fs * 1e-15 * mm)
 
     n_adc = cfg.n_symbols * cfg.adc_sps
     adc_n = np.arange(n_adc)

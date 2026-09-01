@@ -50,6 +50,7 @@ class LiveBench:
         self.frames_miscorrected = 0
         self.symbols_corrected = 0
         self.link_down_records = 0
+        self.sync_losses = 0        # transizioni lock→no-lock (ED)
         # L2 (pattern eth)
         self.l2_expected = 0
         self.l2_detected = 0
@@ -170,6 +171,9 @@ class LiveBench:
             with self._lock:
                 if cfg != self._cfg:
                     continue  # config cambiata a metà record: scarta
+                if (self.latest is not None and self.latest.link_up
+                        and not r.link_up):
+                    self.sync_losses += 1     # SYNC LOSS stile ED
                 self.latest = r
                 self.records += 1
                 if inject:
@@ -289,6 +293,7 @@ class LiveBench:
                      else 7,
             },
             "link_down_records": self.link_down_records,
+            "sync_losses": self.sync_losses,
             "injected_total": self.injected_total,
             "l2": {
                 "active": bool(self._cfg.pattern == "eth"),

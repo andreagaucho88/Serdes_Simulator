@@ -134,6 +134,14 @@ def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter=""):
     wave = np.asarray(get_wave(sim, node), dtype=float)
     wave, ref_label = _bt4_reference(wave, cfg, ref_filter)
     meas = eye_measures(sim, cfg, node, ref_filter=ref_filter)
+    if node == "pfiber" and sim.spec.bits_per_symbol == 2:
+        from serdes_sim.blocks.metrics import tdecq_report
+        try:
+            meas["tdecq"] = J(tdecq_report(
+                sim.optical.P_fiber_w, sim.pam4_symbols, sim.spec,
+                cfg.analog_sps, cfg.symbol_rate_hz, cfg.fs_analog_hz))
+        except Exception:
+            meas["tdecq"] = None
     if meas.get("inverted"):
         # funzione "invert" da scope: tracce e misure nello stesso dominio
         wave = -wave
@@ -687,6 +695,18 @@ def agc_panel(sim, cfg):
     })
 
 
+def _tdecq_for(sim, cfg):
+    if sim.optical is None or sim.spec.bits_per_symbol != 2:
+        return None
+    from serdes_sim.blocks.metrics import tdecq_report
+    try:
+        return J(tdecq_report(sim.optical.P_fiber_w, sim.pam4_symbols,
+                              sim.spec, cfg.analog_sps, cfg.symbol_rate_hz,
+                              cfg.fs_analog_hz))
+    except Exception:
+        return None
+
+
 def optical_panel(sim, cfg):
     if sim.optical is None:
         return {"inactive": True,
@@ -695,6 +715,7 @@ def optical_panel(sim, cfg):
     o = sim.optical
     f = np.linspace(0, 1.5 * cfg.nyquist_hz, 800)
     return J({
+        "tdecq": _tdecq_for(sim, cfg),
         "modulator": o.modulator,
         "laser_type": cfg.laser_type,
         "fiber_type": cfg.fiber_type,
