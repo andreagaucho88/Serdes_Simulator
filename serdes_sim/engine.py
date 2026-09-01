@@ -178,6 +178,10 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
             return ethernet.scramble(bits)
         if cfg.pattern == "ssprq_like":
             return stimulus.ssprq_like_bits(n, spec)
+        if cfg.pattern == "ssprq":
+            return stimulus.ssprq_bits(n, spec)
+        if cfg.pattern == "custom_hex":
+            return stimulus.custom_hex_bits(cfg.custom_pattern_hex, n)
         if cfg.pattern == "clock2":
             return stimulus.clock_pattern_bits(n, spec, 1)
         if cfg.pattern == "clock8":

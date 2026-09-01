@@ -1171,6 +1171,39 @@ def cmis_panel(sim, cfg):
 
 
 def stimulus_panel(sim, cfg):
+    if cfg.pattern == "ssprq":
+        pattern_info = {
+            "kind": "ssprq", "name": "SSPRQ",
+            "period_symbols": stimulus.SSPRQ_PERIOD_SYMBOLS,
+            "period_bits": 2 * stimulus.SSPRQ_PERIOD_SYMBOLS,
+            "sha256": stimulus.SSPRQ_SYMBOL_SHA256,
+            "source": stimulus.SSPRQ_SOURCE_URL,
+            "exact": True,
+        }
+    elif cfg.pattern == "custom_hex":
+        normalized = stimulus.normalize_custom_hex(cfg.custom_pattern_hex)
+        pattern_info = {
+            "kind": "custom_hex", "name": "USER HEX",
+            "period_symbols": (len(normalized) * 4
+                               // sim.spec.bits_per_symbol),
+            "period_bits": len(normalized) * 4,
+            "period_bytes": len(normalized) // 2,
+            "normalized_hex": normalized,
+            "sha256": stimulus.custom_hex_sha256(normalized),
+            "exact": False,
+        }
+    elif cfg.pattern == "ssprq_like":
+        pattern_info = {
+            "kind": "ssprq_like", "name": "SSPRQ-like",
+            "exact": False,
+        }
+    else:
+        pattern_info = {
+            "kind": cfg.pattern,
+            "name": (f"PRBS{cfg.prbs_order}"
+                     if cfg.pattern == "prbs" else cfg.pattern),
+            "exact": cfg.pattern == "prbs",
+        }
     return J({
         "symbols": sim.pam4_symbols[:64],
         "levels": sim.spec.levels_array,
@@ -1183,6 +1216,7 @@ def stimulus_panel(sim, cfg):
         "prbs_zeros": 2 ** (cfg.prbs_order - 1) - 1,
         "prbs_poly": stimulus.PRBS_POLY_LABEL[cfg.prbs_order],
         "bps": sim.spec.bits_per_symbol,
+        "pattern_info": pattern_info,
     })
 
 

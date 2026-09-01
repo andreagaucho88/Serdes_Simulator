@@ -41,7 +41,7 @@ def measurement_contracts(cfg, active_profile=None, active_meta=None):
         row("tdecq", "TDECQ", "IEEE 802.3", "121.8.5.3",
             "optical PMD measurement point after the reference receiver",
             optical_pam4, "clause-structured", "not-assessed",
-            "BT4 0.5·Bd, 5-tap reference FFE and DER target are implemented; calibration, exact clause pattern and golden instrument correlation remain open."),
+            "BT4 0.5·Bd, 5-tap reference FFE, DER target, and the public Clause 120 SSPRQ vector are implemented; forcing that pattern through the complete acquisition/calibration procedure and golden instrument correlation remain open."),
         row("sndr", "SNDR", "IEEE 802.3", "120D.3.1 / profile clause",
             "specified electrical or optical transmitter test point",
             cfg.modulation == "PAM4", "declared-proxy", "not-assessed",

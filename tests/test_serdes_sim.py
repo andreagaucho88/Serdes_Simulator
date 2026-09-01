@@ -1115,7 +1115,51 @@ def test_livebench_accumulates_and_resets():
     assert b.latest is None
 
 
-# --- SSPRQ-like e CMIS-lite --------------------------------------------------
+# --- SSPRQ bit-exact, pattern editor e CMIS-lite -----------------------------
+
+def test_ssprq_exact_public_clause120_vector():
+    """Golden vector: confronto sull'INTERO periodo pubblico IEEE, non un prefix."""
+    import hashlib
+    from serdes_sim.blocks.ssprq_data import (SSPRQ_PERIOD_SYMBOLS,
+                                               SSPRQ_SYMBOL_SHA256)
+    from serdes_sim.blocks.stimulus import ssprq_symbol_indices
+    symbols = ssprq_symbol_indices()
+    assert len(symbols) == SSPRQ_PERIOD_SYMBOLS == 65535
+    assert hashlib.sha256(symbols.tobytes()).hexdigest() == SSPRQ_SYMBOL_SHA256
+    assert np.bincount(symbols, minlength=4).tolist() == [15215, 17553, 17552, 15215]
+    repeated = ssprq_symbol_indices(SSPRQ_PERIOD_SYMBOLS + 7)
+    assert np.array_equal(repeated[-7:], symbols[:7])
+
+
+def test_ssprq_bits_reproduce_official_pam4_symbols():
+    from serdes_sim.blocks.stimulus import (PAM4_GRAY, ssprq_bits,
+                                            ssprq_symbol_indices,
+                                            symbols_from_bits)
+    bits = ssprq_bits(2 * 4096, PAM4_GRAY)
+    mapped = symbols_from_bits(bits, PAM4_GRAY)
+    expected = PAM4_GRAY.levels_array[ssprq_symbol_indices(4096)]
+    assert np.array_equal(mapped, expected)
+
+
+def test_ssprq_exact_runs_and_requires_clause_mapping():
+    r = simulate(LinkConfig(pattern="ssprq"), depth="light")
+    assert (r.occupancy > 0).all()
+    assert LinkConfig(pattern="ssprq", modulation="NRZ").validate()
+    assert LinkConfig(pattern="ssprq", pam4_mapping="binary").validate()
+    assert LinkConfig(pattern="ssprq", fec_mode="kp4").validate()
+
+
+def test_custom_hex_pattern_is_msb_first_cyclic_and_validated():
+    from serdes_sim.blocks.stimulus import custom_hex_bits, normalize_custom_hex
+    assert normalize_custom_hex("0xA5_c3:00") == "A5C300"
+    assert custom_hex_bits("A5", 12).tolist() == [1, 0, 1, 0, 0, 1, 0, 1,
+                                                     1, 0, 1, 0]
+    assert LinkConfig(custom_pattern_hex="ABC").validate()
+    assert LinkConfig(custom_pattern_hex="ZZ").validate()
+    assert LinkConfig(pattern="custom_hex", fec_mode="kp4").validate()
+    r = simulate(LinkConfig(pattern="custom_hex",
+                            custom_pattern_hex="1B1BE4E4"), depth="light")
+    assert len(r.tx_bits) == 2 * r.cfg.n_symbols
 
 def test_ssprq_like_pattern_runs_and_stresses():
     r = simulate(LinkConfig(pattern="ssprq_like"), depth="light")

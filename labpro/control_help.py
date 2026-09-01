@@ -32,6 +32,10 @@ _add("prbs_order pattern", "PPG", "PCS/PPG output",
      "sceglie la sequenza realmente serializzata. Periodo, run length e spettro modificano ISI, DDJ e pattern lock.",
      "selects the sequence actually serialized. Period, run length, and spectrum change ISI, DDJ, and pattern lock.",
      "PRBSn period=2ⁿ−1")
+_add("custom_pattern_hex", "PPG pattern editor", "PCS/PPG output",
+     "definisce una sequenza utente di 1..4096 byte esadecimali, ripetuta ciclicamente e serializzata MSB-first. Spazi, underscore e due punti sono solo separatori. È un pattern di laboratorio, non un pattern di clause.",
+     "defines a user sequence of 1..4096 hexadecimal bytes, repeated cyclically and serialized MSB first. Spaces, underscores, and colons are visual separators only. It is a lab pattern, not a clause pattern.",
+     "period = 8·Nbyte bit", "pattern = custom_hex")
 _add("modulation pam4_mapping", "Mapper", "mapper output",
      "sceglie livelli e label di bit; Gray limita a un bit l'errore fra livelli adiacenti, ma non migliora l'occhio analogico.",
      "selects levels and bit labels; Gray limits adjacent-level errors to one bit but does not improve the analog eye.")
@@ -195,4 +199,3 @@ _add("cdr_mode cdr_bw cdr_damping rx_ppm_offset", "CDR", "recovered sampling clo
 _add("fse_taps dfe_taps training_start training_stop", "RX DSP", "post-ADC equalization",
      "imposta memoria e finestra di adattamento; la validation resta separata dal training per evitare una BER ottimistica.",
      "sets equalizer memory and adaptation window; validation stays separate from training to avoid optimistic BER.")
-

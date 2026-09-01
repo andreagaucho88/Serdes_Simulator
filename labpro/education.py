@@ -38,10 +38,10 @@ TOPICS = [
         "R_b = R_s·log₂(M) ;  PRBS-n: periodo 2ⁿ−1",
         "Occupazione dei livelli (¼ ciascuno su PRBS lunga), matrice delle transizioni, spettro sinc² dello stimolo.",
         "Level occupancy (¼ each on a long PRBS), transition matrix, sinc² stimulus spectrum.",
-        "Passa da PRBS13 a clock2: lo spettro collassa in una riga a f_baud/2 e il CDR ha transizioni a ogni UI. Poi prova SSPRQ-like e guarda il DCA.",
-        "Switch from PRBS13 to clock2: the spectrum collapses to one line at f_baud/2 and the CDR gets a transition every UI. Then try SSPRQ-like on the DCA.",
-        "I pattern sono didattici: lo SSPRQ vero ha segmenti e seed prescritti dalla clause; qui il bit ordering non è normativo.",
-        "Patterns are educational: real SSPRQ has clause-prescribed segments and seeds; bit ordering here is not normative.",
+        "Passa da PRBS13 a clock2: lo spettro collassa in una riga a f_baud/2 e il CDR ha transizioni a ogni UI. Poi prova il vettore SSPRQ e guarda il DCA.",
+        "Switch from PRBS13 to clock2: the spectrum collapses to one line at f_baud/2 and the CDR gets a transition every UI. Then try the SSPRQ vector on the DCA.",
+        "SSPRQ riproduce bit per bit il vettore machine-readable pubblico di Clause 120; questa esattezza del pattern, da sola, non rende normativa la misura DCA/TDECQ.",
+        "SSPRQ reproduces the public Clause 120 machine-readable vector bit for bit; pattern exactness alone does not make the DCA/TDECQ measurement normative.",
         "ECEN 720",
         deep_it=("PAM4 dimezza il baud rate a parità di bit rate — 112 Gb/s in 56 GBd — e questo vale ~10 dB di "
                  "loss di canale in meno a Nyquist. Il prezzo: 3 occhi alti ⅓, cioè ~9.5 dB di SNR in meno, più la "
@@ -449,8 +449,8 @@ TOPICS = [
         "Per-lane MSB/LSB BER/SER, temporal error map, burst analysis (gap ≤ 8), CL95 vs target.",
         "Con BER 0, quanti bit servono per dichiarare < 1e-9 al 95%? Usa il gating: 3e9 bit. È il tempo-costo di ogni misura seria.",
         "With zero errors, how many bits to claim < 1e-9 at 95%? Use gating: 3e9 bits. That is the time cost of any serious measurement.",
-        "Un solo lane; niente pattern editor, BUJ calibrato al fs, o de-emphasis di stress sul PPG di test.",
-        "Single lane; no pattern editor, fs-calibrated BUJ, or stress de-emphasis on the test PPG.",
+        "Un solo lane; l'editor HEX è MSB-first ma mancano de-emphasis di stress programmabile e calibrazione completa del stressed eye.",
+        "Single lane; the HEX editor is MSB-first, but programmable stress de-emphasis and complete stressed-eye calibration are missing.",
         "ECEN 720",
         deep_it=("La statistica è spietata: senza errori osservati puoi solo dire BER < 3/N al 95% — misurare "
                  "1e-15 'vero' richiede giorni. Per questo il settore misura BER pre-FEC alte (1e-4/1e-6) e "

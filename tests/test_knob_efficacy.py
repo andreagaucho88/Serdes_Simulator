@@ -27,6 +27,8 @@ KNOBS = {
     "analog_sps": (8, {}, {"driver"}, set()),
     "n_symbols": (6000, {}, {"driver"}, set()),
     "prbs_order": (15, {}, {"driver"}, set()),
+    "custom_pattern_hex": ("0123456789ABCDEF", {"pattern": "custom_hex"},
+                           {"driver"}, set()),
     "modulation": ("NRZ", {}, {"driver"}, set()),
     "pam4_mapping": ("binary", {}, {"driver"}, set()),
     "fec_mode": ("kp4", {}, {"driver"}, set()),

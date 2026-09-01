@@ -16,7 +16,8 @@ class LinkConfig:
     analog_sps: int = 16
     n_symbols: int = 8191
     prbs_order: int = 13          # 7, 9, 11, 13, 15, 23, 31
-    pattern: str = "prbs"         # prbs | clock2 | clock8 | eth | ssprq_like
+    pattern: str = "prbs"         # prbs | ssprq | custom_hex | clock* | eth
+    custom_pattern_hex: str = "A5C3F00F"  # byte PPG utente, trasmessi MSB-first
     l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
     l2_ipg_bytes: int = 12        # inter-packet gap (rate control del PPG)
     l2_streams: int = 1           # generatore multi-stream stile Xena (1..4)
@@ -288,10 +289,28 @@ class LinkConfig:
         if self.rx_ppm_offset != 0 and self.cdr_mode == "oracle":
             problems.append("con rx_ppm_offset l'oracle a fase fissa non è "
                             "definito: usa cdr_mode gardner o mm")
-        if self.pattern not in ("prbs", "clock2", "clock8", "eth", "ssprq_like"):
-            problems.append("pattern deve essere prbs/clock2/clock8/eth/ssprq_like")
-        if self.pattern in ("clock2", "clock8", "ssprq_like") and self.fec_mode != "none":
-            problems.append("il FEC in-path richiede un payload (prbs o eth)")
+        patterns = ("prbs", "ssprq", "custom_hex", "clock2", "clock8",
+                    "eth", "ssprq_like")
+        if self.pattern not in patterns:
+            problems.append("pattern PPG non supportato")
+        compact_hex = ("".join(c for c in self.custom_pattern_hex
+                               if not c.isspace() and c not in "_:")
+                       if isinstance(self.custom_pattern_hex, str) else "")
+        if compact_hex.lower().startswith("0x"):
+            compact_hex = compact_hex[2:]
+        if (not compact_hex or len(compact_hex) % 2
+                or len(compact_hex) > 8192
+                or any(c not in "0123456789abcdefABCDEF"
+                       for c in compact_hex)):
+            problems.append("custom_pattern_hex: servono 1..4096 byte HEX "
+                            "(numero pari di cifre; separatori spazio/_/: ammessi)")
+        if self.pattern == "ssprq" and (
+                self.modulation != "PAM4" or self.pam4_mapping != "gray"):
+            problems.append("SSPRQ di Clause 120 richiede PAM4 Gray")
+        if self.pattern in ("clock2", "clock8", "ssprq", "ssprq_like",
+                            "custom_hex") and self.fec_mode != "none":
+            problems.append("il FEC in-path richiede un payload prbs/eth; "
+                            "i pattern PPG di test devono restare bit-exact")
         if not (8 <= self.l2_ipg_bytes <= 2000):
             problems.append("l2_ipg_bytes fuori range [8, 2000]")
         if not (64 <= self.l2_frame_bytes <= 1024):

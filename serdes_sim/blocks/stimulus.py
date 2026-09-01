@@ -7,9 +7,16 @@ polinomi ITU-T O.150 / uso comune indicati accanto ai tap.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+from functools import lru_cache
+import hashlib
+import zlib
 
 import numpy as np
+
+from .ssprq_data import (SSPRQ_PACKED_ZLIB_B85, SSPRQ_PERIOD_SYMBOLS,
+                          SSPRQ_SOURCE_URL, SSPRQ_SYMBOL_SHA256)
 
 PRBS13_PERIOD = 2 ** 13 - 1
 
@@ -129,6 +136,90 @@ def generate_stimulus(n_symbols: int, prbs_order: int,
                       spec: ModulationSpec) -> np.ndarray:
     bits = prbs_bits(prbs_order, spec.bits_per_symbol * n_symbols)
     return symbols_from_bits(bits, spec)
+
+
+@lru_cache(maxsize=1)
+def _ssprq_period_symbols() -> np.ndarray:
+    """Decode and verify the public IEEE Clause 120 SSPRQ vector."""
+    packed = zlib.decompress(base64.b85decode(SSPRQ_PACKED_ZLIB_B85))
+    expected_bytes = (SSPRQ_PERIOD_SYMBOLS + 3) // 4
+    if len(packed) != expected_bytes:
+        raise RuntimeError("vettore SSPRQ corrotto: lunghezza packed inattesa")
+    p = np.frombuffer(packed, dtype=np.uint8)
+    symbols = np.empty(len(p) * 4, dtype=np.uint8)
+    symbols[0::4] = (p >> 6) & 0x03
+    symbols[1::4] = (p >> 4) & 0x03
+    symbols[2::4] = (p >> 2) & 0x03
+    symbols[3::4] = p & 0x03
+    symbols = symbols[:SSPRQ_PERIOD_SYMBOLS]
+    digest = hashlib.sha256(symbols.tobytes()).hexdigest()
+    if digest != SSPRQ_SYMBOL_SHA256:
+        raise RuntimeError("vettore SSPRQ corrotto: SHA-256 inatteso")
+    symbols.flags.writeable = False
+    return symbols
+
+
+def ssprq_symbol_indices(n_symbols: int = SSPRQ_PERIOD_SYMBOLS) -> np.ndarray:
+    """IEEE 802.3 Clause 120 SSPRQ, exact public 65,535-symbol vector.
+
+    Symbol indices 0..3 are transmitted in the order of the official
+    machine-readable extract.  Requests longer than one period repeat the
+    vector cyclically; shorter acquisitions are an exact prefix.
+    """
+    if n_symbols < 0:
+        raise ValueError("n_symbols deve essere >= 0")
+    period = _ssprq_period_symbols()
+    if n_symbols <= len(period):
+        return period[:n_symbols].copy()
+    return np.resize(period, n_symbols)
+
+
+def ssprq_bits(n_bits: int, spec: ModulationSpec) -> np.ndarray:
+    """Serialize exact Clause 120 SSPRQ symbols through a PAM4 mapper."""
+    if spec.name != "PAM4" or spec.bits_per_symbol != 2:
+        raise ValueError("SSPRQ di Clause 120 richiede PAM4")
+    n_symbols = (n_bits + spec.bits_per_symbol - 1) // spec.bits_per_symbol
+    indices = ssprq_symbol_indices(n_symbols)
+    return spec.bit_array[indices].reshape(-1)[:n_bits]
+
+
+def normalize_custom_hex(value: str) -> str:
+    """Normalize a user PPG byte sequence; transmission is MSB first.
+
+    Spaces, underscores and colons are accepted as visual separators.  The
+    normalized form is an even number of uppercase hexadecimal digits.
+    """
+    if not isinstance(value, str):
+        raise ValueError("pattern HEX deve essere una stringa")
+    compact = "".join(c for c in value if not c.isspace() and c not in "_:")
+    if compact.lower().startswith("0x"):
+        compact = compact[2:]
+    if not compact:
+        raise ValueError("pattern HEX vuoto")
+    if len(compact) % 2:
+        raise ValueError("pattern HEX deve contenere byte completi (numero pari di cifre)")
+    if len(compact) > 8192:
+        raise ValueError("pattern HEX supera 4096 byte")
+    if any(c not in "0123456789abcdefABCDEF" for c in compact):
+        raise ValueError("pattern HEX contiene caratteri non esadecimali")
+    return compact.upper()
+
+
+def custom_hex_bits(value: str, n_bits: int) -> np.ndarray:
+    """Repeat a user-defined hexadecimal byte sequence, MSB first."""
+    compact = normalize_custom_hex(value)
+    one_period = np.unpackbits(np.frombuffer(bytes.fromhex(compact),
+                                              dtype=np.uint8))
+    if n_bits < 0:
+        raise ValueError("n_bits deve essere >= 0")
+    if n_bits == 0:
+        return np.empty(0, dtype=np.uint8)
+    return np.resize(one_period, n_bits).astype(np.uint8, copy=False)
+
+
+def custom_hex_sha256(value: str) -> str:
+    """Digest of the normalized user pattern bytes, for the PPG readout."""
+    return hashlib.sha256(bytes.fromhex(normalize_custom_hex(value))).hexdigest()
 
 
 def ssprq_like_bits(n_bits: int, spec: ModulationSpec) -> np.ndarray:

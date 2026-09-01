@@ -240,7 +240,9 @@ function cfgChips() {
   $("#brand-sub").textContent = `PRO · ${L("BANCO", "BENCH")} ${medium} · ${gbs.toFixed(gbs >= 100 ? 0 : 1)} Gb/s`;
   $("#chip-rate").textContent = (S.cfg.symbol_rate_hz / 1e9).toFixed(3) + " GBd · " + gbs.toFixed(1) + " Gb/s";
   const pat = S.cfg.pattern === "prbs" ? "PRBS" + S.cfg.prbs_order
-    : (S.cfg.pattern === "eth" ? "ETH " + S.cfg.l2_frame_bytes + "B" : S.cfg.pattern);
+    : (S.cfg.pattern === "eth" ? "ETH " + S.cfg.l2_frame_bytes + "B"
+      : (S.cfg.pattern === "custom_hex" ? "USER HEX " + Math.floor((S.cfg.custom_pattern_hex || "").replace(/[^0-9a-f]/gi, "").length / 2) + "B"
+        : S.cfg.pattern.toUpperCase()));
   $("#chip-mod").textContent = S.cfg.modulation + (S.cfg.modulation === "PAM4" ? " " + S.cfg.pam4_mapping : "") + " · " + pat;
   const fecEl = $("#chip-fec");
   fecEl.textContent = S.cfg.fec_mode === "none" ? "FEC off" : "FEC " + S.cfg.fec_mode.toUpperCase() + " in-path";
@@ -396,8 +398,8 @@ const PARAMS = {
   fiber_type: { l: "Tipo fibra", type: "select", opts: ["smf", "mmf"], names: { smf: "SMF", mmf: "MMF" } },
   mmf_modal_bw_mhz_km: { l: "BW·km MMF", u: "MHz·km", min: 500, max: 10000, step: 100 },
   n_symbols: { l: "Simboli/record", type: "select", opts: [4095, 6143, 8191, 12287, 16383] },
-  pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "ssprq_like", "clock2", "clock8", "eth"],
-    names: { prbs: "PRBS (PRBSnQ per PAM4)", ssprq_like: "SSPRQ-like (stress, non-clause)", clock2: "clock 0101", clock8: "clock 4+4", eth: "Ethernet frames (L2)" } },
+  pattern: { l: "Pattern (PPG)", type: "select", opts: ["prbs", "ssprq", "custom_hex", "ssprq_like", "clock2", "clock8", "eth"],
+    names: { prbs: "PRBS (PRBSnQ per PAM4)", ssprq: "SSPRQ Clause 120 (bit-exact)", custom_hex: "HEX utente (MSB-first)", ssprq_like: "SSPRQ-like legacy (proxy)", clock2: "clock 0101", clock8: "clock 4+4", eth: "Ethernet frames (L2)" } },
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
   l2_ipg_bytes: { l: "IPG (rate control)", u: "B", min: 8, max: 2000, step: 4 },
   l2_streams: { l: "Stream (Xena)", type: "select", opts: [1, 2, 3, 4] },
@@ -511,8 +513,10 @@ const OPTION_EN = {
   "single-ended N": "single-ended N", "MZM push-pull": "push-pull MZM",
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
   "VCSEL direct": "direct VCSEL",
+  "HEX utente (MSB-first)": "user HEX (MSB first)",
+  "SSPRQ-like legacy (proxy)": "legacy SSPRQ-like (proxy)",
 };
-const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "custom_pattern_hex": "User HEX pattern", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
 Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
 const _flushCfg = debounce(() => {
@@ -1468,27 +1472,66 @@ PANEL_DEFS.berlive = {
 /* --- pannelli parametrici + plot --- */
 PANEL_DEFS.stimulus = {
   title: "PPG — Pulse Pattern Generator", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.ro = CE("div"); p.body.appendChild(p.ro); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
+  make(p) {
+    p.body.innerHTML = "";
+    p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"]));
+    p.editor = CE("div", "pattern-editor");
+    const editorHead = CE("div", "pattern-editor-head", `<label>${L("Pattern HEX utente · byte MSB-first", "User HEX pattern · MSB-first bytes")}</label>`);
+    const help = controlHelpButton("custom_pattern_hex"); help.style.position = "static"; editorHead.appendChild(help);
+    p.hexInput = CE("input"); p.hexInput.type = "text"; p.hexInput.maxLength = 12288;
+    p.hexInput.spellcheck = false; p.hexInput.placeholder = "A5 C3 F0 0F";
+    p.hexApply = CE("button", "btn btn-accent", L("APPLICA HEX", "APPLY HEX"));
+    p.hexStatus = CE("span", "sub");
+    const applyHex = async () => {
+      try {
+        const out = await POST("/api/config", { updates: { custom_pattern_hex: p.hexInput.value } });
+        S.cfg = out.cfg; cfgChips(); notify("config");
+        p.hexStatus.textContent = L("applicato · ripetizione ciclica", "applied · cyclic repeat");
+      } catch (e) { toast(e.message); }
+    };
+    p.hexApply.onclick = applyHex;
+    p.hexInput.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); applyHex(); } };
+    p.editor.append(editorHead, p.hexInput, p.hexApply, p.hexStatus);
+    p.body.appendChild(p.editor);
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
+    p.syncEditor = () => {
+      p.editor.hidden = S.cfg.pattern !== "custom_hex";
+      if (document.activeElement !== p.hexInput) p.hexInput.value = S.cfg.custom_pattern_hex || "";
+    };
+    p.syncEditor(); this.refetch(p);
+  },
   async refetch(p) {
     const d = await GET("/api/panel/stimulus"); acqBadge(p, d);
     p.ro.innerHTML = "";
+    const info = d.pattern_info || {};
     const clauseName = (() => {
+      if (S.cfg.pattern === "ssprq") return ["SSPRQ", "IEEE 802.3 Clause 120.5.11.2.3"];
+      if (S.cfg.pattern === "custom_hex") return ["USER HEX", L("sequenza PPG di laboratorio · non-clause", "lab PPG sequence · non-clause")];
       if (S.cfg.pattern === "ssprq_like") return ["SSPRQ-like", L("meccanismo di stress, NON lo SSPRQ di clause (seed/segmenti prescritti mancanti)", "stress mechanism, NOT clause SSPRQ (prescribed seeds/segments missing)")];
       if (S.cfg.pattern !== "prbs") return null;
       if (S.cfg.modulation === "PAM4" && +S.cfg.prbs_order === 13) return ["PRBS13Q = QPRBS13", "IEEE 802.3 Clause 120.5.11.2.1"];
       if (S.cfg.modulation === "PAM4" && +S.cfg.prbs_order === 31) return ["PRBS31Q", "IEEE 802.3 Clause 120.5.11.2.2"];
       return [`PRBS${S.cfg.prbs_order}`, "ITU-T O.150 / " + L("uso comune", "common use")];
     })();
-    p.ro.appendChild(readout([
-      ...(clauseName ? [{ l: L("pattern di clause", "clause pattern"), v: clauseName[0], cls: clauseName[0].startsWith("SSPRQ") ? "warn" : "ok", sub: clauseName[1], title: L("PRBS13Q/PRBS31Q: costruzione bit-exact (polinomio di clause + accoppiamento Gray dei bit); la sequenza è unica a meno di shift ciclico — il seed non è normativo.", "PRBS13Q/PRBS31Q: bit-exact construction (clause polynomial + Gray bit pairing); the sequence is unique up to a cyclic shift — the seed is not normative.") }] : []),
-      { l: `PRBS${d.prbs} ${L("periodo", "period")}`, v: Number(d.prbs_period).toLocaleString(), sub: d.prbs_poly },
-      { l: L("bilanciamento su un periodo", "full-period balance"), v: `${Number(d.prbs_ones).toLocaleString()} / ${Number(d.prbs_zeros).toLocaleString()}`, sub: L("uno / zero (differenza esatta: 1)", "ones / zeros (exact difference: 1)") },
-    ]));
+    const rows = [];
+    if (clauseName) rows.push({ l: S.cfg.pattern === "custom_hex" ? L("pattern PPG", "PPG pattern") : L("pattern di clause", "clause pattern"), v: clauseName[0], cls: (S.cfg.pattern === "ssprq_like" || S.cfg.pattern === "custom_hex") ? "warn" : "ok", sub: clauseName[1], title: L("SSPRQ usa l'intero vettore machine-readable IEEE; PRBS13Q/31Q usano polinomio e mapping Gray. L'esattezza del pattern non implica conformità della misura.", "SSPRQ uses the complete IEEE machine-readable vector; PRBS13Q/31Q use the clause polynomial and Gray mapping. Pattern exactness does not imply measurement compliance.") });
+    if (S.cfg.pattern === "ssprq") {
+      rows.push({ l: L("periodo ufficiale", "official period"), v: Number(info.period_symbols).toLocaleString() + " sym", sub: Number(info.period_bits).toLocaleString() + " bit" });
+      rows.push({ l: "SHA-256", v: (info.sha256 || "").slice(0, 16) + "…", sub: L("65.535 indici simbolo verificati", "65,535 verified symbol indices"), title: info.source || "" });
+    } else if (S.cfg.pattern === "custom_hex") {
+      rows.push({ l: L("periodo utente", "user period"), v: `${info.period_bytes || 0} B`, sub: `${info.period_bits || 0} bit · ${info.period_symbols || 0} sym` });
+      rows.push({ l: "SHA-256", v: (info.sha256 || "").slice(0, 16) + "…", sub: L("byte normalizzati, MSB-first", "normalized bytes, MSB first") });
+    } else if (S.cfg.pattern === "prbs") {
+      rows.push({ l: `PRBS${d.prbs} ${L("periodo", "period")}`, v: Number(d.prbs_period).toLocaleString(), sub: d.prbs_poly });
+      rows.push({ l: L("bilanciamento su un periodo", "full-period balance"), v: `${Number(d.prbs_ones).toLocaleString()} / ${Number(d.prbs_zeros).toLocaleString()}`, sub: L("uno / zero (differenza esatta: 1)", "ones / zeros (exact difference: 1)") });
+    }
+    p.ro.appendChild(readout(rows));
     const lay = PL({ height: 210, showlegend: false });
     mergeAxis(lay, "xaxis", { title: { text: "simbolo", font: { size: 10 } } });
     plot(p.plotEl, [{ y: d.symbols, line: { shape: "hv", color: COL.dg } }], lay);
   },
-  onConfig(p) { syncParams(p.body); this.refetch(p); },
+  onConfig(p) { syncParams(p.body); p.syncEditor(); this.refetch(p); },
 };
 
 PANEL_DEFS.tx = {
@@ -2018,7 +2061,7 @@ PANEL_DEFS.instruments = {
       ["Keysight FlexDCA", "SE P/N + differential/common-mode, simultaneous waveforms", L("implementato: CH A-D coerenti; quick-set P/N/Diff/CM; marker DCA dinamici sui reference plane della catena", "implemented: coherent CH A-D; P/N/Diff/CM quick-set; dynamic DCA markers on chain reference planes"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Channels/channel-elect-diff-setup.htm"],
       ["Keysight FlexDCA", "color-grade eye, mask, levels, rise/fall", L("implementato come misura/proxy LabPro", "implemented as a LabPro measurement/proxy"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Eye-Mask-Mode/Advanced-Eye/a_adv_eye_toolbar.htm"],
       ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4; mancano Jn (J2/J9), decomposizione interferenze e de-embedding", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX; missing Jn (J2/J9), interference decomposition, de-embedding"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
-      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, error analysis burst/EFI; mancano pattern editor e SSPRQ bit-esatto di clause", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, burst/EFI error analysis; missing pattern editor and bit-exact clause SSPRQ"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
+      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, editor HEX MSB-first, SSPRQ ufficiale verificato ed error analysis burst/EFI; manca la calibrazione completa dello stressed eye", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, MSB-first HEX editor, verified official SSPRQ, and burst/EFI error analysis; complete stressed-eye calibration is missing"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit sul time-base: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); la misura ai crossing include correttamente anche DDJ", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (time-base audit: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); crossing measurements correctly include DDJ too"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM Annex 93A subset con PDF@DER e package dichiarato; PAM3/8/16 ed export IBIS-AMI completo restano fuori", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; Annex 93A COM subset with PDF@DER and declared package; PAM3/8/16 and full IBIS-AMI export remain outside"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
       ["Xena Ethernet Test Platform", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler/modifier per stream, impairment drop/misorder/duplicate e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduler/modifiers, drop/misorder/duplicate impairments, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
