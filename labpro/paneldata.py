@@ -205,7 +205,11 @@ def eye_measures(sim, cfg, node="vctle", ref_filter=""):
         okm = (cc > sps) & (cc < len(wave) - sps)
         if okm.sum() < 100:
             continue
-        c = float(abs(np.corrcoef(wave[cc[okm]], symbols[sub[okm]])[0, 1]))
+        ww, ss = wave[cc[okm]], symbols[sub[okm]]
+        # Vcm ideale è perfettamente costante: la correlazione 0/0 non è un
+        # errore dello Scope e non deve emettere RuntimeWarning.
+        c = (float(abs(np.corrcoef(ww, ss)[0, 1]))
+             if np.std(ww) > 1e-15 and np.std(ss) > 1e-15 else 0.0)
         if c > best_c:
             best_c, best_d = c, d_int
     if best_d:
@@ -325,8 +329,9 @@ def eye_measures(sim, cfg, node="vctle", ref_filter=""):
         h_fit, *_ = np.linalg.lstsq(Xv, yv, rcond=None)
         resid = yv - Xv @ h_fit
         p_max = float(np.max(np.abs(h_fit)))
-        sndr_db = float(10 * np.log10(p_max ** 2
+        sndr_db = (float(10 * np.log10(p_max ** 2
                                       / max(float(np.var(resid)), 1e-30)))
+                   if p_max > 1e-15 else None)
     except np.linalg.LinAlgError:
         sndr_db = None
     out = {"levels": stats, "eye_heights": heights,
@@ -931,6 +936,14 @@ def decisions_panel(sim, cfg):
         "q_per_eye": sim.snr_dfe["q_per_eye"],
         "ber_qmin_gaussian": sim.snr_dfe["ber_from_qmin_gaussian"],
         "ber_levels_gaussian": sim.snr_dfe["ber_gaussian_levels"],
+        # La BER contata sul record e quella dopo il decoder non vanno
+        # confuse con l'estrapolazione gaussiana dei cluster.
+        "ber_counted": sim.ber_post_dfe,
+        "post_fec_ber": (sim.fec_link.post_fec_ber
+                         if sim.fec_link is not None else None),
+        "fec_frames_uncorrectable": (
+            sim.fec_link.frames_uncorrectable
+            if sim.fec_link is not None else None),
         "gmi": sim.gmi_total, "gmi_per_bit": sim.gmi_per_bit,
         "bps": spec.bits_per_symbol,
     }

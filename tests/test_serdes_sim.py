@@ -925,15 +925,33 @@ def test_all_standard_profiles_represent_working_links():
     esterno). Audit richiesto dall'utente: prima di questo test 6 profili
     su 17 giravano sopra soglia (TIA a Z_T fissa che schiacciava il
     livello alto PAM4 → introdotto il VGA da ROSA)."""
+    from labpro.paneldata import decisions_panel, eye_measures
     from serdes_sim.config import STANDARD_PROFILES
+    recovered_pre_eq = 0
     for name, (cfg, _desc) in STANDARD_PROFILES.items():
         r = simulate(cfg, seed=42, depth="light")
         assert r.link_up, f"{name}: LINK DOWN"
+        # Lo Scope analogico e il detector sono piani diversi: i reach severi
+        # possono avere vCTLE chiuso, ma FSE/DFE deve recuperare un occhio
+        # numerico misurabile. Questa è la regressione del selettore standard.
+        pre = eye_measures(r, cfg, node="vctle")
+        q_final = min(r.snr_dfe["q_per_eye"])
+        assert q_final > 2.0, f"{name}: Q finale {q_final:.2f}"
+        if min(pre["eye_heights"]) < 0:
+            recovered_pre_eq += 1
+            assert q_final > min(pre["q_per_eye"]), name
+        detector = decisions_panel(r, cfg)
+        assert detector["ber_counted"] == r.ber_post_dfe
+        assert detector["post_fec_ber"] == (
+            r.fec_link.post_fec_ber if r.fec_link is not None else None)
         if r.fec_link is not None:
             assert r.fec_link.frames_uncorrectable == 0, name
             assert r.fec_link.post_fec_ber == 0.0, name
         else:
             assert r.ber_post_dfe < 5e-3, f"{name}: BER {r.ber_post_dfe:.1e}"
+    # Mantiene onesta la UI: il test deve includere davvero casi nei quali
+    # l'occhio pre-DSP è chiuso e viene recuperato, non solo link facili.
+    assert recovered_pre_eq >= 6
 
 
 def test_vga_tia_no_level_crush_at_high_power():
@@ -1299,6 +1317,52 @@ def test_dynamic_action_controls_are_redecorated_and_phase_apply_is_awaited():
     assert "decorateControls(p.host);" in source
     assert "await postConfigAndWait({ adc_phase_ui: best.adc_phase_ui });" in source
     assert 'updates: { pattern: "custom_hex", custom_pattern_hex:' in source
+
+
+def test_diagnostic_layout_never_overwrites_user_layout_and_stagger_is_cancelled():
+    """Le URL ?safe/?panels sono probe QA, non nuove preferenze utente; una
+    vista rapida non deve inoltre lasciare card dalla costruzione precedente."""
+    source = (Path(__file__).resolve().parent.parent /
+              "labpro/static/app.js").read_text(encoding="utf-8")
+    assert 'const CUSTOM_VIEW = "__custom__";' in source
+    assert source.count("_layoutPersistence = false;") == 2
+    assert "if (!_layoutPersistence || _buildingLayout) return;" in source
+    assert "const generation = ++_layoutGeneration;" in source
+    assert "if (generation !== _layoutGeneration) return;" in source
+    assert 'addPanelsStaggered(VIEWS[name] || VIEWS["Banco completo"], () =>' in source
+    # Scope P/N viene configurato nel callback, quando le due card esistono.
+    callback = source[source.index("function applyView(name)"):
+                      source.index("function saveLayout(")]
+    assert callback.index("addPanelsStaggered") < callback.index(
+        '[[scopes[0], "vp"], [scopes[1], "vn"]]')
+
+
+def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
+    """PPG, serializer/stress ed ED vivono nella sola console BERT, mentre
+    il cambio profilo attende un riscontro fisico con BER contata."""
+    source = (Path(__file__).resolve().parent.parent /
+              "labpro/static/app.js").read_text(encoding="utf-8")
+    bert = source[source.index("PANEL_DEFS.bert ="):
+                  source.index("PANEL_DEFS.l2 =")]
+    assert 'paramsBlock(["pattern", "prbs_order", "modulation"' in bert
+    assert 'paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui"' in bert
+    assert "BERT TX · SERIALIZER / JITTER / NOISE / P-N" in bert
+    assert "BERT RX · ERROR DETECTOR / ANALYZER" in bert
+    assert "openSource(" not in bert
+    assert '"BERT e traffico": ["chain", "bert", "l2"' in source
+    palette = source[source.index("const PALETTE ="):
+                     source.index("const VIEWS =")]
+    assert '["stimulus",' not in palette and '["serpll",' not in palette
+    assert '<a data-target="bert"><rect' in source
+    loader = source[source.index("async function loadNamedConfig"):
+                    source.index("const sci =")]
+    assert 'GET("/api/panel/decisions")' in loader
+    assert "h.ber_counted" in loader
+    assert "Applicazione e verifica del profilo" in loader
+    assert "CHIUSO → RECUPERATO DAL DSP" in source
+    assert "p._cfgVersion = (p._cfgVersion || 0) + 1;" in source
+    assert "function panelLoading(p, active)" in source
+    assert "i dati visibili appartengono al record precedente" in source
 
 
 def test_physics_audit_closes_current_record_invariants():

@@ -562,6 +562,26 @@ class ApiScope(Base):
             "channels": channels,
             "coherent": True,
             "running": running,
+            # Lo Scope mostra per definizione un piano analogico PRE-DSP.
+            # Allegare l'esito del detector evita che un occhio chiuso prima
+            # di FSE/DFE venga interpretato come link fisicamente fermo.
+            "link": paneldata.J({
+                "link_up": bool(sim.link_up),
+                "cdr_locked": (bool(sim.cdr.locked)
+                               if sim.cdr is not None else bool(sim.link_up)),
+                "pattern_locked": (bool(sim.cdr.pattern_locked)
+                                   if sim.cdr is not None else bool(sim.link_up)),
+                "q_min": (sim.snr_dfe["q_min"] if sim.link_up else None),
+                "q_per_eye": (sim.snr_dfe["q_per_eye"]
+                              if sim.link_up else None),
+                "ber_counted": (sim.ber_post_dfe if sim.link_up else None),
+                "fec_mode": cfg.fec_mode,
+                "post_fec_ber": (sim.fec_link.post_fec_ber
+                                 if sim.fec_link is not None else None),
+                "fec_frames_uncorrectable": (
+                    sim.fec_link.frames_uncorrectable
+                    if sim.fec_link is not None else None),
+            }),
             "_acquisition": {"seed": int(sim.seed), "depth": sim.depth,
                              "source": source_used, "records": records},
         })

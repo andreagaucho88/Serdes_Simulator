@@ -255,6 +255,9 @@ canvas.scope { width: 100%; display: block; background: #04070A;
   border: 1px solid rgba(126,147,162,.35); border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
 .acq-badge.on { color: var(--ok); border-color: rgba(62,207,142,.5); }
 .panel-err { color: var(--amber); font-size: 13px; margin-right: 6px; cursor: help; }
+.panel-loading { color: var(--amber); font-size: 9px; letter-spacing: .08em; margin-right: 7px; animation: panel-pulse .8s ease-in-out infinite alternate; }
+.panel.is-loading .panel-body { opacity: .58; }
+@keyframes panel-pulse { to { opacity: .38; } }
 
 /* Academy v2 */
 .lesson-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; align-items: start; }
