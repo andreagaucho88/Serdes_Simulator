@@ -30,6 +30,34 @@ _a("bench_run", "RUN / STOP", "RUN / STOP", "LiveBench", "acquisition scheduler"
    "STOP congela nuovi record; non cancella quelli accumulati.",
    "STOP freezes new records; it does not clear accumulated data.",
    "/api/run", "running state")
+_a("config_export", "Esporta configurazione", "Export configuration",
+   "Bench", "LinkConfig snapshot",
+   "Scarica un file JSON versionato con tutti i 115 campi del banco e le "
+   "impostazioni della camera climatica.",
+   "Downloads a versioned JSON file with all 115 bench fields and the "
+   "climate-chamber settings.",
+   "Il file deve contenere version, cfg completa e chamber; rimportandolo "
+   "il banco torna identico.",
+   "The file must contain version, the full cfg, and chamber; re-importing "
+   "it restores the identical bench.",
+   "Non modifica nulla: è una fotografia della configurazione corrente.",
+   "Changes nothing: it is a snapshot of the current configuration.",
+   "/api/config/export", "report only")
+_a("config_import", "Importa configurazione", "Import configuration",
+   "Bench", "LinkConfig snapshot",
+   "Carica un file esportato dal banco: la config viene validata, i campi "
+   "non più esistenti scartati con nota, poi applicata e persistita.",
+   "Loads a bench-exported file: the config is validated, removed fields "
+   "are dropped with a note, then applied and persisted.",
+   "Manopole e chip devono riflettere il file; il toast elenca gli "
+   "eventuali campi scartati.",
+   "Knobs and chips must reflect the file; the toast lists any dropped "
+   "fields.",
+   "Sostituisce TUTTA la configurazione (accumulo azzerato, come ogni "
+   "cambio config); un file non valido viene rifiutato senza toccare nulla.",
+   "Replaces the WHOLE configuration (accumulators reset, as with any "
+   "config change); an invalid file is rejected without touching anything.",
+   "/api/config/import", "full LinkConfig + chamber")
 _a("experiment_cancel", "Annulla esperimento", "Cancel experiment",
    "Experiment", "worker pool scheduler",
    "Chiede l'interruzione cooperativa dell'esperimento in corso: si ferma "

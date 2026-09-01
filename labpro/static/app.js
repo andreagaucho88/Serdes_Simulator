@@ -3382,6 +3382,36 @@ async function boot() {
       .catch(e => toast(e.message));
   }
   expBadge(st.experiment ? { state: "start", name: st.experiment } : { state: "end" });
+  // export/import configurazione (file JSON versionato, stesso formato
+  // della sessione persistita: version + cfg completa + camera)
+  $("#btn-export").onclick = () => {
+    const a = CE("a");
+    a.href = "/api/config/export";
+    a.download = "";           // il nome file arriva dal Content-Disposition
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  const cfgFile = CE("input");
+  cfgFile.type = "file"; cfgFile.accept = "application/json,.json";
+  cfgFile.hidden = true; document.body.appendChild(cfgFile);
+  $("#btn-import").onclick = () => cfgFile.click();
+  cfgFile.onchange = async () => {
+    const f = cfgFile.files[0];
+    cfgFile.value = "";
+    if (!f) return;
+    try {
+      const payload = JSON.parse(await f.text());
+      const r = await POST("/api/config/import", payload);
+      const dropped = r.dropped_fields || [];
+      toast(dropped.length
+        ? L(`config importata; ${dropped.length} campi non più esistenti ignorati: ${dropped.join(", ")}`,
+            `config imported; ${dropped.length} obsolete fields ignored: ${dropped.join(", ")}`)
+        : L("configurazione importata e applicata al banco", "configuration imported and applied to the bench"));
+    } catch (e) {
+      toast(e instanceof SyntaxError
+        ? L("file non valido: non è un JSON del banco", "invalid file: not a bench JSON")
+        : e.message);
+    }
+  };
   document.documentElement.lang = LANG;   // screen reader: fonetica giusta anche in EN
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };

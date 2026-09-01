@@ -48,23 +48,36 @@ _persist_lock = threading.Lock()
 log = logging.getLogger("labpro")
 
 
+CHAMBER_KEYS = ("on", "mode", "t_min", "t_max", "period_s", "tau_s")
+
+
+def config_from_dict(cfg_d: dict):
+    """Ricostruisce una LinkConfig da un dict esterno (sessione o import).
+
+    LinkConfig cresce di iterazione in iterazione: i campi rimossi non devono
+    buttare via TUTTA la config. Ritorna (cfg, campi_scartati)."""
+    known = {f.name for f in dataclasses.fields(LinkConfig)}
+    dropped = sorted(set(cfg_d) - known)
+    cfg_d = {k: v for k, v in cfg_d.items() if k in known}
+    if "tx_ffe_taps" in cfg_d:
+        cfg_d["tx_ffe_taps"] = tuple(cfg_d["tx_ffe_taps"])
+    for name in ("ctle_zeros_hz", "ctle_poles_hz"):
+        if name in cfg_d:
+            cfg_d[name] = tuple(cfg_d[name])
+    return LinkConfig(**cfg_d), dropped
+
+
 def load_persisted():
     if not PERSIST.exists():
         return
     try:
         d = json.loads(PERSIST.read_text())
-        cfg_d = d.get("cfg", {})
-        # LinkConfig cresce di iterazione in iterazione: i campi rimossi da
-        # una sessione precedente non devono buttare via TUTTA la config
-        known = {f.name for f in dataclasses.fields(LinkConfig)}
-        dropped = sorted(set(cfg_d) - known)
-        cfg_d = {k: v for k, v in cfg_d.items() if k in known}
-        if "tx_ffe_taps" in cfg_d:
-            cfg_d["tx_ffe_taps"] = tuple(cfg_d["tx_ffe_taps"])
-        for name in ("ctle_zeros_hz", "ctle_poles_hz"):
-            if name in cfg_d:
-                cfg_d[name] = tuple(cfg_d[name])
-        BENCH.set_config(LinkConfig(**cfg_d))
+        cfg, dropped = config_from_dict(d.get("cfg", {}))
+        BENCH.set_config(cfg)
+        chamber = d.get("chamber")
+        if isinstance(chamber, dict):
+            BENCH.set_chamber(**{k: v for k, v in chamber.items()
+                                 if k in CHAMBER_KEYS})
         if dropped:
             log.warning("sessione ripristinata ignorando campi non più esistenti: %s",
                         ", ".join(dropped))
@@ -78,7 +91,8 @@ def persist():
         try:
             tmp = PERSIST.with_suffix(".tmp")
             tmp.write_text(json.dumps({"version": SESSION_VERSION,
-                                       "cfg": BENCH.cfg.to_dict()}))
+                                       "cfg": BENCH.cfg.to_dict(),
+                                       "chamber": BENCH.chamber_settings()}))
             tmp.replace(PERSIST)
         except Exception:
             log.warning("persistenza sessione fallita", exc_info=True)
@@ -339,6 +353,52 @@ class ApiConfig(Base):
         self.write_json({"ok": True, "cfg": new.to_dict()})
 
 
+class ApiConfigExport(Base):
+    def get(self):
+        import time as _time
+        payload = {"version": SESSION_VERSION,
+                   "exported_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "cfg": BENCH.cfg.to_dict(),
+                   "chamber": BENCH.chamber_settings()}
+        self.set_header("Content-Type", "application/json")
+        self.set_header(
+            "Content-Disposition",
+            f'attachment; filename="labpro_config_'
+            f'{_time.strftime("%Y%m%d_%H%M%S")}.json"')
+        self.write(json.dumps(payload, indent=1))
+
+
+class ApiConfigImport(Base):
+    def post(self):
+        body = self.body_json()
+        cfg_d = body.get("cfg")
+        if not isinstance(cfg_d, dict) or not cfg_d:
+            self.set_status(400)
+            return self.write_json(
+                {"error": "payload senza 'cfg': usare un file esportato "
+                          "dal banco (⤓ CFG)"})
+        try:
+            new, dropped = config_from_dict(cfg_d)
+        except (TypeError, ValueError) as exc:
+            self.set_status(400)
+            return self.write_json({"error": f"config non valida: {exc}"})
+        problems = new.validate()
+        if problems:
+            self.set_status(400)
+            return self.write_json({"error": "; ".join(problems)})
+        BENCH.set_config(new)
+        chamber = body.get("chamber")
+        if isinstance(chamber, dict):
+            BENCH.set_chamber(**{k: v for k, v in chamber.items()
+                                 if k in CHAMBER_KEYS})
+        persist()
+        broadcast({"type": "config", "cfg": new.to_dict()})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
+        self.write_json({"ok": True, "cfg": new.to_dict(),
+                         "dropped_fields": dropped,
+                         "file_version": body.get("version")})
+
+
 class ApiPreset(Base):
     def post(self):
         name = self.body_json().get("name")
@@ -492,8 +552,8 @@ class ApiChamber(Base):
     def post(self):
         body = self.body_json()
         BENCH.set_chamber(**{k: v for k, v in body.items()
-                             if k in ("on", "mode", "t_min", "t_max",
-                                      "period_s", "tau_s")})
+                             if k in CHAMBER_KEYS})
+        persist()   # la camera sopravvive al riavvio, come la config
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
         self.write_json({"ok": True, "chamber": BENCH.chamber})
 
@@ -751,6 +811,8 @@ def make_app():
         (r"/", Index),
         (r"/api/state", ApiState),
         (r"/api/config", ApiConfig),
+        (r"/api/config/export", ApiConfigExport),
+        (r"/api/config/import", ApiConfigImport),
         (r"/api/preset", ApiPreset),
         (r"/api/run", ApiRun),
         (r"/api/reset", ApiReset),

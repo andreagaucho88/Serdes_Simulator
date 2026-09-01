@@ -58,6 +58,11 @@ class LiveBench:
             if restart:
                 self._chamber_t0 = time.time()
 
+    def chamber_settings(self) -> dict:
+        """Copia consistente delle impostazioni camera (per la persistenza)."""
+        with self._lock:
+            return dict(self.chamber)
+
     def _chamber_target(self, now):
         ch = self.chamber
         el = now - self._chamber_t0
