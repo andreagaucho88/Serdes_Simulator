@@ -31,7 +31,8 @@ from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: 
 from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                jitter_tolerance, jitter_transfer,
                                l2_ont_report, link_train,
-                               rx_sensitivity_search, traffic_sweep)
+                               rx_sensitivity_search, stressed_eye_calibrate,
+                               traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
@@ -203,7 +204,8 @@ def cfg_matches_live(sim, cfg):
     return sim.cfg.with_updates(
         pvt_temp_c=cfg.pvt_temp_c,
         err_insert_bits=cfg.err_insert_bits,
-        err_insert_burst=cfg.err_insert_burst) == cfg
+        err_insert_burst=cfg.err_insert_burst,
+        err_insert_target=cfg.err_insert_target) == cfg
 
 
 def on_record(snapshot):
@@ -563,8 +565,14 @@ class ApiInject(Base):
     def post(self):
         body = self.body_json()
         n = int(body.get("bits", 10))
-        BENCH.inject_errors(n, burst=bool(body.get("burst", False)))
-        self.write_json({"ok": True, "bits": n})
+        target = body.get("target", "random")
+        if target not in ("random", "msb", "lsb", "rs_symbol"):
+            self.set_status(400)
+            return self.write_json(
+                {"error": "target deve essere random/msb/lsb/rs_symbol"})
+        BENCH.inject_errors(n, burst=bool(body.get("burst", False)),
+                            target=target)
+        self.write_json({"ok": True, "bits": n, "target": target})
 
 
 class ApiTrain(Base):
@@ -662,6 +670,26 @@ class ApiSensitivity(Base):
         except ValueError as exc:
             self.set_status(400)
             return self.write_json({"error": str(exc)})
+        if not ok:
+            return
+        self.write_json({"ok": True, **paneldata.J(report)})
+
+
+class ApiStressCal(Base):
+    async def post(self):
+        body = self.body_json()
+        try:
+            target_q = float(body.get("target_q", 3.0))
+            if not 0.3 <= target_q <= 10.0:
+                raise ValueError("target_q fuori range [0.3, 10]")
+        except (TypeError, ValueError) as exc:
+            self.set_status(400)
+            return self.write_json({"error": f"target_q non valido: {exc}"})
+        cfg = BENCH.cfg
+        report, ok = await run_experiment(
+            self, "stressed-eye cal",
+            lambda evt: stressed_eye_calibrate(cfg, target_q=target_q,
+                                               cancel=evt))
         if not ok:
             return
         self.write_json({"ok": True, **paneldata.J(report)})
@@ -852,6 +880,7 @@ def make_app():
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
         (r"/api/experiment/sensitivity", ApiSensitivity),
+        (r"/api/experiment/stresscal", ApiStressCal),
         (r"/api/experiment/cancel", ApiExperimentCancel),
         (r"/api/chamber", ApiChamber),
         (r"/api/disrupt", ApiDisrupt),

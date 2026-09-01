@@ -2593,13 +2593,21 @@ PANEL_DEFS.bert = {
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
     const btn = CE("button", "btn btn-accent", L("Inserisci errori", "Insert errors"));
     btn.dataset.action = "bert_inject";
-    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked })
-      .then(() => { p.note.innerHTML = `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "TX bits will be inverted in the next record: inspect the error map and FEC counters.")}</span>`; })
+    // target dell'inserzione: dove cadono i bit invertiti (mirata iter. 29)
+    p.insTarget = CE("select");
+    for (const [v, lab] of [["random", L("posizioni random", "random positions")],
+                            ["msb", L("solo lane MSB", "MSB lane only")],
+                            ["lsb", L("solo lane LSB", "LSB lane only")],
+                            ["rs_symbol", L("simboli RS interi", "whole RS symbols")]]) {
+      const o = CE("option"); o.value = v; o.textContent = lab; p.insTarget.appendChild(o);
+    }
+    btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked, target: p.insTarget.value })
+      .then(() => { p.note.innerHTML = `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa, il conteggio per lane MSB/LSB e (con FEC) le correzioni.", "TX bits will be inverted in the next record: inspect the error map, the MSB/LSB per-lane counts, and (with FEC) the corrections.")}</span>`; })
       .catch(e => toast(e.message));
     btn.textContent = L("Inserisci errori", "Insert errors");
         p.burstChk = CE("input"); p.burstChk.type = "checkbox";
     const burstLab = CE("label", "", ""); burstLab.append(p.burstChk, document.createTextNode(" burst"));
-    bar.append(CE("span", "", L("bit da invertire:", "bits to flip:")), p.nIns, burstLab, btn);
+    bar.append(CE("span", "", L("bit da invertire:", "bits to flip:")), p.nIns, p.insTarget, burstLab, btn);
     // gating stile BERT: Start/Stop su finestra dei contatori cumulativi
     const gbar = CE("div", "scope-bar");
     p.gateBtn = CE("button", "btn", L("Gate START", "Gate START"));
@@ -2657,6 +2665,33 @@ PANEL_DEFS.bert = {
     p.body.appendChild(sbar);
     p.sensOut = CE("div"); p.body.appendChild(p.sensOut);
     p.sensPlot = CE("div", "plot"); p.body.appendChild(p.sensPlot);
+    // --- stressed-eye calibration: PJ calibrato su un target di apertura --
+    p.body.appendChild(CE("div", "sec-tag", "BERT RX · STRESSED EYE CAL"));
+    const stbar = CE("div", "scope-bar");
+    p.stressQ = CE("input"); p.stressQ.type = "text"; p.stressQ.value = "3.0";
+    p.stressQ.style.width = "55px";
+    p.stressApply = CE("input"); p.stressApply.type = "checkbox";
+    const stLab = CE("label", "", "");
+    stLab.append(p.stressApply, document.createTextNode(" " + L("applica ricetta", "apply recipe")));
+    p.stressBtn = CE("button", "btn btn-accent", L("Calibra stress (~10 s)", "Calibrate stress (~10 s)"));
+    p.stressBtn.dataset.action = "bert_stress_cal";
+    p.stressBtn.onclick = async () => {
+      p.stressBtn.disabled = true; const prev = p.stressBtn.textContent;
+      p.stressBtn.textContent = L("calibrazione…", "calibrating…");
+      try {
+        const d = await POST("/api/experiment/stresscal", { target_q: Number(p.stressQ.value) || 3.0 });
+        this.drawStressCal(p, d);
+        if (p.stressApply.checked && d.status === "ok" && d.recipe) {
+          await postConfigAndWait({ tx_pj_amp_ui: d.recipe.tx_pj_amp_ui });
+          toast(L(`ricetta applicata: PJ ${fix(d.recipe.tx_pj_amp_ui, 3)} UI @ ${fix(d.pj_freq_mhz, 0)} MHz`,
+                  `recipe applied: PJ ${fix(d.recipe.tx_pj_amp_ui, 3)} UI @ ${fix(d.pj_freq_mhz, 0)} MHz`));
+        }
+      } catch (e) { toast(e.message); }
+      p.stressBtn.disabled = false; p.stressBtn.textContent = prev;
+    };
+    stbar.append(CE("span", "", "target Q [σ]:"), p.stressQ, stLab, p.stressBtn);
+    p.body.appendChild(stbar);
+    p.stressOut = CE("div"); p.body.appendChild(p.stressOut);
     p.errAn = CE("div"); p.body.appendChild(p.errAn);
     p.body.appendChild(bar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
@@ -2668,6 +2703,33 @@ PANEL_DEFS.bert = {
     p.lastFetch = 0;
     this.updateTxSummary(p);
     this.refetch(p);
+  },
+  drawStressCal(p, d) {
+    p.stressOut.innerHTML = "";
+    if (d.status === "already_below") {
+      p.stressOut.appendChild(CE("div", "note w", L(
+        `l'occhio è già a Q ${d.q_unstressed == null ? "—" : fix(d.q_unstressed, 2)} σ ≤ target ${fix(d.target_q, 2)} σ senza stress aggiunto: niente da calibrare (link già al/oltre il livello di stress richiesto).`,
+        `the eye is already at Q ${d.q_unstressed == null ? "—" : fix(d.q_unstressed, 2)} σ ≤ the ${fix(d.target_q, 2)} σ target with no added stress: nothing to calibrate (link already at/beyond the requested stress level).`)));
+      return;
+    }
+    if (d.status === "stress_insufficient") {
+      p.stressOut.appendChild(CE("div", "note w", L(
+        `anche al cap di ${fix(d.recipe.tx_pj_amp_ui, 2)} UI di PJ l'occhio resta a Q ${fix(d.recipe.q, 2)} σ > target ${fix(d.target_q, 2)} σ: il solo PJ non basta a chiudere l'occhio fino al target su questo link.`,
+        `even at the ${fix(d.recipe.tx_pj_amp_ui, 2)} UI PJ cap the eye stays at Q ${fix(d.recipe.q, 2)} σ > the ${fix(d.target_q, 2)} σ target: PJ alone cannot close the eye to the target on this link.`)));
+      return;
+    }
+    const uiPs = 1e12 / S.cfg.symbol_rate_hz;
+    p.stressOut.appendChild(readout([
+      { l: L("ricetta PJ", "PJ recipe"), v: fix(d.recipe.tx_pj_amp_ui, 3) + " UI", big: true,
+        sub: fix(d.recipe.tx_pj_amp_ui * uiPs, 2) + " ps pk @ " + fix(d.pj_freq_mhz, 0) + " MHz" },
+      { l: L("Q calibrato", "calibrated Q"), v: fix(d.recipe.q, 2) + " σ", cls: "ok",
+        sub: `target ${fix(d.target_q, 2)} σ (${L("appena sopra", "just above")})` },
+      { l: L("Q senza stress", "unstressed Q"), v: fix(d.q_unstressed, 2) + " σ",
+        sub: `${d.points.length} sim` },
+    ]));
+    p.stressOut.appendChild(CE("div", "sub", L(
+      "Bisezione sul PJ al TX PLL fino a portare q_min allo slicer appena sopra il target; spunta 'applica ricetta' per impostarla sul banco. DICHIARATO: non è la ricetta di clause (SJ+RJ+interferenza con strumento prescritto).",
+      "Bisection on TX-PLL PJ until slicer q_min sits just above the target; tick 'apply recipe' to set it on the bench. DECLARED: not the clause recipe (SJ+RJ+interference with a prescribed instrument).")));
   },
   drawSensitivity(p, d) {
     p.sensOut.innerHTML = "";

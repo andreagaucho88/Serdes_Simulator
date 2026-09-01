@@ -212,11 +212,29 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     pam4 = stimulus.symbols_from_bits(tx_bits, spec)   # riferimento DSP/ED
     if cfg.err_insert_bits > 0:
         lo = (cfg.training_stop + 300) * bps
+        n_ins = cfg.err_insert_bits
         if cfg.err_insert_burst:
-            start = int(rng.integers(lo, total_bits - cfg.err_insert_bits))
-            pos = np.arange(start, start + cfg.err_insert_bits)
+            start = int(rng.integers(lo, total_bits - n_ins))
+            pos = np.arange(start, start + n_ins)
+        elif cfg.err_insert_target in ("msb", "lsb") and bps == 2:
+            # una sola lane del simbolo PAM4: il mapper è MSB-first, quindi
+            # colonna 0 (posizione pari) = MSB, colonna 1 (dispari) = LSB
+            cand = np.arange(lo, total_bits)
+            cand = cand[cand % 2 == (0 if cfg.err_insert_target == "msb"
+                                     else 1)]
+            pos = rng.choice(cand, min(n_ins, len(cand)), replace=False)
+        elif cfg.err_insert_target == "rs_symbol":
+            # bit raggruppati in simboli GF(2^10) ALLINEATI: a parità di bit
+            # inseriti il FEC vede ~n/10 simboli errati invece di ~n — è il
+            # confronto didattico fra errori sparsi e errori concentrati
+            m = fec_block.GF_M
+            n_grp = max(1, -(-n_ins // m))
+            starts = rng.choice(np.arange(lo // m + 1, total_bits // m - 1),
+                                n_grp, replace=False) * m
+            pos = np.concatenate([np.arange(s, s + m)
+                                  for s in starts])[:n_ins]
         else:
-            pos = rng.choice(np.arange(lo, total_bits), cfg.err_insert_bits,
+            pos = rng.choice(np.arange(lo, total_bits), n_ins,
                              replace=False)
         mod_bits = tx_bits.copy()
         mod_bits[pos] ^= 1
@@ -743,6 +761,58 @@ def jitter_tolerance(cfg: LinkConfig, freqs_mhz, target_ber=4e-2,
         points.append({"freq_mhz": float(f_mhz), "amp_ui": float(lo),
                        "capped": False})
     return points
+
+
+def stressed_eye_calibrate(cfg: LinkConfig, target_q=3.0, seed=20240731,
+                           iters=7, amp_max_ui=0.35, cancel=None):
+    """Stressed-eye calibration (DICHIARATA, non normativa): bisezione
+    sull'ampiezza del PJ iniettato al TX PLL per portare l'apertura d'occhio
+    misurata allo slicer (q_min, unità σ) al target richiesto.
+
+    È il calco del flusso reale "calibra lo stress finché l'occhio al
+    reference plane raggiunge il valore prescritto, poi testa il RX in
+    quelle condizioni". La ricetta di clause (SJ+RJ+interferenza con
+    strumento e maschera prescritti) NON è questa; la ricetta trovata non
+    viene applicata al banco — il report la restituisce soltanto."""
+    target_q = float(target_q)
+    trail = []
+
+    def measure(amp_ui):
+        check_cancel(cancel)
+        r = simulate(cfg.with_updates(tx_pj_amp_ui=float(amp_ui)),
+                     seed=seed, depth="light")
+        locked = r.link_up and (r.cdr is None or r.cdr.locked)
+        q = (float(r.snr_dfe["q_min"])
+             if locked and r.snr_dfe is not None else None)
+        trail.append({"pj_amp_ui": float(amp_ui), "q": q,
+                      "ber": (float(r.ber_post_dfe) if r.link_up else None),
+                      "link_up": bool(r.link_up)})
+        return q
+
+    q0 = measure(0.0)
+    base = {"target_q": target_q, "pj_freq_mhz": float(cfg.tx_pj_freq_mhz),
+            "q_unstressed": q0, "points": trail,
+            "metric": ("q_min allo slicer [σ] con PJ al TX PLL — ricetta "
+                       "dichiarata, non calibrazione di clause")}
+    if q0 is None or q0 <= target_q:
+        # l'occhio è già al/sotto il target senza stress aggiunto
+        return {**base, "status": "already_below", "recipe": None}
+    q_max = measure(amp_max_ui)
+    if q_max is not None and q_max > target_q:
+        return {**base, "status": "stress_insufficient",
+                "recipe": {"tx_pj_amp_ui": float(amp_max_ui), "q": q_max}}
+    lo, hi = 0.0, float(amp_max_ui)   # lo: q > target; hi: q ≤ target/no lock
+    for _ in range(int(iters)):
+        mid = 0.5 * (lo + hi)
+        qm = measure(mid)
+        if qm is not None and qm > target_q:
+            lo = mid
+        else:
+            hi = mid
+    q_lo = measure(lo)                # ricetta conservativa: q appena SOPRA
+    return {**base, "status": "ok",
+            "recipe": {"tx_pj_amp_ui": float(lo), "q": q_lo,
+                       "upper_bound_ui": float(hi)}}
 
 
 def rx_sensitivity_search(cfg: LinkConfig, target_ber=None, seed=20240731,

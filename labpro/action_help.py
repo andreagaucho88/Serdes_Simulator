@@ -49,11 +49,31 @@ _a("bert_sensitivity", "RX sensitivity search", "RX sensitivity search",
    "stressed RX and a prescribed procedure. Optical medium only. "
    "The bench is not modified.",
    "/api/experiment/sensitivity", "report only")
+_a("bert_stress_cal", "Stressed-eye calibration", "Stressed-eye calibration",
+   "BERT · stress", "TX PJ → slicer eye opening",
+   "Bisezione sull'ampiezza del PJ al TX PLL fino a portare l'apertura "
+   "d'occhio misurata allo slicer (q_min) appena sopra il target: è la "
+   "calibrazione dello stress prima di un test del ricevitore.",
+   "Bisection on the TX-PLL PJ amplitude until the measured slicer eye "
+   "opening (q_min) sits just above the target: stress calibration before "
+   "a receiver test.",
+   "Ricetta (UI/ps @ freq), Q calibrato vs Q senza stress e traiettoria; "
+   "con la spunta la ricetta viene applicata a tx_pj_amp_ui.",
+   "Recipe (UI/ps @ freq), calibrated Q vs unstressed Q, and the trail; "
+   "when ticked the recipe is applied to tx_pj_amp_ui.",
+   "Solo PJ: la ricetta di clause combina SJ+RJ+interferenza con strumento "
+   "e maschera prescritti. Esiti dichiarati: già sotto target / stress "
+   "insufficiente al cap.",
+   "PJ only: the clause recipe combines SJ+RJ+interference with a "
+   "prescribed instrument and mask. Declared outcomes: already below "
+   "target / stress insufficient at the cap.",
+   "/api/experiment/stresscal",
+   "report; tx_pj_amp_ui when 'apply recipe' is checked")
 _a("config_export", "Esporta configurazione", "Export configuration",
    "Bench", "LinkConfig snapshot",
-   "Scarica un file JSON versionato con tutti i 115 campi del banco e le "
+   "Scarica un file JSON versionato con tutti i 116 campi del banco e le "
    "impostazioni della camera climatica.",
-   "Downloads a versioned JSON file with all 115 bench fields and the "
+   "Downloads a versioned JSON file with all 116 bench fields and the "
    "climate-chamber settings.",
    "Il file deve contenere version, cfg completa e chamber; rimportandolo "
    "il banco torna identico.",

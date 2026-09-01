@@ -66,6 +66,7 @@ KNOBS = {
     "l2_frame_bytes": (128, {"pattern": "eth"}, {"driver"}, set()),
     "err_insert_bits": (20, {}, {"driver", "ber"}, set()),
     "err_insert_burst": (True, {"err_insert_bits": 30}, {"driver"}, set()),
+    "err_insert_target": ("msb", {"err_insert_bits": 30}, {"driver"}, set()),
     "l2_ipg_bytes": (96, {"pattern": "eth"}, {"driver"}, set()),
     "l2_streams": (3, {"pattern": "eth"}, {"driver"}, set()),
     # coppia differenziale P/N (post-driver: NON tocca il driver ideale)

@@ -69,6 +69,9 @@ class LinkConfig:
     # BERT: bit del pattern invertiti al TX rispetto al riferimento dell'ED
     err_insert_bits: int = 0
     err_insert_burst: bool = False   # True: bit consecutivi (burst singolo)
+    # dove cadono i bit invertiti: random | msb | lsb (lane PAM4) |
+    # rs_symbol (gruppi allineati GF(2^10): 1 simbolo RS per gruppo)
+    err_insert_target: str = "random"
 
     # Canale elettrico
     channel_il_nyquist_db: float = 12.0
@@ -381,6 +384,9 @@ class LinkConfig:
                             "agc_max_gain_db <= 60")
         if not (0 <= self.err_insert_bits <= 200):
             problems.append("err_insert_bits fuori range [0, 200]")
+        if self.err_insert_target not in ("random", "msb", "lsb", "rs_symbol"):
+            problems.append("err_insert_target deve essere "
+                            "random/msb/lsb/rs_symbol")
         if self.s4p_pairs not in ("13_24", "12_34"):
             problems.append("s4p_pairs deve essere 13_24 o 12_34")
         return problems

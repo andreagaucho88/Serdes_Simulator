@@ -115,6 +115,7 @@ class LiveBench:
         self.l2_records = 0
         # BERT error insertion (one-shot sul prossimo record)
         self._inject_bits = 0
+        self._inject_target = "random"
         self._disrupt_pending = False
         self._disrupt_started = None
         self.last_disruption_ms = None
@@ -174,12 +175,17 @@ class LiveBench:
         with self._lock:
             self._disrupt_pending = True
 
-    def inject_errors(self, n_bits: int, burst: bool = False):
+    def inject_errors(self, n_bits: int, burst: bool = False,
+                      target: str = "random"):
         """BERT: inverte n bit del pattern TX (vs riferimento ED) al
-        prossimo record. One-shot; burst=True li mette consecutivi."""
+        prossimo record. One-shot; burst=True li mette consecutivi;
+        target sceglie dove cadono (random/msb/lsb/rs_symbol)."""
         with self._lock:
             self._inject_bits = int(max(0, min(n_bits, 200)))
             self._inject_burst = bool(burst)
+            self._inject_target = (target if target in
+                                   ("random", "msb", "lsb", "rs_symbol")
+                                   else "random")
 
     @property
     def cfg(self) -> LinkConfig:
@@ -233,10 +239,12 @@ class LiveBench:
                 seed = self._seed
                 inject = self._inject_bits
                 inject_burst = self._inject_burst
+                inject_target = self._inject_target
                 self._inject_bits = 0
             run_cfg = (cfg if inject == 0
                        else cfg.with_updates(err_insert_bits=inject,
-                                             err_insert_burst=inject_burst))
+                                             err_insert_burst=inject_burst,
+                                             err_insert_target=inject_target))
             with self._lock:
                 die_t = (self._chamber_step(time.time())
                          if self.chamber["on"] else None)

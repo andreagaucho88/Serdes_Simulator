@@ -62,6 +62,17 @@ _add("err_insert_bits err_insert_burst", "BERT PPG", "TX bits after reference co
      "inverte bit dopo aver conservato il riferimento dell'error detector; burst raggruppa le inversioni consecutive.",
      "flips bits after preserving the error-detector reference; burst mode groups flips consecutively.")
 
+_add("err_insert_target", "BERT PPG", "TX bits after reference copy",
+     "sceglie DOVE cadono i bit invertiti: random, solo lane MSB o LSB del "
+     "simbolo PAM4 (il mapper è MSB-first), oppure rs_symbol — gruppi "
+     "allineati GF(2^10), così a parità di bit il FEC vede ~n/10 simboli RS "
+     "errati invece di ~n: è il confronto fra errori sparsi e concentrati.",
+     "chooses WHERE flipped bits land: random, MSB-only or LSB-only PAM4 "
+     "lane (the mapper is MSB-first), or rs_symbol — GF(2^10)-aligned "
+     "groups, so for the same bit count the FEC sees ~n/10 wrong RS symbols "
+     "instead of ~n: the scattered-vs-concentrated error comparison.",
+     active="err_insert_bits > 0 (msb/lsb: PAM4; burst ha precedenza)")
+
 _add("tx_rj_rms_fs", "TX PLL", "serializer time base",
      "aggiunge TIE gaussiano RMS indipendente a ogni UI; allarga le code senza limite deterministico. Sul Q-scale le code diventano rette di pendenza 1/σ e il TJ estrapola come TJ(p)=2·Q_p·σ+DJ(δδ); gli RJ indipendenti si sommano in quadratura, σ_tot=√Σσᵢ² (Derickson & Müller §2.4-2.5).",
      "adds independent Gaussian RMS TIE to each UI; it broadens unbounded tails. On the Q scale the tails become straight lines of slope 1/σ and TJ extrapolates as TJ(p)=2·Q_p·σ+DJ(δδ); independent RJs add in quadrature, σ_tot=√Σσᵢ² (Derickson & Müller §2.4-2.5).",
