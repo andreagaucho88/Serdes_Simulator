@@ -66,6 +66,10 @@ class LinkConfig:
     xtalk_next_db: float = 0.0     # accoppiamento NEXT @Nyquist [dB, >0 = off]
     xtalk_fext_db: float = 0.0     # accoppiamento FEXT @Nyquist [dB, >0 = off]
 
+    # OUTPUT enable dello stadio TX (stile PPG/MP1900A): False = il driver
+    # non pilota nulla (mute elettrico); la sorgente ottica resta accesa
+    tx_output_on: bool = True
+
     # BERT: bit del pattern invertiti al TX rispetto al riferimento dell'ED
     err_insert_bits: int = 0
     err_insert_burst: bool = False   # True: bit consecutivi (burst singolo)

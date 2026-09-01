@@ -104,6 +104,13 @@ def run_tx(cfg, pam4_symbols, rng=None) -> TxResult:
                                        causal=cfg.causal_filters))
     driver_voltage_v = np.clip(driver_filtered_v, -cfg.driver_clip_v, cfg.driver_clip_v)
     driver_clip_fraction = float(np.mean(np.abs(driver_filtered_v) > cfg.driver_clip_v))
+    if not cfg.tx_output_on:
+        # OUTPUT OFF stile PPG/MP1900A: lo stadio d'uscita non pilota nulla
+        # (mute elettrico, P/N al solo common-mode). La sorgente ottica resta
+        # accesa: sull'ottica al PD arriva la CW filtrata dal bias del
+        # modulatore, senza dati → il CDR non aggancia (LINK DOWN reale).
+        driver_voltage_v = np.zeros_like(driver_voltage_v)
+        driver_clip_fraction = 0.0
 
     result = TxResult(
         tx_ffe_symbols=tx_ffe_symbols,

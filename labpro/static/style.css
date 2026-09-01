@@ -81,6 +81,20 @@ input[type=checkbox] { accent-color: var(--optical); }
   padding: 1px 7px; cursor: pointer; }
 .chip-exp button:hover { background: rgba(232,197,90,.12); }
 
+/* toast flottante (unico canale di feedback: prima era nel footer, invisibile) */
+#toast { position: fixed; right: 16px; bottom: 16px; z-index: 200; max-width: 440px;
+  background: var(--panel); border: 1px solid var(--grid); border-left: 3px solid var(--amber);
+  color: var(--ink); padding: 9px 13px; border-radius: 8px; font: 12px/1.45 var(--mono);
+  box-shadow: 0 10px 30px #000C; opacity: 0; transform: translateY(6px);
+  pointer-events: none; transition: opacity .18s, transform .18s; }
+#toast.show { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+
+/* TX OUTPUT enable: stato colorato come il tasto Output di un PPG */
+.btn-out.on { border-color: var(--ok); color: var(--ok); }
+.btn-out.off { border-color: var(--fail); color: var(--fail);
+  background: rgba(255,84,112,.08); }
+
 .dropdown { position: relative; }
 .dropdown-menu { display: none; position: absolute; right: 0; top: 110%;
   background: var(--panel); border: 1px solid var(--grid); border-radius: 10px;
@@ -92,6 +106,8 @@ input[type=checkbox] { accent-color: var(--optical); }
   border: none; color: var(--ink); padding: 7px 10px; border-radius: 6px;
   cursor: pointer; font-family: var(--sans); font-size: 13px; gap: 8px; align-items: center; }
 .dropdown-menu button:hover { background: var(--panel-2); }
+/* il display:flex dei bottoni del menu vincerebbe sull'UA [hidden] */
+.dropdown-menu button[hidden], .menu-sec[hidden] { display: none; }
 .dom-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 
 #conn-banner { background: #8C1626; color: #fff; text-align: center;

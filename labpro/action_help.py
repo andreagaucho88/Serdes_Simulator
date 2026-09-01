@@ -30,6 +30,38 @@ _a("bench_run", "RUN / STOP", "RUN / STOP", "LiveBench", "acquisition scheduler"
    "STOP congela nuovi record; non cancella quelli accumulati.",
    "STOP freezes new records; it does not clear accumulated data.",
    "/api/run", "running state")
+_a("tx_output", "TX OUTPUT on/off", "TX OUTPUT on/off",
+   "BERT · PPG", "driver output stage",
+   "Accende/spegne l'uscita dello stadio TX come il tasto Output di un PPG: "
+   "OFF = mute elettrico (P/N al solo common-mode), sorgente ottica accesa.",
+   "Toggles the TX output stage like a PPG's Output key: OFF = electrical "
+   "mute (P/N at common-mode only), optical source still on.",
+   "Con OUTPUT OFF: scope piatto al nodo driver, CDR senza lock, LINK DOWN "
+   "in topbar e SYNC LOSS all'ED; alla riaccensione il lock torna da solo.",
+   "With OUTPUT OFF: flat scope at the driver node, no CDR lock, LINK DOWN "
+   "in the topbar and ED SYNC LOSS; lock returns on its own at re-enable.",
+   "È un mute del DRIVE elettrico, non lo spegnimento del laser: per "
+   "togliere anche la luce porta laser_dbm al minimo. Cambio config: "
+   "l'accumulo riparte.",
+   "It mutes the electrical DRIVE, it does not turn the laser off: to kill "
+   "the light too, drop laser_dbm to its minimum. Config change: "
+   "accumulators restart.",
+   "/api/config", "tx_output_on")
+_a("panel_export", "Esporta card", "Export card",
+   "UI", "browser download",
+   "Scarica i grafici della card come PNG (scala 2×), il canvas dello "
+   "Scope come PNG e le tabelle come CSV.",
+   "Downloads the card's plots as PNG (2× scale), the Scope canvas as PNG, "
+   "and its tables as CSV.",
+   "Un file per ogni grafico/tabella presente; il browser può chiedere il "
+   "permesso per download multipli.",
+   "One file per plot/table present; the browser may ask permission for "
+   "multiple downloads.",
+   "Fotografa ciò che la card mostra ORA (stesso record/fonte dichiarati "
+   "dal badge LIVE/REF); non modifica il banco.",
+   "Snapshots what the card shows NOW (same record/source declared by the "
+   "LIVE/REF badge); the bench is not modified.",
+   "", "report only")
 _a("bert_sensitivity", "RX sensitivity search", "RX sensitivity search",
    "BERT · ED", "optical power → counted BER",
    "Bisezione sulla potenza ottica lanciata (a seed fisso) per trovare la "
@@ -71,9 +103,9 @@ _a("bert_stress_cal", "Stressed-eye calibration", "Stressed-eye calibration",
    "report; tx_pj_amp_ui when 'apply recipe' is checked")
 _a("config_export", "Esporta configurazione", "Export configuration",
    "Bench", "LinkConfig snapshot",
-   "Scarica un file JSON versionato con tutti i 116 campi del banco e le "
+   "Scarica un file JSON versionato con tutti i 117 campi del banco e le "
    "impostazioni della camera climatica.",
-   "Downloads a versioned JSON file with all 116 bench fields and the "
+   "Downloads a versioned JSON file with all 117 bench fields and the "
    "climate-chamber settings.",
    "Il file deve contenere version, cfg completa e chamber; rimportandolo "
    "il banco torna identico.",

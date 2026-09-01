@@ -62,6 +62,19 @@ _add("err_insert_bits err_insert_burst", "BERT PPG", "TX bits after reference co
      "inverte bit dopo aver conservato il riferimento dell'error detector; burst raggruppa le inversioni consecutive.",
      "flips bits after preserving the error-detector reference; burst mode groups flips consecutively.")
 
+_add("tx_output_on", "TX driver", "driver output stage",
+     "OUTPUT enable dello stadio TX come sul pannello di un PPG: OFF = il "
+     "driver non pilota nulla (mute elettrico, P/N al solo common-mode). La "
+     "sorgente ottica resta accesa: al PD arriva la CW filtrata dal bias, "
+     "senza dati — il CDR perde l'aggancio e il link va DOWN davvero. Per "
+     "spegnere anche la luce porta laser_dbm al minimo.",
+     "TX OUTPUT enable as on a PPG front panel: OFF = the driver drives "
+     "nothing (electrical mute, P/N at common-mode only). The optical "
+     "source stays on: the PD receives bias-filtered CW light with no data "
+     "— the CDR loses lock and the link goes truly DOWN. To kill the light "
+     "too, drop laser_dbm to its minimum.",
+     active="sempre / always")
+
 _add("err_insert_target", "BERT PPG", "TX bits after reference copy",
      "sceglie DOVE cadono i bit invertiti: random, solo lane MSB o LSB del "
      "simbolo PAM4 (il mapper è MSB-first), oppure rs_symbol — gruppi "

@@ -62,6 +62,19 @@ def test_invalid_target_is_a_validation_problem():
     assert any("err_insert_target" in p for p in problems)
 
 
+# ------------------------------------------------------------- TX output
+def test_tx_output_off_mutes_driver_and_drops_link():
+    r = simulate(CFG.with_updates(tx_output_on=False), seed=42, depth="light")
+    assert bool(np.all(r.tx.driver_voltage_v == 0))     # mute elettrico
+    assert r.link_up is False                            # niente lock: DOWN vero
+
+
+def test_tx_output_default_on_is_backward_compatible():
+    assert CFG.tx_output_on is True
+    r = simulate(CFG, seed=42, depth="light")
+    assert r.link_up is True
+
+
 # ------------------------------------------------------------- stress cal
 @pytest.mark.slow
 def test_stress_cal_finds_recipe_just_above_target():

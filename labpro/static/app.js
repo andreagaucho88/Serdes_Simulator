@@ -827,11 +827,20 @@ function syncParams(root) {
   }
 }
 function paramsBlock(fields) { const g = CE("div", "params"); for (const f of fields) g.appendChild(mkParam(f)); return g; }
+// toast flottante in basso a destra: prima scriveva nel footer, fuori dallo
+// scroll con 21 card aperte — l'unico canale d'errore dell'app era invisibile
 let _toastTimer = null;
 function toast(msg) {
-  $("#sb-note").innerHTML = `<span class="fail">${msg}</span>`;
-  clearTimeout(_toastTimer);   // due toast ravvicinati non si accorciano più a vicenda
-  _toastTimer = setTimeout(() => { $("#sb-note").textContent = L("Laboratorio didattico con proxy dichiarati.", "Educational lab with declared proxies."); }, 5000);
+  let el = $("#toast");
+  if (!el) {
+    el = CE("div"); el.id = "toast";
+    el.setAttribute("role", "status"); el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("show"), 5000);
 }
 
 /* ---------------- readout helper ---------------- */
@@ -2582,6 +2591,15 @@ PANEL_DEFS.bert = {
       "UN SOLO STRUMENTO, DUE PUNTI DELLA CHAIN: il PPG genera pattern e mapping prima del serializer; l'ED confronta il riferimento noto dopo CDR/FSE/DFE e prima del decoder FEC. L'error insertion inverte bit al TX e li osserva all'ED.",
       "ONE INSTRUMENT, TWO CHAIN ENDPOINTS: the PPG generates pattern and mapping before the serializer; the ED compares the known reference after CDR/FSE/DFE and before the FEC decoder. Error insertion flips TX bits and observes them at the ED.")));
     p.body.appendChild(CE("div", "sec-tag", "BERT TX · PPG / PATTERN SOURCE"));
+    // OUTPUT enable dello stadio TX, come il tasto Output di un PPG reale
+    const obar = CE("div", "scope-bar");
+    p.outBtn = CE("button", "btn btn-out", "");
+    p.outBtn.dataset.action = "tx_output";
+    p.outBtn.onclick = () => postConfig({ tx_output_on: S.cfg.tx_output_on === false });
+    obar.append(p.outBtn, CE("span", "", L(
+      "mute elettrico dello stadio d'uscita — la sorgente ottica resta accesa",
+      "output-stage electrical mute — the optical source stays on")));
+    p.body.appendChild(obar);
     p.body.appendChild(paramsBlock(["pattern", "prbs_order", "modulation", "pam4_mapping", "n_symbols", "fec_mode"]));
     p.body.appendChild(CE("div", "sec-tag", "BERT TX · SERIALIZER / JITTER / NOISE / P-N"));
     p.body.appendChild(paramsBlock(["tx_rj_rms_fs", "tx_pj_amp_ui", "tx_pj_freq_mhz", "tx_dcd_pct", "tx_buj_amp_ui", "tx_ssc_ppm", "tx_ssc_khz",
@@ -2702,7 +2720,15 @@ PANEL_DEFS.bert = {
     p.body.appendChild(p.note);
     p.lastFetch = 0;
     this.updateTxSummary(p);
+    this.syncOutput(p);
     this.refetch(p);
+  },
+  syncOutput(p) {
+    if (!p.outBtn || !S.cfg) return;
+    const on = S.cfg.tx_output_on !== false;
+    p.outBtn.textContent = on ? "TX OUTPUT: ON" : "TX OUTPUT: OFF";
+    p.outBtn.classList.toggle("on", on);
+    p.outBtn.classList.toggle("off", !on);
   },
   drawStressCal(p, d) {
     p.stressOut.innerHTML = "";
@@ -2815,7 +2841,7 @@ PANEL_DEFS.bert = {
       { l: "UI", v: fix(uiPs, 2) + " ps" },
     ]));
   },
-  onConfig(p) { syncParams(p.body); this.updateTxSummary(p); this.refetch(p); },
+  onConfig(p) { syncParams(p.body); this.updateTxSummary(p); this.syncOutput(p); this.refetch(p); },
   updateEd(p) {
     const a = S.acc; if (!a || !p.edDisplay) return;
     const locked = a.last && a.last.link_up !== false && a.last.cdr_locked !== false;
@@ -3313,6 +3339,12 @@ function addPanel(type, size) {
     learn.onclick = () => openEducation(PANEL_LEARN[type]);
     p.head.appendChild(learn);
   }
+  const btnExp = CE("button", "icon-btn", "⤓");
+  btnExp.dataset.action = "panel_export";
+  btnExp.setAttribute("aria-label", L("esporta card (PNG/CSV)", "export card (PNG/CSV)"));
+  const hExp = S.actionHelp && S.actionHelp.panel_export;
+  if (hExp) btnExp.title = TT(hExp.it, hExp.en);
+  btnExp.onclick = () => exportPanel(p);
   const btnSize = CE("button", "icon-btn", "◱"); btnSize.title = TT("ridimensiona la card senza cambiare il banco", "resizes the card without changing the bench");
   btnSize.setAttribute("aria-label", L("ridimensiona pannello", "resize panel"));
   btnSize.onclick = () => { const i = SIZES.indexOf(p.size); p.el.classList.remove(p.size); p.size = SIZES[(i + 1) % SIZES.length]; p.el.classList.add(p.size); saveLayout(); };
@@ -3325,7 +3357,7 @@ function addPanel(type, size) {
     if (grid && !grid.children.length) grid.parentElement.remove();
     saveLayout();
   };
-  p.head.append(btnSize, btnClose);
+  p.head.append(btnExp, btnSize, btnClose);
   p.body = CE("div", "panel-body");
   p.el.append(p.head, p.body);
   // inserimento ordinato per flusso del segnale dentro il suo gruppo
@@ -3361,6 +3393,7 @@ function flash(el) { el.style.outline = "2px solid " + COL.op; setTimeout(() => 
 // vista (21 card in "Banco completo") lasciava vivi dati e resize-handler di
 // tutti i grafici — memoria in crescita monotona a ogni switch
 function destroyPanel(p) {
+  p._dead = true;    // i refetch in coda non ripartono su una card rimossa
   if (window.Plotly) {
     for (const gd of p.el.querySelectorAll(".js-plotly-plot")) {
       try { Plotly.purge(gd); } catch (e) { /* grafico mai inizializzato */ }
@@ -3368,6 +3401,38 @@ function destroyPanel(p) {
   }
   _cfgDirty.delete(p);
   p.el.remove();
+}
+// export della card: ogni grafico Plotly in PNG (2×), il canvas Scope in
+// PNG, ogni tabella in CSV — l'export era del tutto assente (e la modebar
+// Plotly resta disattivata per pulizia visiva)
+function exportPanel(p) {
+  let n = 0;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  if (window.Plotly) {
+    p.el.querySelectorAll(".js-plotly-plot").forEach((gd, i) => {
+      Plotly.downloadImage(gd, { format: "png", scale: 2,
+        filename: `${p.type}-plot${i + 1}-${stamp}` });
+      n++;
+    });
+  }
+  const cv = p.el.querySelector("canvas.scope");
+  if (cv) {
+    const a = CE("a"); a.href = cv.toDataURL("image/png");
+    a.download = `${p.type}-scope-${stamp}.png`;
+    document.body.appendChild(a); a.click(); a.remove(); n++;
+  }
+  p.el.querySelectorAll("table.mini").forEach((tb, i) => {
+    const rows = [...tb.rows].map(r => [...r.cells].map(c =>
+      `"${c.innerText.replace(/"/g, '""').replace(/\s*\n\s*/g, " ")}"`).join(","));
+    const a = CE("a");
+    a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
+    a.download = `${p.type}-table${i + 1}-${stamp}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    n++;
+  });
+  if (!n) toast(L("nessun grafico o tabella esportabile in questa card",
+                  "no exportable plot or table in this card"));
 }
 function applyView(name) {
   _buildingLayout = true;
@@ -3471,18 +3536,32 @@ function panelLoading(p, active) {
   p.loadingEl.title = L("i dati visibili appartengono al record precedente finché il calcolo non termina", "visible data belong to the previous record until computation completes");
   p.el.classList.add("is-loading");
 }
+// ...e SERIALIZZATO per pannello: una sola richiesta in volo alla volta, con
+// al massimo un rilancio in coda ("l'ultimo vince"). Le risposte non possono
+// più dipingersi fuori ordine — prima 31 pannelli su 34 potevano mostrare il
+// dato di una richiesta superata sopra quello più recente.
 for (const def of Object.values(PANEL_DEFS)) {
   if (!def.refetch) continue;
   const orig = def.refetch;
   def.refetch = function (p, ...args) {
-    let r; const cfgVersion = p._cfgVersion || 0;
-    try { r = orig.call(this, p, ...args); }
-    catch (e) { panelError(p, e); if ((p._cfgVersion || 0) === cfgVersion) panelLoading(p, false); return; }
-    if (r && typeof r.then === "function")
-      return r.then(v => { panelError(p, null); if ((p._cfgVersion || 0) === cfgVersion) panelLoading(p, false); return v; },
-                    e => { panelError(p, e); if ((p._cfgVersion || 0) === cfgVersion) panelLoading(p, false); });
-    panelError(p, null); if ((p._cfgVersion || 0) === cfgVersion) panelLoading(p, false);
-    return r;
+    if (p._dead) return;
+    if (p._refetchBusy) { p._refetchQueued = args; return; }
+    p._refetchBusy = true;
+    const run = (a) => {
+      const cfgVersion = p._cfgVersion || 0;
+      const done = () => { if ((p._cfgVersion || 0) === cfgVersion) panelLoading(p, false); };
+      return Promise.resolve()
+        .then(() => orig.call(this, p, ...a))
+        .then(v => { panelError(p, null); done(); return v; },
+              e => { panelError(p, e); done(); })
+        .then(() => {
+          const nxt = p._refetchQueued;
+          p._refetchQueued = null;
+          if (nxt && !p._dead) return run(nxt);
+          p._refetchBusy = false;
+        });
+    };
+    return run(args);
   };
 }
 
@@ -3588,12 +3667,40 @@ async function boot() {
     e.stopPropagation();
     const open = dd.classList.toggle("open");
     $("#btn-add").setAttribute("aria-expanded", String(open));
+    if (open) setTimeout(() => {
+      const f = $("#panel-menu input");
+      if (f) { f.value = ""; f.oninput(); f.focus(); }
+    }, 0);
   };
   document.addEventListener("click", () => { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { dd.classList.remove("open"); $("#btn-add").setAttribute("aria-expanded", "false"); }
+    // scorciatoia da strumento: R = RUN/STOP (solo fuori dagli input)
+    if ((e.key === "r" || e.key === "R") && e.target === document.body
+        && !e.metaKey && !e.ctrlKey && !e.altKey) $("#btn-run").click();
   });
   const menu = $("#panel-menu");
+  // filtro del catalogo: 34 card in lista piatta erano difficili da scandire
+  const mFilter = CE("input");
+  mFilter.type = "search";
+  mFilter.placeholder = L("filtra pannelli…", "filter panels…");
+  mFilter.setAttribute("aria-label", L("filtra pannelli", "filter panels"));
+  mFilter.style.cssText = "margin:4px 6px 6px;width:calc(100% - 12px)";
+  mFilter.onclick = (e) => e.stopPropagation();   // non chiudere il menu
+  mFilter.oninput = () => {
+    const q = mFilter.value.trim().toLowerCase();
+    for (const b of menu.querySelectorAll("button"))
+      b.hidden = !!q && !b.textContent.toLowerCase().includes(q);
+    for (const s of menu.querySelectorAll(".menu-sec")) {
+      let el = s.nextElementSibling, any = false;
+      while (el && !el.classList.contains("menu-sec")) {
+        if (el.tagName === "BUTTON" && !el.hidden) any = true;
+        el = el.nextElementSibling;
+      }
+      s.hidden = !!q && !any;
+    }
+  };
+  menu.appendChild(mFilter);
   let lastGroup = -1;
   for (const [type, name, dom, group] of PALETTE) {
     if (group !== lastGroup) { menu.appendChild(CE("div", "menu-sec", GROUPS[group])); lastGroup = group; }
