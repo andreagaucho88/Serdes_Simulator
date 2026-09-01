@@ -10,6 +10,21 @@ const TT = (it, en) => `IT: ${it}\nEN: ${en}`;
 /* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
    frammenti IT→EN applicati solo in modalità EN. */
 const TR_FRAGMENTS = [
+  ["interfaccia elettrica long reach", "long-reach electrical interface"],
+  ["interfaccia elettrica", "electrical interface"],
+  ["modulo elettrico", "electrical module"],
+  ["backplane elettrico", "electrical backplane"],
+  ["elettrico corto", "short electrical"],
+  ["elettrico C2C", "C2C electrical"],
+  ["PMD ottico", "optical PMD"],
+  ["λ ottico", "λ optical"],
+  ["G ottico", "G optical"],
+  ["112G didattico — 2 km @1550 nm", "112G educational — 2 km @1550 nm"],
+  ["Back-to-back (senza fibra)", "Back-to-back (no fiber)"],
+  ["Stress 10 km — fading CD", "10 km stress — CD fading"],
+  ["Canale elettrico severo — 20 dB @Nyquist", "Harsh electrical channel — 20 dB @Nyquist"],
+  ["RX rumoroso — TIA economico", "Noisy RX — cheap TIA"],
+  ["Link con margine — FEC al lavoro", "Link with margin — FEC at work"],
   ["iniettato", "injected"],
   ["(adiacente)", "(adjacent)"],
   ["simboli PAM4", "PAM4 symbols"],
@@ -366,6 +381,7 @@ const PARAMS = {
     names: { prbs: "PRBS (PRBSnQ per PAM4)", ssprq_like: "SSPRQ-like (stress, non-clause)", clock2: "clock 0101", clock8: "clock 4+4", eth: "Ethernet frames (L2)" } },
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
   l2_ipg_bytes: { l: "IPG (rate control)", u: "B", min: 8, max: 2000, step: 4 },
+  l2_streams: { l: "Stream (Xena)", type: "select", opts: [1, 2, 3, 4] },
   link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
     names: { optical: L("ottico (MZM+fibra+PD)", "optical (MZM+fiber+PD)"), copper: L("rame (KR/CR/C2M)", "copper (KR/CR/C2M)") } },
   pn_skew_ps: { l: "Skew P/N", u: "ps", min: 0, max: 10, step: 0.25 },
@@ -477,7 +493,7 @@ const OPTION_EN = {
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
   "VCSEL direct": "direct VCSEL",
 };
-const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)"};
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
 Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
 const _flushCfg = debounce(() => {
@@ -2021,8 +2037,40 @@ PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
   make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"]));
     p.body.appendChild(CE("div", "note", L("<b>PVT del ricevitore</b>: corner di processo, supply e temperatura scalano banda TIA/CTLE, rumore (∝√T), mismatch ADC e guadagno del loop CDR — sensibilità del primo ordine dichiarate. Prova lo sweep di pvt_temp_c: la BER vs temperatura è la curva di qualifica di un RX vero.", "<b>Receiver PVT</b>: process corner, supply, and temperature scale TIA/CTLE bandwidth, noise (∝√T), ADC mismatch, and CDR loop gain — declared first-order sensitivities. Try sweeping pvt_temp_c: BER vs temperature is a real RX qualification curve.")));
-    p.body.appendChild(paramsBlock(["pvt_process", "pvt_vdd_pct", "pvt_temp_c"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
+    p.body.appendChild(paramsBlock(["pvt_process", "pvt_vdd_pct", "pvt_temp_c"]));
+    // camera climatica: profilo di temperatura del RX nel tempo
+    const cbar = CE("div", "scope-bar");
+    p.chOn = CE("input"); p.chOn.type = "checkbox";
+    const lab = CE("label", "", ""); lab.append(p.chOn, document.createTextNode(" " + L("camera climatica", "thermal chamber")));
+    p.chMode = CE("select");
+    [["cycle", L("ciclo △", "cycle △")], ["ramp", L("rampa", "ramp")], ["soak", "soak"]].forEach(([v2, t2]) => { const o = CE("option"); o.value = v2; o.textContent = t2; p.chMode.appendChild(o); });
+    const mkN = (val, w2, title) => { const el = CE("input"); el.type = "number"; el.value = val; el.style.width = w2; el.title = title; return el; };
+    p.chMin = mkN(-10, "56px", "T min [°C]"); p.chMax = mkN(85, "56px", "T max [°C]");
+    p.chPer = mkN(180, "60px", L("periodo [s]", "period [s]")); p.chTau = mkN(10, "50px", L("tau termico die [s]", "die thermal tau [s]"));
+    const push = () => POST("/api/chamber", { on: p.chOn.checked, mode: p.chMode.value, t_min: +p.chMin.value, t_max: +p.chMax.value, period_s: +p.chPer.value, tau_s: +p.chTau.value }).catch(e => toast(e.message));
+    [p.chOn, p.chMode, p.chMin, p.chMax, p.chPer, p.chTau].forEach(el => el.onchange = push);
+    p.chDie = CE("span", "", "");
+    cbar.append(lab, p.chMode, CE("span", "", "T"), p.chMin, "…", p.chMax, CE("span", "", "°C ·"), p.chPer, CE("span", "", "s · τ"), p.chTau, CE("span", "", "s"), p.chDie);
+    p.body.appendChild(cbar);
+    p.body.appendChild(CE("div", "note", L("Come in una camera climatica reale: la camera segue il profilo scelto e il die la insegue con un lag termico del 1° ordine (τ). Con RUN attivo BER, SNR e i parametri del RX si muovono record per record — la strip sotto mostra T e BER insieme: è la curva di qualifica in temperatura, dal vivo.", "As in a real thermal chamber: the chamber follows the chosen profile and the die tracks it with a first-order thermal lag (τ). With RUN active, BER, SNR, and the RX parameters move record by record — the strip below shows T and BER together: the live temperature qualification curve.")));
+    p.chStrip = CE("div", "plot"); p.body.appendChild(p.chStrip); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
   onConfig(p) { syncParams(p.body); },
+  onTick(p) {
+    const a = S.acc; if (!a) return;
+    if (p.chDie && a.chamber) {
+      p.chDie.textContent = a.chamber.on ? ` · die ${fix(a.chamber.die_t, 1)} °C` : "";
+      if (document.activeElement !== p.chOn) p.chOn.checked = !!a.chamber.on;
+    }
+    if (!p.chStrip || !a.hist || !a.hist.temp_c) return;
+    const now = Date.now(); if (now - (p.stripT || 0) < 1500) return; p.stripT = now;
+    const lay = PL({ height: 150, showlegend: false, yaxis2: { overlaying: "y", side: "right", type: "log", title: { text: "BER", font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+    mergeAxis(lay, "xaxis", { title: { text: L("record — qualifica in temperatura", "record — temperature qualification"), font: { size: 9 } } });
+    mergeAxis(lay, "yaxis", { title: { text: "T die [°C]", font: { size: 9 } } });
+    plot(p.chStrip, [
+      { y: a.hist.temp_c, name: "T", line: { color: COL.am, width: 1.5 } },
+      { y: a.hist.ber.map(v => v == null || v <= 0 ? null : v), name: "BER", yaxis: "y2", mode: "markers", marker: { color: COL.fail, size: 3 } },
+    ], lay);
+  },
 };
 
 PANEL_DEFS.pd = {
@@ -2227,7 +2275,7 @@ PANEL_DEFS.l2 = {
   title: "Ethernet · Traffic L2-lite", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes", "l2_ipg_bytes"]));
+    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes", "l2_ipg_bytes", "l2_streams"]));
     const toolsBar = CE("div", "scope-bar");
     const bench = CE("button", "btn btn-accent", L("Benchmark frame size", "Frame-size benchmark"));
     bench.onclick = async () => {
@@ -2263,13 +2311,18 @@ PANEL_DEFS.l2 = {
         ], lay);
         const bud = d.latency_budget.map(b => `<tr><td>${tr(b.item)}</td><td>${b.ns >= 1000 ? fix(b.ns / 1000, 2) + " µs" : fix(b.ns, 1) + " ns"}</td><td>${tr(b.detail)}</td></tr>`).join("");
         p.benchTable.innerHTML = `<table class="mini"><tr><th>${L("latency budget (one-way)", "latency budget (one-way)")}</th><th>t</th><th></th></tr>${bud}` +
-          `<tr><th>${L("totale", "total")}</th><th>${fix(d.latency_total_ns / 1000, 2)} µs</th><th></th></tr>` +
+          `<tr><th>${L("totale (budget)", "total (budget)")}</th><th>${fix(d.latency_total_ns / 1000, 2)} µs</th><th></th></tr>` +
+          (d.latency_measured_analog_ns != null ? `<tr><td>${L("GD analogico MISURATO (xcorr)", "MEASURED analog GD (xcorr)")}</td><td>${d.latency_measured_analog_ns < 1 ? fix(d.latency_measured_analog_ns * 1e3, 1) + " ps" : fix(d.latency_measured_analog_ns, 1) + " ns"}</td><td>${L("con filtri zero-fase ≈ 0: attiva causal_filters per il GD reale; fibra e DSP restano budget (record ≪ ritardo)", "≈ 0 with zero-phase filters: enable causal_filters for the real GD; fiber and DSP stay budget (record ≪ delay)")}</td></tr>` : "") +
           (d.cdr_lock_us != null ? `<tr><td>${L("service disruption proxy", "service disruption proxy")}</td><td>${fix(d.cdr_lock_us, 2)} µs</td><td>${L("tempo di lock del CDR", "CDR lock time")}</td></tr>` : "") + `</table>` +
           `<div class="note">${L("Ramp: l'IPG modula l'offered load come il rate scheduler di un ONT; la perdita qui viene SOLO dai bit error del PHY (nessun DUT con code). Latenza = budget dai blocchi, non un round-trip con timestamp.", "Ramp: IPG modulates offered load like an ONT rate scheduler; loss here comes ONLY from PHY bit errors (no queueing DUT). Latency = block budget, not a timestamped round-trip.")}</div>`;
       } catch (e) { p.benchTable.innerHTML = `<div class="note w">${e.message}</div>`; }
       ont.disabled = false; ont.textContent = L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)");
     };
-    toolsBar.append(bench, ont, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
+    const disr = CE("button", "btn", L("Service disruption", "Service disruption"));
+    disr.title = L("interrompe il segnale per un record (fibra tagliata) e misura l'outage fino al ritorno del lock — il test di disruption di un ONT", "kills the signal for one record (fiber cut) and measures the outage until lock returns — an ONT disruption test");
+    disr.onclick = () => POST("/api/disrupt", {}).then(() => toast(L("segnale interrotto: guarda SYNC LOSS e l'outage misurato", "signal cut: watch SYNC LOSS and the measured outage"))).catch(e => toast(e.message));
+    p.disrInfo = CE("span", "", "");
+    toolsBar.append(bench, ont, disr, p.disrInfo, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
     p.body.appendChild(toolsBar);
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.insp = CE("div"); p.body.appendChild(p.insp);
@@ -2284,19 +2337,27 @@ PANEL_DEFS.l2 = {
   async refetchFrames(p) {
     try {
       const d = await GET(`/api/panel/l2?source=${S.running ? "live" : "auto"}`);
-      if (!d.frames || !d.frames.length) { p.insp.innerHTML = ""; return; }
+      let head = "";
+      if (d.per_stream) {
+        head = `<table class="mini"><tr><th>${L("stream", "stream")}</th><th>size</th><th>det</th><th>OK</th><th>FCS</th><th>${L("persi", "lost")}</th></tr>` +
+          d.per_stream.map(st => `<tr><td><b>S${st.stream_id}</b></td><td>${st.size}B</td><td>${st.detected}</td><td class="ok">${st.ok}</td><td class="${st.fcs_bad ? "fail" : ""}">${st.fcs_bad}</td><td class="${st.lost ? "fail" : ""}">${st.lost}</td></tr>`).join("") +
+          `</table><div class="note">${L("Multi-stream stile Xena: ogni stream ha id, sequence e size propri (round-robin). I frame grandi raccolgono più bit error per frame: guarda S0/S2 vs S1.", "Xena-style multi-stream: each stream has its own id, sequence space, and size (round-robin). Large frames collect more bit errors per frame: compare S0/S2 vs S1.")}</div>`;
+      }
+      if (!d.frames || !d.frames.length) { p.insp.innerHTML = head; return; }
       const rows = d.frames.map(f => `<tr>
         <td>${f.seq}</td><td>${f.da.slice(0, 8)}…</td><td>${f.sa.slice(0, 8)}…</td><td>${f.ethertype}</td><td>${f.payload_len}B</td>
         <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_rx}</td><td>${f.fcs_calc}</td>
         <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_ok ? "OK" : "BAD"}</td></tr>
         <tr><td colspan="8" style="font-family:monospace;font-size:9px;color:var(--muted,#7e93a2)">${f.hex_head} …</td></tr>`).join("");
-      p.insp.innerHTML = `<table class="mini"><tr><th>seq</th><th>DA</th><th>SA</th><th>EthType</th><th>len</th><th>${L("FCS ricevuta", "FCS received")}</th><th>${L("CRC-32 ricalcolato", "recomputed CRC-32")}</th><th>✓</th></tr>${rows}</table>` +
+      p.insp.innerHTML = head + `<table class="mini"><tr><th>seq</th><th>DA</th><th>SA</th><th>EthType</th><th>len</th><th>${L("FCS ricevuta", "FCS received")}</th><th>${L("CRC-32 ricalcolato", "recomputed CRC-32")}</th><th>✓</th></tr>${rows}</table>` +
         `<div class="note">${L("Ispettore frame: questi sono i byte VERI decodificati dall'ultimo record RX (dopo FEC e descrambler). Ogni frame si verifica così: preamble+SFD (55…d5) delimitano, il sequence number scova i persi, e la FCS ricevuta deve coincidere col CRC-32 ricalcolato sui byte — esattamente come l'ED di uno Xena/ONT.", "Frame inspector: these are the REAL bytes decoded from the last RX record (after FEC and descrambler). Each frame is verified like this: preamble+SFD (55…d5) delimit it, the sequence number catches lost frames, and the received FCS must match the CRC-32 recomputed over the bytes — exactly like a Xena/ONT error detector.")}</div>`;
     } catch (e) { p.insp.innerHTML = ""; }
   },
   onTick(p) {
     if (throttled(p, 2200)) this.refetchFrames(p);
-    const a = S.acc; if (!a || !a.l2) return;
+    const a = S.acc; if (!a) return;
+    if (p.disrInfo) p.disrInfo.textContent = a.last_disruption_ms != null ? `⏱ outage ${fix(a.last_disruption_ms, 0)} ms` : "";
+    if (!a.l2) return;
     const l = a.l2;
     p.ro.innerHTML = "";
     if (!l.active) {
@@ -2734,11 +2795,11 @@ async function boot() {
   S.controlHelp = st.control_help || {};
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— ${L("preset didattici", "educational presets")} —</option>`;
-  for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; ps.appendChild(o); }
+  for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = tr(p.name); o.title = tr(p.desc); ps.appendChild(o); }
   ps.onchange = () => { if (ps.value) { POST("/api/preset", { name: ps.value }).catch(e => toast(e.message)); $("#profile-select").value = ""; } };
   const pf = $("#profile-select");
   pf.innerHTML = `<option value="">— ${L("profili standard IEEE/OIF", "IEEE/OIF standard profiles")} —</option>`;
-  for (const p of (st.profiles || [])) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; pf.appendChild(o); }
+  for (const p of (st.profiles || [])) { const o = CE("option"); o.value = p.name; o.textContent = tr(p.name); o.title = tr(p.desc); pf.appendChild(o); }
   pf.onchange = () => { if (pf.value) { POST("/api/preset", { name: pf.value }).catch(e => toast(e.message)); ps.value = ""; } };
   $("#btn-run").onclick = () => POST("/api/run", { running: !S.running }).catch(e => toast(e.message));
   const anltBtn = $("#btn-anlt");

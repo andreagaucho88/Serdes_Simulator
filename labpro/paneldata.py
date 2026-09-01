@@ -1007,6 +1007,9 @@ def bert_panel(sim, cfg):
 
 
 def l2_panel(sim, cfg):
+    from serdes_sim.blocks.ethernet import STREAM_SIZES
+    ethernet_sizes = [(STREAM_SIZES[i] or cfg.l2_frame_bytes)
+                      for i in range(cfg.l2_streams)]
     if cfg.pattern != "eth":
         return {"inactive": True}
     if not sim.link_up:
@@ -1025,6 +1028,12 @@ def l2_panel(sim, cfg):
         "frame_bytes": cfg.l2_frame_bytes,
         "fec": cfg.fec_mode,
         "frames": _decode_frames(sim, cfg),
+        "per_stream": ([{"stream_id": st.stream_id, "detected": st.detected,
+                         "ok": st.ok, "fcs_bad": st.fcs_bad, "lost": st.lost,
+                         "size": (ethernet_sizes[st.stream_id]
+                                  if st.stream_id < len(ethernet_sizes)
+                                  else cfg.l2_frame_bytes)}
+                        for st in l2.per_stream] if l2.per_stream else None),
     })
 
 

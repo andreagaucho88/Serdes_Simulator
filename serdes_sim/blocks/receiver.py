@@ -153,7 +153,8 @@ def _pvt_rx(cfg):
 def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     # --- Photodiode: square-law, banda, saturazione -------------------------
     pvt = _pvt_rx(cfg)
-    i_pd_unfiltered_a = cfg.pd_responsivity_a_w * P_fiber_w + cfg.pd_dark_current_a
+    dark_a = cfg.pd_dark_current_a * cfg.pvt_factors["dark"]
+    i_pd_unfiltered_a = cfg.pd_responsivity_a_w * P_fiber_w + dark_a
     i_pd_bandlimited_a, _, _ = apply_frequency_response(
         i_pd_unfiltered_a, cfg.fs_analog_hz,
         lambda f: butterworth_response(f, cfg.pd_bw_hz, order=3,

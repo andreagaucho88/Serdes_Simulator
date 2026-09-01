@@ -170,8 +170,9 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     # sorgente del payload (stile PPG di un BERT)
     def _payload_bits(n):
         if cfg.pattern == "eth":
-            bits, _, _ = ethernet.build_stream_bits(n, cfg.l2_frame_bytes,
-                                                    ipg_bytes=cfg.l2_ipg_bytes)
+            bits, _, _ = ethernet.build_stream_bits(
+                n, cfg.l2_frame_bytes, ipg_bytes=cfg.l2_ipg_bytes,
+                streams=cfg.l2_streams)
             # scrambler PCS (Clause 49): senza, l'idle 0x00 di un IPG lungo
             # produce run costanti che ammazzano CDR e AGC
             return ethernet.scramble(bits)
@@ -550,9 +551,18 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
 
     # --- 9d. Analyzer L2 (pattern eth): delineazione frame e contatori ------
     if cfg.pattern == "eth":
-        flb = (len(ethernet.PREAMBLE) + len(ethernet.HEADER)
-               + max(cfg.l2_frame_bytes - len(ethernet.HEADER) - 4, 8) + 4
-               + cfg.l2_ipg_bytes) * 8                     # bit per frame
+        def _frame_bits(sz):
+            return (len(ethernet.PREAMBLE) + len(ethernet.HEADER)
+                    + max(sz - len(ethernet.HEADER) - 4, 8) + 4
+                    + cfg.l2_ipg_bytes) * 8
+        if cfg.l2_streams > 1:
+            # multi-stream: l'unità di allineamento è il ROUND (un frame
+            # per stream, round-robin) — seq del round = indice del round
+            sizes = [(ethernet.STREAM_SIZES[i] or cfg.l2_frame_bytes)
+                     for i in range(cfg.l2_streams)]
+            flb = sum(_frame_bits(sz) for sz in sizes)
+        else:
+            flb = _frame_bits(cfg.l2_frame_bytes)          # bit per frame
         if result.fec_link is not None and result.fec_link.post_payload_bits is not None:
             codec = fec_block.FEC_CODECS[cfg.fec_mode]
             stream = result.fec_link.post_payload_bits
@@ -575,7 +585,7 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
             result.l2 = ethernet.analyze_stream_bits(
                 window, cfg.l2_frame_bytes,
                 window_s=len(window) / payload_rate, seq0=seq0,
-                ipg_bytes=cfg.l2_ipg_bytes)
+                ipg_bytes=cfg.l2_ipg_bytes, streams=cfg.l2_streams)
             _check(result, result.l2.frames_detected > 0,
                    "Analyzer L2: frame delineati",
                    f"{result.l2.frames_ok} ok / {result.l2.frames_fcs_bad} FCS "
@@ -1080,13 +1090,27 @@ def l2_ont_report(cfg: LinkConfig, ipg_grid=(12, 96, 384, 1024, 2000),
     budget = [{"item": n, "ns": v, "detail": d} for n, v, d in items]
     total_ns = float(sum(b["ns"] for b in budget))
 
+    # --- latenza MISURATA: ritardo di gruppo end-to-end via correlazione ---
+    # fra il drive TX e l'uscita CTLE (dove la fisica analogica è tutta
+    # attraversata). DICHIARATO: la pipeline DIGITALE del banco (FSE/DFE/
+    # FEC) è istantanea nel simulatore — la sua latenza resta da budget.
+    x = np.asarray(r0.channel_input_v, dtype=float)
+    yv = np.asarray(r0.receiver.v_ctle_v, dtype=float)
+    n_x = min(len(x), len(yv), 60000)
+    xd = x[:n_x] - x[:n_x].mean()
+    yd = yv[:n_x] - yv[:n_x].mean()
+    corr = np.correlate(yd, xd[: n_x // 2], mode="valid")
+    lag_samples = int(np.argmax(np.abs(corr)))
+    latency_meas_ns = lag_samples / cfg.fs_analog_hz * 1e9
+
     # --- service disruption proxy: tempo di lock del CDR -------------------
     lock_us = None
     if (r0.cdr is not None and getattr(r0.cdr, "lock_symbol", None)
             is not None):
         lock_us = r0.cdr.lock_symbol / cfg.symbol_rate_hz * 1e6
     return {"ramp": ramp, "latency_budget": budget, "latency_total_ns":
-            total_ns, "cdr_lock_us": lock_us,
+            total_ns, "latency_measured_analog_ns": float(latency_meas_ns),
+            "cdr_lock_us": lock_us,
             "line_rate_gbps": line_gbps,
             "frame_bytes": cfg.l2_frame_bytes}
 

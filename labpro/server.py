@@ -70,6 +70,19 @@ def broadcast(payload: dict):
             CLIENTS.discard(c)
 
 
+def cfg_matches_live(sim, cfg):
+    """La sim live coincide con la config del banco a meno dei campi
+    VOLATILI per-record (temperatura della camera climatica, error
+    insertion one-shot): senza questa normalizzazione, con la camera
+    attiva tutti i pannelli ricadrebbero sulla reference."""
+    if sim is None:
+        return False
+    return sim.cfg.with_updates(
+        pvt_temp_c=cfg.pvt_temp_c,
+        err_insert_bits=cfg.err_insert_bits,
+        err_insert_burst=cfg.err_insert_burst) == cfg
+
+
 def on_record(snapshot):
     if MAIN_LOOP is not None:
         MAIN_LOOP.add_callback(broadcast,
@@ -329,6 +342,22 @@ class ApiOnt(Base):
         self.write_json(paneldata.J({"ok": True, **out}))
 
 
+class ApiDisrupt(Base):
+    def post(self):
+        BENCH.disrupt()
+        self.write_json({"ok": True})
+
+
+class ApiChamber(Base):
+    def post(self):
+        body = self.body_json()
+        BENCH.set_chamber(**{k: v for k, v in body.items()
+                             if k in ("on", "mode", "t_min", "t_max",
+                                      "period_s", "tau_s")})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
+        self.write_json({"ok": True, "chamber": BENCH.chamber})
+
+
 class ApiInject(Base):
     def post(self):
         body = self.body_json()
@@ -397,12 +426,12 @@ class ApiPanel(Base):
                 "timing", "eq", "decisions", "bert", "checks", "adc", "l2",
                 "eyecontour", "physics", "tx"):
             sim = live_sim
-            if sim is not None and sim.cfg == cfg:
+            if cfg_matches_live(sim, cfg):
                 source_used = "live"
         if name == "education":
             sim = None  # catalogo statico: nessuna simulazione costosa
             source_used = "static"
-        elif sim is None or sim.cfg != cfg:
+        elif not cfg_matches_live(sim, cfg):
             try:
                 sim = paneldata.ref_sim(cfg)
             except ValueError as exc:
@@ -444,7 +473,7 @@ class ApiScope(Base):
         source = self.get_argument("source", "auto")
         sim = live_sim if source in ("auto", "live") else None
         source_used = "live"
-        if sim is None or sim.cfg != cfg:
+        if not cfg_matches_live(sim, cfg):
             sim = paneldata.ref_sim(cfg)
             source_used = "reference"
         try:
@@ -511,6 +540,8 @@ def make_app():
         (r"/api/experiment/traffic", ApiTraffic),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
+        (r"/api/chamber", ApiChamber),
+        (r"/api/disrupt", ApiDisrupt),
         (r"/api/inject", ApiInject),
         (r"/api/scope", ApiScope),
         (r"/api/panel/(\w+)", ApiPanel),

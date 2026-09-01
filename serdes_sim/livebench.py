@@ -30,7 +30,52 @@ class LiveBench:
         self._stop_evt = threading.Event()
         self.on_record = None          # callback(snapshot) dopo ogni record
         self.latest = None             # ultimo SimResult (per scope/spettro)
+        # camera climatica: profilo di temperatura del RICEVITORE nel tempo.
+        # Il die insegue la camera con un lag del 1° ordine (tau termico);
+        # lo stato NON si azzera al cambio config (la camera è "fisica")
+        self.chamber = {"on": False, "mode": "cycle", "t_min": -10.0,
+                        "t_max": 85.0, "period_s": 180.0, "tau_s": 10.0}
+        self._die_t = 25.0
+        self._chamber_t0 = time.time()
+        self._last_rec_t = time.time()
         self._reset_locked()
+
+    def set_chamber(self, **kw):
+        with self._lock:
+            restart = kw.get("on") and not self.chamber["on"]
+            for k, v in kw.items():
+                if k in self.chamber:
+                    self.chamber[k] = (bool(v) if k == "on" else
+                                       str(v) if k == "mode" else float(v))
+            self.chamber["t_min"] = max(-40.0, min(self.chamber["t_min"], 125.0))
+            self.chamber["t_max"] = max(-40.0, min(self.chamber["t_max"], 125.0))
+            self.chamber["period_s"] = max(10.0, self.chamber["period_s"])
+            self.chamber["tau_s"] = max(1.0, self.chamber["tau_s"])
+            if restart:
+                self._chamber_t0 = time.time()
+
+    def _chamber_target(self, now):
+        ch = self.chamber
+        el = now - self._chamber_t0
+        per = ch["period_s"]
+        if ch["mode"] == "soak":
+            return ch["t_max"]
+        if ch["mode"] == "ramp":
+            f = min(el / per, 1.0)
+            return ch["t_min"] + f * (ch["t_max"] - ch["t_min"])
+        frac = (el / per) % 1.0                     # cycle triangolare
+        tri = 2 * frac if frac < 0.5 else 2 - 2 * frac
+        return ch["t_min"] + tri * (ch["t_max"] - ch["t_min"])
+
+    def _chamber_step(self, now):
+        """Aggiorna la temperatura del die (lag 1° ordine verso la camera)."""
+        dt = max(now - self._last_rec_t, 1e-3)
+        self._last_rec_t = now
+        target = self._chamber_target(now)
+        import math
+        alpha = 1.0 - math.exp(-dt / self.chamber["tau_s"])
+        self._die_t += alpha * (target - self._die_t)
+        return float(min(max(self._die_t, -40.0), 125.0))
 
     # ------------------------------------------------------------------ state
     def _reset_locked(self):
@@ -61,6 +106,9 @@ class LiveBench:
         self.l2_records = 0
         # BERT error insertion (one-shot sul prossimo record)
         self._inject_bits = 0
+        self._disrupt_pending = False
+        self._disrupt_started = None
+        self.last_disruption_ms = None
         self._inject_burst = False
         self.injected_total = 0
         self.postfec_bits = 0
@@ -73,15 +121,17 @@ class LiveBench:
         # strip-chart di acquisizione: un punto per record (None = LINK DOWN,
         # così i pannelli mostrano il buco invece di interpolare)
         self.hist = {"ber": [], "errors": [], "snr_db": [], "q_min": [],
-                     "f_ppm": [], "tau_rms_ui": []}
+                     "f_ppm": [], "tau_rms_ui": [], "temp_c": []}
         self._rec_t = []               # timestamp degli ultimi record (rate)
         self.started_at = time.time()
 
     def _hist_push(self, r, row):
         h = self.hist
+        h["temp_c"].append(float(r.cfg.pvt_temp_c) if r is not None else None)
         if r is None or not r.link_up:
             for k in h:
-                h[k].append(None)
+                if k != "temp_c":
+                    h[k].append(None)
         else:
             h["ber"].append(row["bit_errors"] / max(row["bits"], 1))
             h["errors"].append(int(row["bit_errors"]))
@@ -107,6 +157,13 @@ class LiveBench:
     def reset_stats(self):
         with self._lock:
             self._reset_locked()
+
+    def disrupt(self):
+        """ONT service disruption test: il prossimo record perde il segnale
+        (laser spento / canale interrotto); si misura il tempo di outage
+        fino al ritorno del lock — come l'interruzione di fibra su un ONT."""
+        with self._lock:
+            self._disrupt_pending = True
 
     def inject_errors(self, n_bits: int, burst: bool = False):
         """BERT: inverte n bit del pattern TX (vs riferimento ED) al
@@ -161,6 +218,17 @@ class LiveBench:
             run_cfg = (cfg if inject == 0
                        else cfg.with_updates(err_insert_bits=inject,
                                              err_insert_burst=inject_burst))
+            if self.chamber["on"]:
+                die_t = self._chamber_step(time.time())
+                run_cfg = run_cfg.with_updates(pvt_temp_c=round(die_t, 2))
+            with self._lock:
+                if self._disrupt_pending:
+                    self._disrupt_pending = False
+                    self._disrupt_started = time.time()
+                    run_cfg = (run_cfg.with_updates(laser_dbm=-30.0)
+                               if run_cfg.link_medium == "optical" else
+                               run_cfg.with_updates(
+                                   channel_il_nyquist_db=60.0))
             try:
                 r = simulate(run_cfg, seed=seed, depth="light")
             except Exception:
@@ -174,6 +242,10 @@ class LiveBench:
                 if (self.latest is not None and self.latest.link_up
                         and not r.link_up):
                     self.sync_losses += 1     # SYNC LOSS stile ED
+                if self._disrupt_started is not None and r.link_up:
+                    self.last_disruption_ms = round(
+                        (time.time() - self._disrupt_started) * 1e3, 1)
+                    self._disrupt_started = None
                 self.latest = r
                 self.records += 1
                 if inject:
@@ -294,6 +366,8 @@ class LiveBench:
             },
             "link_down_records": self.link_down_records,
             "sync_losses": self.sync_losses,
+            "chamber": {**self.chamber, "die_t": round(self._die_t, 2)},
+            "last_disruption_ms": self.last_disruption_ms,
             "injected_total": self.injected_total,
             "l2": {
                 "active": bool(self._cfg.pattern == "eth"),

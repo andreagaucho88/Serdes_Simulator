@@ -35,6 +35,10 @@ _add("prbs_order pattern", "PPG", "PCS/PPG output",
 _add("modulation pam4_mapping", "Mapper", "mapper output",
      "sceglie livelli e label di bit; Gray limita a un bit l'errore fra livelli adiacenti, ma non migliora l'occhio analogico.",
      "selects levels and bit labels; Gray limits adjacent-level errors to one bit but does not improve the analog eye.")
+_add("l2_streams", "Traffic generator", "PPG payload (frames)",
+     "generatore multi-stream stile Xena: 1..4 flussi round-robin, ognuno con stream-id, sequence e frame size propri (64/512/1024 B per gli stream extra). L'analyzer attribuisce ok/FCS/persi PER stream — i frame grandi soffrono più bit error per frame. Con FEC in-path servono record lunghi perché un round intero cada in validation.",
+     "Xena-style multi-stream generator: 1..4 round-robin flows, each with its own stream-id, sequence space, and frame size (64/512/1024 B for the extra streams). The analyzer attributes ok/FCS/lost PER stream — large frames take more bit errors per frame. With in-path FEC, long records are needed for a full round to fall inside validation.",
+     "round = 1 frame per stream", "pattern = eth")
 _add("pvt_process pvt_vdd_pct pvt_temp_c", "RX PVT", "TIA/CTLE/ADC/CDR (receiver only)",
      "corner di processo (SS/TT/FF), supply e temperatura del die RX. Sensibilità del primo ordine dichiarate: banda dei device (SS −15%, mobilità ≈ −0.15%/°C, −10% VDD ≈ −5% BW), rumore termico ∝ √T assoluta, mismatch ADC peggiore ai corner e con |ΔT|, guadagno del loop CDR coi device. Il worst case classico è SS + caldo + VDD basso: la CTLE perde peaking proprio dove serve. Default TT/0%/25 °C = fattori identità (baseline intatta).",
      "RX die process corner (SS/TT/FF), supply, and temperature. Declared first-order sensitivities: device bandwidth (SS −15%, mobility ≈ −0.15%/°C, −10% VDD ≈ −5% BW), thermal noise ∝ √(absolute T), ADC mismatch worse at corners and with |ΔT|, CDR loop gain with device speed. The classic worst case is SS + hot + low VDD: the CTLE loses peaking exactly where it is needed. Default TT/0%/25 °C = identity factors (baseline intact).",

@@ -19,6 +19,7 @@ class LinkConfig:
     pattern: str = "prbs"         # prbs | clock2 | clock8 | eth | ssprq_like
     l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
     l2_ipg_bytes: int = 12        # inter-packet gap (rate control del PPG)
+    l2_streams: int = 1           # generatore multi-stream stile Xena (1..4)
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
     fec_mode: str = "none"        # "none" | "kp4" RS(544,514) | "kr4" RS(528,514)
@@ -184,7 +185,10 @@ class LinkConfig:
         noise = (max(self.pvt_temp_c + 273.15, 1.0) / 298.15) ** 0.5
         mismatch = (1.0 + 0.006 * abs(d_t)) * (
             1.3 if self.pvt_process != "tt" else 1.0)
-        return {"bw": bw, "noise": noise, "mismatch": mismatch,
+        # dark current del PD: Arrhenius, raddoppia ogni ~9 °C (fisica
+        # standard dei fotodiodi InGaAs) — a 125 °C vale ~×2000
+        dark = 2.0 ** (d_t / 9.0)
+        return {"bw": bw, "noise": noise, "mismatch": mismatch, "dark": dark,
                 "cdr_gain": corner * (1.0 + 0.004 * self.pvt_vdd_pct)}
 
     @property
@@ -226,6 +230,8 @@ class LinkConfig:
             problems.append("pam4_mapping deve essere gray o binary")
         if self.fec_mode not in ("none", "kp4", "kr4"):
             problems.append("fec_mode deve essere none/kp4/kr4")
+        if not (1 <= self.l2_streams <= 4):
+            problems.append("l2_streams fuori range [1, 4]")
         if self.fec_interleave not in (1, 2, 4):
             problems.append("fec_interleave deve essere 1, 2 o 4")
         if len(self.tx_ffe_taps) not in (3, 5, 7):

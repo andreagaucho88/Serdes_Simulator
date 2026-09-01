@@ -482,13 +482,92 @@ def test_bert_error_insertion_counted():
     assert 15 <= delta <= 20     # quasi tutte le inserzioni contate dall'ED
 
 
+def test_multistream_generator_and_analyzer():
+    """Xena-style: 3 stream round-robin con id/sequence/size propri; un bit
+    corrotto viene attribuito allo stream giusto."""
+    from serdes_sim.blocks import ethernet as eth
+    bits, nfr, _ = eth.build_stream_bits(120000, 256, ipg_bytes=12, streams=3)
+    a = eth.analyze_stream_bits(bits, 256, window_s=1e-6, streams=3)
+    assert a.frames_ok == a.frames_expected and a.frames_lost == 0
+    assert len(a.per_stream) == 3
+    bad = bits.copy()
+    bad[9000] ^= 1                      # dentro un frame dello stream 0
+    a2 = eth.analyze_stream_bits(bad, 256, window_s=1e-6, streams=3)
+    hit = [st for st in a2.per_stream if st.fcs_bad]
+    assert len(hit) == 1 and sum(st.fcs_bad for st in a2.per_stream) == 1
+
+
+def test_multistream_end_to_end():
+    r = simulate(LinkConfig(pattern="eth", l2_streams=3, n_symbols=24000,
+                            **GOOD_LINK), seed=11, depth="light")
+    assert r.link_up and r.l2 is not None and r.l2.per_stream
+    assert len(r.l2.per_stream) == 3
+    assert LinkConfig(l2_streams=9).validate()
+
+
+def test_chamber_profile_and_die_lag():
+    import time
+    from serdes_sim.livebench import LiveBench
+    b = LiveBench(LinkConfig(**GOOD_LINK))
+    b.set_chamber(on=True, mode="soak", t_max=85.0, tau_s=2.0)
+    # forma d'onda: ciclo triangolare simmetrico
+    b.chamber["mode"] = "cycle"
+    b._chamber_t0 = 1000.0
+    b.chamber["period_s"] = 100.0
+    b.chamber["t_min"], b.chamber["t_max"] = -10.0, 90.0
+    assert b._chamber_target(1000.0) == pytest.approx(-10.0)
+    assert b._chamber_target(1025.0) == pytest.approx(40.0)   # metà salita
+    assert b._chamber_target(1050.0) == pytest.approx(90.0)   # picco
+    assert b._chamber_target(1075.0) == pytest.approx(40.0)   # discesa
+    # integrazione: il die insegue con lag e la BER si muove col profilo
+    b.chamber.update(mode="soak", t_max=85.0)
+    b._chamber_t0 = time.time()
+    b.start(); time.sleep(2.5); b.stop()
+    snap = b.snapshot()
+    temps = [t for t in snap["hist"]["temp_c"] if t is not None]
+    assert len(temps) >= 2 and temps[-1] > temps[0] + 5.0
+    assert snap["chamber"]["on"] and snap["chamber"]["die_t"] > 30.0
+
+
+def test_dark_current_arrhenius():
+    f25 = LinkConfig().pvt_factors["dark"]
+    f125 = LinkConfig(pvt_temp_c=125.0).pvt_factors["dark"]
+    fm40 = LinkConfig(pvt_temp_c=-40.0).pvt_factors["dark"]
+    assert f25 == pytest.approx(1.0)
+    assert 1500 < f125 < 3500          # raddoppio ogni ~9 °C
+    assert fm40 < 0.01
+
+
+def test_service_disruption_measured():
+    import time
+    from serdes_sim.livebench import LiveBench
+    b = LiveBench(LinkConfig(**GOOD_LINK))
+    b.start(); time.sleep(1.2)
+    b.disrupt()
+    time.sleep(2.5); b.stop()
+    snap = b.snapshot()
+    assert snap["sync_losses"] >= 1
+    assert snap["last_disruption_ms"] is not None
+    assert 100 < snap["last_disruption_ms"] < 5000
+
+
+def test_ont_measured_analog_gd():
+    from serdes_sim.engine import l2_ont_report
+    cfg = LinkConfig(pattern="eth", causal_filters=True,
+                     channel_delay_ps=40.0, **GOOD_LINK)
+    out = l2_ont_report(cfg, ipg_grid=(12,))
+    # con filtri causali il GD analogico misurato è > del solo canale
+    assert 0.04 <= out["latency_measured_analog_ns"] <= 0.5
+
+
 def test_rx_pvt_corners_order_and_identity():
     """PVT del ricevitore: TT/0%/25°C = identità (fattori 1.0, baseline
     intatta); il worst case SS+caldo+VDD basso peggiora la BER, FF+freddo
     la migliora — l'ordine fisico di una qualifica RX."""
     cfgs = dict(fiber_km=0.0, chirp_alpha=0.0, channel_il_nyquist_db=12.0)
     f = LinkConfig().pvt_factors
-    assert f == {"bw": 1.0, "noise": 1.0, "mismatch": 1.0, "cdr_gain": 1.0}
+    assert f == {"bw": 1.0, "noise": 1.0, "mismatch": 1.0,
+                 "dark": 1.0, "cdr_gain": 1.0}
     tt = simulate(LinkConfig(**cfgs), seed=7, depth="light")
     ss = simulate(LinkConfig(pvt_process="ss", pvt_temp_c=125.0,
                              pvt_vdd_pct=-10.0, **cfgs), seed=7,
