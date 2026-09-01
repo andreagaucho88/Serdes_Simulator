@@ -223,3 +223,6 @@ canvas.scope { width: 100%; display: block; background: #04070A;
 .ed-num.warn2 { color: #e05252; }
 .sec-tag { font-size: 9px; letter-spacing: 1px; color: var(--muted, #7e93a2);
   border-right: 1px solid rgba(126,147,162,.3); padding-right: 8px; margin-right: 2px; }
+
+/* i sub dei readout vanno a capo: mai incollati al valore */
+.ro .sub { display: block; margin-top: 2px; }

@@ -10,6 +10,63 @@ const TT = (it, en) => `IT: ${it}\nEN: ${en}`;
 /* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
    frammenti IT→EN applicati solo in modalità EN. */
 const TR_FRAGMENTS = [
+  ["iniettato", "injected"],
+  ["(adiacente)", "(adjacent)"],
+  ["simboli PAM4", "PAM4 symbols"],
+  ["simboli (clause 120D)", "symbols (clause 120D)"],
+  ["simboli (firma DFE)", "symbols (DFE signature)"],
+  ["~23k simboli", "~23k symbols"],
+  ["simbolo RS", "RS symbol"],
+  ["bit/errore simbolo", "bits/symbol error"],
+  ["tap tipici 802.3ck", "typical 802.3ck taps"],
+  ["architettura tipica", "typical architecture"],
+  ["banda DCA reale", "real DCA bandwidth"],
+  ["banda tipica", "typical bandwidth"],
+  ["peaking tipico", "typical peaking"],
+  ["sensibilità tipica", "typical sensitivity"],
+  ["RLM minimo tipico", "typical minimum RLM"],
+  ["minimo tipico", "typical minimum"],
+  ["tipico conn.", "typical (connector)"],
+  ["tipico DR/FR", "typical DR/FR"],
+  ["tipica", "typical"],
+  ["tipico", "typical"],
+  ["soglia pre-FEC KP4", "KP4 pre-FEC threshold"],
+  ["t / soglia", "t / threshold"],
+  ["(stessi livelli di picco)", "(same peak levels)"],
+  ["(per 1e-13 post)", "(for 1e-13 post-FEC)"],
+  ["per lane", "per lane"],
+  ["codici CTLE reali", "real CTLE codes"],
+  ["righe interleave", "interleave spurs"],
+  ["potenza ADC 112G", "112G ADC power"],
+  ["occhio", "eye"],
+  ["indip., Derickson", "indep., Derickson"],
+  ["utilizzo max 64B", "max utilization 64B"],
+  ["overhead minimo", "minimum overhead"],
+  ["offset clock max", "max clock offset"],
+  ["latency FEC (store)", "FEC latency (store)"],
+  ["legge quadratica", "square law"],
+  ["1 dB opt = 2 dB el", "1 dB opt = 2 dB el"],
+  ["gestione", "management"],
+  ["soglie DOM", "DOM thresholds"],
+  ["pagine CMIS", "CMIS pages"],
+  ["form factor", "form factor"],
+  ["burst gap ED", "ED burst gap"],
+  ["zero errori", "zero errors"],
+  ["persistenza", "persistence"],
+  ["variabile / infinita", "variable / infinite"],
+  ["Lunghezza fibra [km]", "Fiber length [km]"],
+  ["Potenza laser [dBm]", "Laser power [dBm]"],
+  ["IL canale @Nyquist [dB]", "Channel IL @Nyquist [dB]"],
+  ["Zero CTLE [Hz]", "CTLE zero [Hz]"],
+  ["Rumore TIA [A/√Hz]", "TIA noise [A/√Hz]"],
+  ["Bit ADC", "ADC bits"],
+  ["PJ TX ampiezza [UI pk]", "TX PJ amplitude [UI pk]"],
+  ["RJ TX [fs rms]", "TX RJ [fs rms]"],
+  ["Banda loop CDR [·f_baud]", "CDR loop bandwidth [·f_baud]"],
+  ["Offset clock RX [ppm]", "RX clock offset [ppm]"],
+  ["Fase di campionamento ADC [UI]", "ADC sampling phase [UI]"],
+  ["Temperatura die RX [°C]", "RX die temperature [°C]"],
+  ["Supply RX [Δ%]", "RX supply [Δ%]"],
   ["Uscita driver (diff. ideale)", "Driver output (ideal diff.)"],
   ["V_p (ramo positivo)", "V_p (positive leg)"],
   ["V_n (ramo negativo)", "V_n (negative leg)"],
@@ -198,12 +255,33 @@ function connectWS() {
 }
 // in RUN i pannelli si aggiornano a cadenza record (~0.9 s), da fermi
 // restano alla cadenza lenta originale (nessun lavoro inutile)
+let _inflight = 0;
 function throttled(p, ms) {
   const now = Date.now();
-  const lim = S.running ? Math.min(ms, 900) : ms;
-  if (now - (p.lastFetch || 0) > lim) { p.lastFetch = now; return true; }
+  // Cadenza adattiva: con pochi pannelli si segue il record (~0.9 s), con
+  // un banco pieno l'intervallo cresce col numero di pannelli — 20 pannelli
+  // che rifetchano tutti insieme a 1 Hz saturavano il main thread (pagina
+  // inchiodata). Jitter per de-sincronizzare + budget di fetch in volo.
+  const n = S.panels.length;
+  if (!p._jit) p._jit = Math.random() * 700;
+  const lim = S.running
+    ? Math.max(900, Math.min(ms, 900) + Math.max(0, n - 6) * 350) + p._jit
+    : ms + p._jit;
+  if (now - (p.lastFetch || 0) > lim && _inflight < 4) {
+    p.lastFetch = now;
+    return true;
+  }
   return false;
 }
+// contabilizza i fetch dei pannelli per il budget _inflight
+const _rawGET = GET;
+GET = (url) => {
+  if (url.startsWith("/api/panel/") || url.startsWith("/api/scope")) {
+    _inflight++;
+    return _rawGET(url).finally(() => { _inflight = Math.max(0, _inflight - 1); });
+  }
+  return _rawGET(url);
+};
 // badge LIVE/REF nell'header del pannello: dichiara da quale record arrivano i dati
 // scala/offset verticale per canale (semantica da strumento: × amplifica
 // attorno al centro, offset trasla; il deskew sposta in tempo i CH overlay)
@@ -315,7 +393,7 @@ const PARAMS = {
   tia_clip_v: { l: "Clip TIA", u: "±V", min: 0.2, max: 1.5, step: 0.05 },
   agc_target_rms_v: { l: "Target AGC", u: "Vrms", min: 0.05, max: 0.5, step: 0.01 },
   pvt_process: { l: "Process corner", type: "select", opts: ["tt", "ss", "ff"],
-    names: { tt: "TT (tipico)", ss: "SS (slow)", ff: "FF (fast)" } },
+    names: { tt: L("TT (tipico)", "TT (typical)"), ss: "SS (slow)", ff: "FF (fast)" } },
   pvt_vdd_pct: { l: "Supply RX", u: "Δ%", min: -10, max: 10, step: 0.5 },
   pvt_temp_c: { l: "Temperatura die", u: "°C", min: -40, max: 125, step: 5 },
   agc_min_gain_db: { l: "Gain AGC min", u: "dB", min: -24, max: 6, step: 1 },
@@ -599,7 +677,7 @@ PANEL_DEFS.chain = {
     const cdrI = rows[1].findIndex(b => b[0] === "cdr"), adcI = rows[1].findIndex(b => b[0] === "adc");
     const cdrX = X0 + cdrI * (W + G) + W / 2, adcX = X0 + adcI * (W + G) + W / 2;
     svg += `<path d="M ${cdrX} ${Y[1] + H} v 10 H ${adcX} v -10" fill="none" stroke="${COL.am}" stroke-width="1.1" stroke-dasharray="3 3"/>
-      <text x="${(cdrX + adcX) / 2}" y="${Y[1] + H + 22}" text-anchor="middle" fill="${COL.am}" font-size="8.5">clock recuperato</text>`;
+      <text x="${(cdrX + adcX) / 2}" y="${Y[1] + H + 22}" text-anchor="middle" fill="${COL.am}" font-size="8.5">${L("clock recuperato", "recovered clock")}</text>`;
     rows.forEach((row, ri) => {
       row.forEach(([id, label, dom, target], i) => {
         const x = X0 + i * (W + G), y = Y[ri], c = cmap[dom];
@@ -841,6 +919,17 @@ PANEL_DEFS.scope = {
     };
     const frame = () => {
       if (!p.el.isConnected) return;
+      // 30 fps: il fosforo a 60 fps saturava il main thread (UX: pagina
+      // che non risponde); ogni 2° frame basta e avanza per l'occhio umano
+      p._f = (p._f || 0) + 1;
+      if (p._f & 1) { requestAnimationFrame(frame); return; }
+      // niente lavoro se il canvas è fuori viewport o il tab è nascosto
+      if (document.hidden) { requestAnimationFrame(frame); return; }
+      if (p._f % 30 === 2) {
+        const r = p.canvas.getBoundingClientRect();
+        p._offscreen = r.bottom < 0 || r.top > innerHeight;
+      }
+      if (p._offscreen) { requestAnimationFrame(frame); return; }
       const ctx = p.canvas.getContext("2d"), W = p.canvas.width, H = p.canvas.height;
       if (p.traces.length && !p.paused) {
         const [vmin, vmax] = p.vrange;
@@ -849,20 +938,28 @@ PANEL_DEFS.scope = {
           const decay = 1 - 0.35 / p.persist;
           for (let i = 0; i < p.acc.length; i++) p.acc[i] *= decay;
           for (let k = 0; k < p.rate; k++) { rasterize(p.traces[p.idx], W, H); p.idx = (p.idx + 1) % p.traces.length; p.count++; }
-          if (!p.img) p.img = ctx.createImageData(W, H);
-          const d = p.img.data, [cr, cg, cb] = hexToRgb(p.color || COL.el);
-          let amax = 0; for (let i = 0; i < p.acc.length; i += 7) if (p.acc[i] > amax) amax = p.acc[i];
-          const inv = amax > 0 ? 1 / Math.log1p(amax) : 0;
-          for (let i = 0; i < p.acc.length; i++) {
-            const t = Math.log1p(p.acc[i]) * inv;  // 0..1 log-compresso
-            const j = i * 4;
-            if (t <= 0.001) { d[j] = 4; d[j + 1] = 7; d[j + 2] = 10; d[j + 3] = 255; continue; }
-            // colormap DCA: scuro → colore dominio → ambra → bianco
-            let r, g, b;
-            if (t < 0.5) { const u = t / 0.5; r = 4 + (cr - 4) * u; g = 7 + (cg - 7) * u; b = 10 + (cb - 10) * u; }
-            else if (t < 0.8) { const u = (t - 0.5) / 0.3; r = cr + (232 - cr) * u; g = cg + (197 - cg) * u; b = cb + (90 - cb) * u; }
-            else { const u = (t - 0.8) / 0.2; r = 232 + 23 * u; g = 197 + 58 * u; b = 90 + 165 * u; }
-            d[j] = r; d[j + 1] = g; d[j + 2] = b; d[j + 3] = 255;
+          if (!p.img) { p.img = ctx.createImageData(W, H); p.img32 = new Uint32Array(p.img.data.buffer); }
+          // LUT del colormap (1024 voci, ricalcolata solo al cambio colore):
+          // il loop per-pixel fa una sola lookup e una scrittura a 32 bit
+          if (p.lutColor !== (p.color || COL.el)) {
+            p.lutColor = p.color || COL.el;
+            const [cr, cg, cb] = hexToRgb(p.lutColor);
+            p.lut = new Uint32Array(1024);
+            for (let li = 0; li < 1024; li++) {
+              const t = li / 1023;
+              let r, g, b;
+              if (t <= 0.001) { r = 4; g = 7; b = 10; }
+              else if (t < 0.5) { const u = t / 0.5; r = 4 + (cr - 4) * u; g = 7 + (cg - 7) * u; b = 10 + (cb - 10) * u; }
+              else if (t < 0.8) { const u = (t - 0.5) / 0.3; r = cr + (232 - cr) * u; g = cg + (197 - cg) * u; b = cb + (90 - cb) * u; }
+              else { const u = (t - 0.8) / 0.2; r = 232 + 23 * u; g = 197 + 58 * u; b = 90 + 165 * u; }
+              p.lut[li] = (255 << 24) | (b << 16) | (g << 8) | r;
+            }
+          }
+          let amax = 0; for (let i = 0; i < p.acc.length; i += 13) if (p.acc[i] > amax) amax = p.acc[i];
+          const inv = amax > 0 ? 1023 / Math.log1p(amax) : 0;
+          const d32 = p.img32, lut = p.lut, accA = p.acc;
+          for (let i = 0; i < accA.length; i++) {
+            d32[i] = lut[(Math.log1p(accA[i]) * inv) | 0] || lut[1023];
           }
           ctx.putImageData(p.img, 0, 0);
           drawGrid(ctx, W, H);
@@ -1205,13 +1302,13 @@ PANEL_DEFS.serpll = {
     const ui_ps = 1e12 / S.cfg.symbol_rate_hz;
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
-      { l: "RJ iniettato", v: fix(S.cfg.tx_rj_rms_fs / 1000, 2) + " ps", sub: fix(S.cfg.tx_rj_rms_fs * 1e-3 / ui_ps, 4) + " UI rms" },
-      { l: "PJ iniettato", v: fix(S.cfg.tx_pj_amp_ui * ui_ps, 2) + " ps pk", sub: "@ " + fix(S.cfg.tx_pj_freq_mhz, 0) + " MHz" },
+      { l: L("RJ iniettato", "injected RJ"), v: fix(S.cfg.tx_rj_rms_fs / 1000, 2) + " ps", sub: fix(S.cfg.tx_rj_rms_fs * 1e-3 / ui_ps, 4) + " UI rms" },
+      { l: L("PJ iniettato", "injected PJ"), v: fix(S.cfg.tx_pj_amp_ui * ui_ps, 2) + " ps pk", sub: "@ " + fix(S.cfg.tx_pj_freq_mhz, 0) + " MHz" },
       { l: "DCD", v: fix(S.cfg.tx_dcd_pct / 100 * ui_ps, 2) + " ps pp", sub: fix(S.cfg.tx_dcd_pct, 1) + " %UI" },
-      { l: "skew P/N", v: fix(S.cfg.pn_skew_ps, 2) + " ps", sub: "notch DM a " + (S.cfg.pn_skew_ps > 0 ? fix(500 / S.cfg.pn_skew_ps, 0) + " GHz" : "∞"), title: "lo skew fra i rami filtra il differenziale: notch a 1/(2τ)" },
+      { l: L("skew P/N", "P/N skew"), v: fix(S.cfg.pn_skew_ps, 2) + " ps", sub: L("notch DM a ", "DM notch at ") + (S.cfg.pn_skew_ps > 0 ? fix(500 / S.cfg.pn_skew_ps, 0) + " GHz" : "∞"), title: L("lo skew fra i rami filtra il differenziale: notch a 1/(2τ)", "leg-to-leg skew filters the differential: notch at 1/(2τ)") },
       { l: "UI", v: fix(ui_ps, 2) + " ps" },
     ]));
-    p.ro.appendChild(CE("div", "note", "Osserva V_p, V_n, V_diff e V_cm come nodi dello Scope: lo sbilanciamento P/N fa trapelare il common-mode nel differenziale."));
+    p.ro.appendChild(CE("div", "note", L("Osserva V_p, V_n, V_diff e V_cm come nodi dello Scope: lo sbilanciamento P/N fa trapelare il common-mode nel differenziale.", "Watch V_p, V_n, V_diff, and V_cm as Scope nodes: P/N imbalance leaks common-mode into the differential.")));
   },
 };
 
@@ -1253,7 +1350,7 @@ PANEL_DEFS.jitter = {
       p.ro.appendChild(readout([
         { l: "TIE rms", v: fix(d.tie_rms_ps, 2) + " ps", big: true, sub: d.n_edges + " crossing" },
         { l: "TIE pk-pk", v: fix(d.tie_pp_ps, 2) + " ps" },
-        { l: "RJ est.", v: fix(d.rj_est_ps, 2) + " ps", sub: "iniettato " + fix(d.injected.rj_fs / 1000, 2) + " ps", title: "stima dual-Dirac grezza: include il DDJ del pattern" },
+        { l: "RJ est.", v: fix(d.rj_est_ps, 2) + " ps", sub: L("iniettato ", "injected ") + fix(d.injected.rj_fs / 1000, 2) + " ps", title: "stima dual-Dirac grezza: include il DDJ del pattern" },
         { l: "DJ est.", v: fix(d.dj_est_ps, 2) + " ps pp", sub: "PJ inj " + fix(d.injected.pj_ui * d.ui_ps, 2) + " ps · DCD " + fix(d.injected.dcd_pct / 100 * d.ui_ps, 2) + " ps" },
         ...(d.tail_fit ? [
           { l: "RJ tail-fit", v: fix(d.tail_fit.rj_ps, 3) + " ps", sub: `σL ${fix(d.tail_fit.sigma_left_ps, 3)} · σR ${fix(d.tail_fit.sigma_right_ps, 3)}`, title: L("fit Q-scale delle code della CDF del TIE (dual-Dirac, Derickson §2.5.4): pendenza asintotica = σ del RJ; ATTENZIONE, fit vicino al centro sovrastima RJ", "Q-scale fit of the TIE CDF tails (dual-Dirac, Derickson §2.5.4): asymptotic slope = RJ σ; BEWARE, fitting near the center overestimates RJ") },
@@ -1275,13 +1372,13 @@ PANEL_DEFS.jitter = {
         { x: p.history.map((_, i) => i + 1), y: p.history.map(v => v.pp), name: "pk-pk", line: { color: COL.am } },
       ], lt);
       const l1 = PL({ height: 170, showlegend: false });
-      mergeAxis(l1, "xaxis", { title: { text: "TIE [UI] — istogramma dei crossing (soglia media)", font: { size: 9 } } });
-      mergeAxis(l1, "yaxis", { type: "log", title: { text: "conteggio", font: { size: 9 } } });
+      mergeAxis(l1, "xaxis", { title: { text: L("TIE [UI] — istogramma dei crossing (soglia media)", "TIE [UI] — crossing histogram (mid threshold)"), font: { size: 9 } } });
+      mergeAxis(l1, "yaxis", { type: "log", title: { text: L("conteggio", "count"), font: { size: 9 } } });
       plot(p.plotH, [{ x: d.hist_x_ui, y: d.hist, type: "bar", marker: { color: COL.dg } }], l1);
       const shapes = [];
       if (d.injected.pj_ui > 0) shapes.push(vline(d.injected.pj_mhz, COL.am, "dash"));
       const l2 = PL({ height: 170, showlegend: false, shapes });
-      mergeAxis(l2, "xaxis", { type: "log", title: { text: "frequenza [MHz] (ambra = PJ iniettato)", font: { size: 9 } } });
+      mergeAxis(l2, "xaxis", { type: "log", title: { text: L("frequenza [MHz] (ambra = PJ iniettato)", "frequency [MHz] (amber = injected PJ)"), font: { size: 9 } } });
       mergeAxis(l2, "yaxis", { title: { text: "TIE [mUI]", font: { size: 9 } } });
       plot(p.plotS, [{ x: d.spec_f_mhz, y: d.spec_mag_mui, line: { color: COL.dg, width: 1 } }], l2);
       const lb = PL({ height: 165, showlegend: false, shapes: [vline(0, COL.muted, "dot")] });
@@ -1856,7 +1953,7 @@ PANEL_DEFS.education = {
   render(p, id) {
     const t = (p.topics || []).find(v => v.id === id); if (!t) return;
     const g = key => (t[key] && (t[key][LANG] || t[key].it)) || "";
-    const nums = (t.numbers || []).map(n => `<tr><td>${n.l}</td><td><b>${n.v}</b></td></tr>`).join("");
+    const nums = (t.numbers || []).map(n => `<tr><td>${tr(n.l)}</td><td><b>${tr(n.v)}</b></td></tr>`).join("");
     const acts = (t.actions || []).map(a2 => `<div class="lesson-act"><span class="do">▸ ${a2.do[LANG] || a2.do.it}</span><span class="see">→ ${a2.see[LANG] || a2.see.it}</span></div>`).join("");
     p.host.innerHTML = `<article class="lesson lesson-grid">
       <div class="lesson-main">
@@ -2274,8 +2371,8 @@ PANEL_DEFS.anlt = {
     p.ltPlot = CE("div", "plot"); p.body.appendChild(p.ltPlot);
     p.ltTable = CE("div"); p.ltTable.style.cssText = "max-height:180px;overflow-y:auto"; p.body.appendChild(p.ltTable);
     p.body.appendChild(CE("div", "note", L(
-      "Auto-Negotiation Clause 73 a livello di PROTOCOLLO (base page 48 bit, priority resolution → HCD, timer di Table 73-7; niente segnalazione DME) + Link Training con l'handshake vero di Clause 72/136: preset 1, richieste increment/decrement per c(-1)/c(+1), status updated/not_updated/at_limit, receiver ready. La decisione del RX usa la metrica misurata dal banco (SNR allo slicer), non un DFE hardware. Clause 73 esiste per KR/CR (backplane/rame): sull'ottica la gestione è CMIS.",
-      "Clause 73 Auto-Negotiation at the PROTOCOL level (48-bit base page, priority resolution → HCD, Table 73-7 timers; no DME signalling) plus Link Training with the real Clause 72/136 handshake: preset 1, increment/decrement requests for c(-1)/c(+1), updated/not_updated/at_limit status, receiver ready. RX decisions use the bench-measured metric (slicer SNR), not a hardware DFE. Clause 73 exists for KR/CR (backplane/copper): optics is managed via CMIS.")));
+      "Auto-Negotiation Clause 73 a livello di PROTOCOLLO (base page 48 bit, priority resolution → HCD, timer di Table 73-7; niente segnalazione DME) + Link Training BIDIREZIONALE con l'handshake di Clause 72/136 su un TX FIR a 5 tap: preset di clause, richieste increment/decrement per c(−2)/c(−1)/c(+1)/c(+2) con vincolo di picco, adattazione RX locale (CTLE/CDR), receiver ready per direzione e both_ready. I tap allenati si applicano solo se superano un holdout su seed indipendente (l'LT su un solo seed può overfittare). La decisione del RX usa la metrica di apertura d'occhio misurata (Q minimo allo slicer). Clause 73 esiste per KR/CR (backplane/rame): sull'ottica la gestione è CMIS.",
+      "Clause 73 Auto-Negotiation at the PROTOCOL level (48-bit base page, priority resolution → HCD, Table 73-7 timers; no DME signalling) plus BIDIRECTIONAL Link Training with the Clause 72/136 handshake on a 5-tap TX FIR: clause presets, increment/decrement requests for c(−2)/c(−1)/c(+1)/c(+2) with peak constraint, local RX adaptation (CTLE/CDR), receiver ready per direction and both_ready. The trained taps are accepted only if they pass a holdout on an independent seed (single-seed LT can overfit). RX decisions use the bench-measured eye-opening metric (min Q at the slicer). Clause 73 exists for KR/CR (backplane/copper): optics is managed via CMIS.")));
   },
 };
 
@@ -2357,7 +2454,7 @@ PANEL_DEFS.sweep = {
     const bar = CE("div", "scope-bar");
     p.fieldSel = CE("select");
     for (const [k, v] of Object.entries(S.sweepable || {})) {
-      const o = CE("option"); o.value = k; o.textContent = v.label; p.fieldSel.appendChild(o);
+      const o = CE("option"); o.value = k; o.textContent = tr(v.label); p.fieldSel.appendChild(o);
     }
     p.lo = CE("input"); p.lo.type = "number"; p.lo.style.width = "90px";
     p.hi = CE("input"); p.hi.type = "number"; p.hi.style.width = "90px";
@@ -2365,7 +2462,7 @@ PANEL_DEFS.sweep = {
     const syncRange = () => { const d = S.sweepable[p.fieldSel.value]; p.lo.value = d.lo; p.hi.value = d.hi; };
     p.fieldSel.onchange = syncRange;
     if (S.sweepable && Object.keys(S.sweepable).length) syncRange();
-    const btn = CE("button", "btn btn-accent", "Esegui");
+    const btn = CE("button", "btn btn-accent", L("Esegui", "Run"));
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "sweep…";
       try {
@@ -2387,7 +2484,7 @@ PANEL_DEFS.sweep = {
       } catch (e) { p.note.innerHTML = `<span class="fail">${e.message}</span>`; }
       btn.disabled = false; btn.textContent = "Esegui";
     };
-    bar.append(p.fieldSel, CE("span", "", "da"), p.lo, CE("span", "", "a"), p.hi, CE("span", "", "punti"), p.n, btn);
+    bar.append(p.fieldSel, CE("span", "", L("da", "from")), p.lo, CE("span", "", L("a", "to")), p.hi, CE("span", "", L("punti", "points")), p.n, btn);
     p.body.appendChild(bar);
     p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl);
     p.note = CE("div", "note", L("Scegli un parametro e lancia: vedi la BER end-to-end rispondere alla manopola, incluso il punto in cui il link smette di agganciare.", "Pick a parameter and run: watch the end-to-end BER respond to the knob, including the point where the link stops locking."));
@@ -2593,7 +2690,7 @@ function applyView(name) {
   for (const p of [...S.panels]) { p.el.remove(); }
   for (const sec of document.querySelectorAll(".wb-group")) sec.remove();
   S.panels = [];
-  for (const t of (VIEWS[name] || VIEWS["Banco completo"])) addPanel(t);
+  addPanelsStaggered(VIEWS[name] || VIEWS["Banco completo"]);
   if (name === "Scope P/N") {
     const scopes = S.panels.filter(p => p.type === "scope");
     [[scopes[0], "vp"], [scopes[1], "vn"]].forEach(([p, node]) => {
@@ -2604,10 +2701,28 @@ function applyView(name) {
   saveLayout();
 }
 function saveLayout() { localStorage.setItem("labpro_layout2", JSON.stringify(S.panels.map(p => [p.type, p.size]))); }
+function addPanelsStaggered(list) {
+  // creazione SCAGLIONATA: un pannello alla volta con un respiro fra l'uno
+  // e l'altro — il render sincrono di 15+ pannelli Plotly in un colpo solo
+  // congelava la pagina per ~15 s all'avvio
+  let i = 0;
+  const step = () => {
+    if (i >= list.length) return;
+    const [t, sz] = Array.isArray(list[i]) ? list[i] : [list[i], undefined];
+    i++;
+    try { addPanel(t, sz); } catch (e) { console.warn("panel", t, e); }
+    setTimeout(() => requestAnimationFrame(step), 60);
+  };
+  step();
+}
 function loadLayout() {
+  // ?safe / ?panels=a,b: diagnostica — bypassa il layout salvato
+  const q = new URLSearchParams(location.search);
+  if (q.has("safe")) { addPanel("chain"); return; }
+  if (q.has("panels")) { addPanelsStaggered(q.get("panels").split(",")); return; }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem("labpro_layout2")); } catch (e) { }
-  if (saved && saved.length) { for (const [t, s] of saved) addPanel(t, s); }
+  if (saved && saved.length) { addPanelsStaggered(saved); }
   else applyView("Banco completo");
 }
 
