@@ -312,22 +312,46 @@ def eye_density(x, sps, start_symbol=80, traces=2000, bins_v=120):
     return H.T, t_edges, v_edges, segs, t_ui
 
 
+def _tdecq_noise_enhancement(taps, b_ref, a_ref, sps, n_freq=8192):
+    """Ceq del reference receiver da densita di rumore sagomata dal BT4.
+
+    IEEE 802.3 clause 121, Equation 121-9, pesa la risposta in potenza
+    dell'equalizzatore con lo spettro del rumore bianco dopo il filtro di
+    riferimento.  ``sqrt(sum(tap**2))`` e corretto solo per rumore bianco
+    gia campionato e non per il rumore correlato dal BT4.
+    """
+    from scipy import signal as _sig
+
+    taps = np.asarray(taps, dtype=float)
+    w, h_ref = _sig.freqz(b_ref, a_ref, worN=n_freq)
+    # I tap sono T-spaced, mentre w e in rad/campione analogico.
+    delays = np.arange(len(taps), dtype=float) * float(sps)
+    h_eq = np.exp(-1j * w[:, None] * delays[None, :]) @ taps
+    noise_psd = np.abs(h_ref) ** 2
+    den = float(np.trapz(noise_psd, w))
+    num = float(np.trapz(noise_psd * np.abs(h_eq) ** 2, w))
+    return float(np.sqrt(num / max(den, 1e-30)))
+
+
 def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
-                 target_ser=4.8e-4, q_t=3.414):
+                 target_ser=4.8e-4, q_t=3.414,
+                 histogram_width_ui=0.04):
     """TDECQ con la struttura di clause 121.8.5.3 — DICHIARATO non certificato.
 
     Procedura implementata (ogni passo come da clause, con le deviazioni
     dichiarate): filtro di ricezione Bessel-Thomson 4° ordine a 0.5·baud
     (qui zero-fase); equalizzatore di riferimento FFE 5 tap T-spaced
-    adattato MMSE; campionamento a DUE fasi ±0.05 UI attorno al centro
-    strumento; rumore gaussiano σ_G aggiunto ALL'INGRESSO dell'equalizzatore
-    (quindi amplificato di C_eq = ‖tap‖₂); si cerca il σ_G che porta il SER
-    medio sulle due fasi al target 4.8e-4.
+    adattato MMSE; due finestre verticali centrate a 0.45 e 0.55 UI, larghe
+    0.04 UI; rumore gaussiano σ_G aggiunto ALL'INGRESSO dell'equalizzatore.
+    C_eq e integrato dalla PSD del rumore bianco sagomata dal BT4 e dalla
+    risposta dei tap T-spaced (Equation 121-9), non approssimato con la sola
+    norma L2 dei tap. Si cerca il σ_G che porta il SER medio delle due
+    finestre al target 4.8e-4.
 
     TDECQ = 10·log10(σ_ideal / σ_G),  σ_ideal = OMA_outer/(6·Q_t), Q_t=3.414.
     Deviazioni dichiarate: BT4 zero-fase; adattamento con i simboli noti
-    (bench, non pattern lock dello strumento); niente ricerca della fase
-    ottima dell'equalizzatore di clause.
+    (bench, non pattern lock dello strumento); la ricerca dei tap usa una
+    griglia ridge finita, non l'ottimizzazione strumentale esaustiva.
     """
     from scipy import signal as _sig
     P = np.asarray(P_w, dtype=float)
@@ -386,8 +410,23 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
     Xty = Xv.T @ target
     trace_n = float(np.trace(XtX)) / XtX.shape[0]
 
-    y_m, t_m = sample(-0.05)
-    y_p, t_p = sample(+0.05)
+    # 121.8.5.3: finestre larghe 0.04 UI centrate a 0.45/0.55 UI. Cinque
+    # sezioni per finestra integrano il contenuto orizzontale senza
+    # trasformarlo in due campioni puntuali.
+    if not (0 < histogram_width_ui <= 0.20):
+        raise ValueError("histogram_width_ui deve essere in (0, 0.20]")
+
+    def sample_window(center_offset):
+        ys, ts = [], []
+        for dph in np.linspace(-histogram_width_ui / 2,
+                               histogram_width_ui / 2, 5):
+            yy, tt = sample(center_offset + float(dph))
+            ys.append(yy)
+            ts.append(tt)
+        return np.concatenate(ys), np.concatenate(ts)
+
+    y_m, t_m = sample_window(-0.05)
+    y_p, t_p = sample_window(+0.05)
 
     def clusters_for(taps, y, t):
         Xp = np.stack([np.roll(y, sh) for sh in (-2, -1, 0, 1, 2)], axis=1)
@@ -425,7 +464,12 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
                 XtX + lam * trace_n * np.eye(5), Xty)
         except np.linalg.LinAlgError:
             continue
-        ceq = float(np.sqrt(np.sum(taps ** 2)))
+        # Il reference equalizer ha guadagno DC unitario: Σc[k] = 1.
+        tap_sum = float(np.sum(taps))
+        if abs(tap_sum) < 1e-12:
+            continue
+        taps = taps / tap_sum
+        ceq = _tdecq_noise_enhancement(taps, b, a, sps)
         cl = [clusters_for(taps, y_m, t_m), clusters_for(taps, y_p, t_p)]
         if any(c is None for c in cl):
             continue
@@ -451,8 +495,13 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
                         "sigma_g": sigma_g, "oma_outer": oma_outer,
                         "ceq_db": float(20 * np.log10(ceq)),
                         "taps": [float(v) for v in taps],
+                        "tap_sum": float(np.sum(taps)),
                         "ridge_lambda": lam,
-                        "target_ser": target_ser, "q_t": q_t}
+                        "target_ser": target_ser, "q_t": q_t,
+                        "histogram_centers_ui": [0.45, 0.55],
+                        "histogram_width_ui": histogram_width_ui,
+                        "reference_receiver_bw_hz": 0.5 * symbol_rate_hz,
+                        "ceq_method": "BT4-shaped noise integral (121-9)"}
     if best_out is None:
         return {"tdecq_db": None,
                 "reason": "SER oltre il target per ogni equalizzatore provato"}

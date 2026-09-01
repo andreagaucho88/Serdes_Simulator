@@ -93,6 +93,8 @@ plotly.
   - `blocks/`: stimolo, TX, canale, ottica, ricevitore, ADC, DSP, metriche,
     **FEC RS(544,514) reale** su GF(2¹⁰);
   - `engine.py`: `simulate(cfg, seed, depth)` e `sweep(...)`;
+  - `procedures.py`: procedure fisiche versionate sopra il datapath; DR4 v1
+    usa il periodo SSPRQ completo e due estremi del canale di dispersione;
   - `ami.py`: loader IBIS-AMI via ctypes + modello demo compilabile;
   - `selftest.py`: `python -m serdes_sim.selftest` verifica tutta la catena.
 - `app/` — GUI Streamlit, 21 pagine: panoramica, catena completa, 11 stadi
@@ -118,6 +120,11 @@ Funzionalità principali:
 - **Standard IEEE 802.3 / OIF-CEI**: mappa delle corsie 10G→200G/lane con la
   famiglia più vicina alla tua configurazione e il margine sulla soglia
   pre-FEC (modello binomiale dichiarato).
+- **Procedura DR4 fisica end-to-end**: run on-demand e riproducibile su tutti
+  i 65.535 simboli SSPRQ, ai due estremi pubblici di dispersione e con DGD
+  stressato; il TDECQ usa finestre 0,45/0,55 UI, FFE 5 tap normalizzato e
+  `Ceq` integrato sul rumore sagomato dal BT4. Gli stessi record chiudono
+  PD/TIA/ADC/CDR/DSP e riportano lock/BER/checkpoint fisici.
 - **Filtri causali** opzionali (fase reale) su DAC/driver/MZM/PD/TIA.
 - **IBIS-AMI**: banco che carica vere librerie AMI vendor
   (AMI_Init/AMI_GetWave) e un modello demo in C compilabile al volo.
@@ -136,10 +143,15 @@ Funzionalità principali:
 5. Le **viste** nel topbar caricano layout ordinati per flusso del segnale.
 6. Il pulsante **?** apre la scheda Academy del blocco; **IT/EN** cambia lingua
    e la scelta resta persistente nel browser.
+7. Il pannello **DR4 · procedura fisica** esegue il workflow versionato senza
+   modificare la configurazione del banco e separa `MODEL PASS/FAIL` da
+   `NOT ASSESSED` per la conformità.
 
-> Confine di validità: framework system-level per l'apprendimento e la
-> sensitivity analysis. Non è un tester TDECQ/SECQ/COM conforme; ogni metrica
-> non normativa è etichettata **proxy**.
+> Confine di validità: framework system-level per apprendimento e sensitivity
+> analysis. La procedura DR4 è completa nel perimetro del modello pubblico,
+> ma reflection/polarization stress, incertezza strumentale tracciabile e
+> correlazione con un golden instrument sono ancora mancanti: la conformità
+> IEEE resta quindi **NOT ASSESSED**, mai inferita dal verdetto del modello.
 
 ## Manutenzione
 

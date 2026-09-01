@@ -642,6 +642,63 @@ def test_tdecq_on_real_chain_and_dispersion():
     assert r1["tdecq_db"] is None or r1["tdecq_db"] > r0["tdecq_db"]
 
 
+def test_tdecq_reference_receiver_contract():
+    """Il reference RX usa finestre di clause, tap a DC unitaria e Ceq
+    integrato sul rumore sagomato dal BT4."""
+    from scipy import signal
+    from serdes_sim.blocks.metrics import (_tdecq_noise_enhancement,
+                                           tdecq_report)
+    from serdes_sim.blocks.stimulus import PAM4_GRAY, generate_stimulus
+
+    sps = 16
+    wn = 0.5 * 56e9 / (56e9 * sps / 2)
+    b, a = signal.bessel(4, wn, btype="low", norm="mag")
+    assert _tdecq_noise_enhancement([0, 0, 1, 0, 0], b, a, sps) \
+        == pytest.approx(1.0, abs=1e-12)
+
+    sym = generate_stimulus(6000, 13, PAM4_GRAY)
+    power = np.repeat(np.interp(sym, PAM4_GRAY.levels_array,
+                                np.linspace(0.2, 1.2, 4)), sps)
+    report = tdecq_report(power, sym, PAM4_GRAY, sps, 56e9, 56e9 * sps)
+    assert report["tap_sum"] == pytest.approx(1.0, abs=1e-12)
+    assert report["histogram_centers_ui"] == [0.45, 0.55]
+    assert report["histogram_width_ui"] == pytest.approx(0.04)
+    assert report["ceq_method"].endswith("(121-9)")
+
+
+def test_dr4_versioned_procedure_closes_full_physical_chain():
+    """Golden della procedura P0: SSPRQ completo, due estremi di
+    dispersione e catena TX→fibra→RX→DSP. Il profilo rappresentativo attuale
+    chiude il link ma fallisce onestamente il limite TDECQ del modello."""
+    from serdes_sim.procedures import (DR4_TDECQ_V1,
+                                       dr4_dispersion_bounds_ps_nm,
+                                       run_dr4_tdecq_e2e)
+
+    dmin, dmax = dr4_dispersion_bounds_ps_nm(1310.0)
+    assert dmin == pytest.approx(-0.93, abs=1e-12)
+    assert dmax == pytest.approx(+0.80, abs=1e-12)
+    report = run_dr4_tdecq_e2e(seed=500283)
+    assert report["procedure"]["version"] == DR4_TDECQ_V1.version
+    assert report["compliance_status"] == "NOT ASSESSED"
+    assert not report["uncertainty_complete"]
+    assert len(report["cases"]) == 2
+    assert all(c["pattern_exact"] and c["link_up"]
+               and c["physical_checks_pass"] for c in report["cases"])
+    assert all(c["ber_post_dfe"] == 0.0 for c in report["cases"])
+    values = [c["tdecq"]["tdecq_db"] for c in report["cases"]]
+    assert values[1] > values[0]
+    assert report["worst_tdecq_db"] == pytest.approx(4.33479, abs=0.03)
+    assert report["numerical_uncertainty_db"] == pytest.approx(0.10, abs=0.02)
+    assert report["guarded_tdecq_db"] == pytest.approx(4.43795, abs=0.04)
+    assert report["model_status"] == "FAIL"
+    status = {s["id"]: s["status"] for s in report["steps"]}
+    assert (status["pattern"] == status["channel"]
+            == status["channel_loss"] == status["e2e"] == "PASS")
+    assert status["calibration"] == status["numeric_uncertainty"] == "PASS"
+    assert status["tdecq_limit"] == "FAIL"
+    assert status["reflection"] == status["uncertainty"] == "WARN"
+
+
 def test_fec_codeword_interleaving_splits_bursts():
     """Il motivo per cui lo standard interleava: un burst di 24 simboli RS
     contigui sulla linea uccide un codeword (t=15) senza interleaving, ma

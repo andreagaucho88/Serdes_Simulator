@@ -26,6 +26,7 @@ from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E40
 from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
 from serdes_sim.engine import (anlt_session, jitter_tolerance, jitter_transfer,  # noqa: E402
                                l2_ont_report, link_train, traffic_sweep)
+from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
 from labpro.control_help import CONTROL_HELP  # noqa: E402
@@ -410,6 +411,32 @@ class ApiTraffic(Base):
                          "normative": False, "rows": paneldata.J(rows)})
 
 
+class ApiDr4Procedure(Base):
+    """Procedura versionata DR4, deliberatamente on-demand e non live."""
+
+    def post(self):
+        body = self.body_json()
+        try:
+            seed = int(body.get("seed", 500283))
+        except (TypeError, ValueError):
+            self.set_status(400)
+            return self.write_json({"error": "seed deve essere un intero"})
+        if not 0 <= seed <= 2 ** 32 - 1:
+            self.set_status(400)
+            return self.write_json({"error": "seed fuori range uint32"})
+        was_running = BENCH.running
+        BENCH.stop()
+        try:
+            report = run_dr4_tdecq_e2e(seed=seed)
+        except Exception as exc:
+            self.set_status(500)
+            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+        finally:
+            if was_running:
+                BENCH.start()
+        self.write_json({"ok": True, "report": paneldata.J(report)})
+
+
 class ApiPanel(Base):
     def get(self, name):
         builder = paneldata.PANEL_BUILDERS.get(name)
@@ -538,6 +565,7 @@ def make_app():
         (r"/api/experiment/train", ApiTrain),
         (r"/api/experiment/jtf", ApiJtf),
         (r"/api/experiment/traffic", ApiTraffic),
+        (r"/api/experiment/dr4-tdecq", ApiDr4Procedure),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
         (r"/api/chamber", ApiChamber),

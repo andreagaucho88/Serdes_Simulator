@@ -10,6 +10,38 @@ const TT = (it, en) => `IT: ${it}\nEN: ${en}`;
 /* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
    frammenti IT→EN applicati solo in modalità EN. */
 const TR_FRAGMENTS = [
+  ["Procedura e target versionati", "Versioned procedure and target"],
+  ["Pattern completo bit-exact", "Complete bit-exact pattern"],
+  ["Rate e modulazione per lane", "Per-lane rate and modulation"],
+  ["Due estremi del canale di dispersione", "Both channel CD endpoints"],
+  ["Perdita del canale ottico", "Optical-channel insertion loss"],
+  ["DGD del canale di test", "Test-channel DGD"],
+  ["Reference receiver e TDECQ", "Reference receiver and TDECQ"],
+  ["Calibrazione del ricevitore numerico", "Numerical receiver calibration"],
+  ["Convergenza della griglia numerica", "Numerical-grid convergence"],
+  ["Limite TDECQ del modello", "Model TDECQ limit"],
+  ["Chiusura fisica TX→fibra→RX→DSP", "Physical TX→fiber→RX→DSP closure"],
+  ["Return-loss e polarizzazione worst-case", "Worst-case return loss and polarization"],
+  ["Sistematiche metrologiche esterne", "External metrology systematics"],
+  ["Golden instrument correlation", "Golden-instrument correlation"],
+  ["riflettore ottico/feedback laser non ancora nel modello", "optical reflector/laser feedback not yet modeled"],
+  ["pattern finito eliminato; sistematiche di O/E, scope e fixture non quantificate", "finite-pattern error removed; O/E, scope, and fixture systematics remain unquantified"],
+  ["manca un dataset ufficiale con risultato TDECQ pubblicato", "an official dataset with a published TDECQ result is missing"],
+  ["lock CDR, BER valida, checkpoint fisici senza FAIL", "CDR lock, valid BER, physical checkpoints without FAIL"],
+  ["Table 124-11: −0,93/+0,80 ps/nm totali", "Table 124-11: −0.93/+0.80 ps/nm total"],
+  ["coupling 2.825 dB + fibra 0.175 dB = 3.000 dB", "coupling 2.825 dB + fiber 0.175 dB = 3.000 dB"],
+  ["ORL canale ≥37 dB; tolleranza TX 21.4 dB; massima RIN", "channel ORL ≥37 dB; TX tolerance 21.4 dB; maximum RIN"],
+  ["Table 121-11, min e max alla λ del DUT", "Table 121-11, min and max at DUT λ"],
+  ["finestre 0.45/0.55 UI × 0.04 UI", "0.45/0.55 UI windows × 0.04 UI"],
+  ["ORL 21.4 dB, massima RIN", "21.4 dB ORL, maximum RIN"],
+  ["budget numerico + strumentale tracciabile", "traceable numerical + instrument budget"],
+  ["waveform/reference result indipendente", "independent waveform/reference result"],
+  ["65,535 simboli", "65,535 symbols"],
+  ["σS con ingresso ottico nullo e identiche impostazioni", "σS with zero optical input and identical settings"],
+  ["σS=0 W RMS: O/E e scope numerici ideali, valore esplicito", "σS=0 W RMS: ideal numerical O/E and scope, explicit value"],
+  ["O/E, scope e fixture con taratura tracciabile", "O/E, scope, and fixture with traceable calibration"],
+  ["convergenza numerica quantificata; sistematiche strumentali non disponibili", "numerical convergence quantified; instrument systematics unavailable"],
+  ["griglia ridge", "ridge grid"],
   ["interfaccia elettrica long reach", "long-reach electrical interface"],
   ["interfaccia elettrica", "electrical interface"],
   ["modulo elettrico", "electrical module"],
@@ -2044,7 +2076,7 @@ PANEL_DEFS.standards = {
     const mrows = (d.measurement_contracts || []).map(m => `<tr>
       <td><b>${m.measure}</b><br><span class="sub">${m.reference_plane}</span></td>
       <td><a href="${m.source}" target="_blank" rel="noreferrer">${m.standard}</a><br><span class="sub">${m.clause}</span></td>
-      <td><span class="badge ${m.applicable ? (m.implementation === "annex-subset" || m.implementation === "clause-structured" ? "warn" : "") : ""}">${m.applicable ? m.implementation : L("non applicabile", "not applicable")}</span></td>
+      <td><span class="badge ${m.applicable ? (["annex-subset", "clause-structured", "versioned-procedure"].includes(m.implementation) ? "warn" : "") : ""}">${m.applicable ? m.implementation : L("non applicabile", "not applicable")}</span></td>
       <td><span class="badge warn">${m.compliance}</span><br><span class="sub">${m.note}</span></td></tr>`).join("");
     p.host.appendChild(CE("div", "standard-table", `<h3>${L("Contratto normativo delle misure", "Measurement standards contract")}</h3><table class="mini"><tr><th>${L("misura / piano", "measure / plane")}</th><th>IEEE 802.3 / clause</th><th>${L("implementazione", "implementation")}</th><th>${L("claim consentito", "allowed claim")}</th></tr>${mrows}</table>`));
     p.host.appendChild(CE("div", "note w", L(
@@ -2052,6 +2084,56 @@ PANEL_DEFS.standards = {
       "The preset applies the full LinkConfig, so every block receives a value. The manifest still separates public-interface context from LabPro's representative architecture choices: IEEE/OIF normally do not mandate the DAC, CTLE, ADC, CDR, tap count, or MZM versus EML. PASS means model checkpoints, never compliance.")));
   },
   onConfig(p) { this.refetch(p); },
+};
+
+PANEL_DEFS.dr4proc = {
+  title: "DR4 · procedura fisica end-to-end", size: "s8",
+  make(p) {
+    p.body.innerHTML = "";
+    const bar = CE("div", "scope-bar");
+    p.run = CE("button", "btn btn-accent", L("ESEGUI DR4 COMPLETA (~7 s)", "RUN FULL DR4 (~7 s)"));
+    p.run.title = TT("usa tutti i 65.535 simboli SSPRQ e i due estremi di dispersione; non modifica il banco", "uses all 65,535 SSPRQ symbols and both dispersion endpoints; does not modify the bench");
+    p.seed = CE("input"); p.seed.type = "number"; p.seed.min = "0"; p.seed.max = "4294967295"; p.seed.value = "500283"; p.seed.style.width = "110px";
+    bar.append(p.run, CE("span", "", "seed"), p.seed);
+    p.body.appendChild(bar);
+    p.host = CE("div"); p.body.appendChild(p.host);
+    p.host.innerHTML = `<div class="note">${L(
+      "Procedura LabPro versionata sul target DR4 per-lane: SSPRQ pubblico completo → TX → due canali di dispersione → reference RX TDECQ → PD/TIA/ADC/CDR/DSP. Il verdetto del modello resta separato dalla conformità IEEE.",
+      "Versioned LabPro procedure for the per-lane DR4 target: full public SSPRQ → TX → two dispersion channels → TDECQ reference RX → PD/TIA/ADC/CDR/DSP. The model verdict remains separate from IEEE compliance.")}</div>`;
+    p.run.onclick = () => this.runProcedure(p);
+  },
+  async runProcedure(p) {
+    p.run.disabled = true;
+    p.run.textContent = L("MISURA IN CORSO…", "MEASURING…");
+    try {
+      const out = await POST("/api/experiment/dr4-tdecq", { seed: +p.seed.value });
+      this.render(p, out.report);
+    } catch (e) { toast(e.message); }
+    p.run.disabled = false;
+    p.run.textContent = L("ESEGUI DR4 COMPLETA (~7 s)", "RUN FULL DR4 (~7 s)");
+  },
+  render(p, d) {
+    p.host.innerHTML = "";
+    const modelOk = d.model_status === "PASS";
+    p.host.appendChild(readout([
+      { l: L("procedura", "procedure"), v: `${d.procedure.procedure_id} v${d.procedure.version}`, sub: d.procedure.target },
+      { l: L("verdetto modello", "model verdict"), v: d.model_status, cls: modelOk ? "ok" : "fail", big: true, sub: L("non è un verdetto IEEE", "not an IEEE verdict") },
+      { l: "TDECQ worst", v: d.worst_tdecq_db == null ? "FAIL" : fix(d.worst_tdecq_db, 3) + " dB", cls: modelOk ? "ok" : "fail", sub: `u_grid ${fix(d.numerical_uncertainty_db, 3)} → ${fix(d.guarded_tdecq_db, 3)} dB · limit ≤ ${fix(d.tdecq_limit_db, 1)} dB` },
+      { l: L("conformità", "compliance"), v: d.compliance_status, cls: "warn", sub: L("blocchi metrologici espliciti", "explicit metrology blockers") },
+      { l: L("durata", "elapsed"), v: fix(d.elapsed_s, 2) + " s", sub: `${d.procedure.pattern_symbols.toLocaleString()} sym` },
+    ]));
+    const cases = d.cases.map(c => `<tr>
+      <td><b>${c.name}</b></td><td>${c.total_dispersion_ps_nm >= 0 ? "+" : ""}${fix(c.total_dispersion_ps_nm, 4)} ps/nm<br><span class="sub">DGD ${fix(c.dgd_ps, 3)} ps</span></td>
+      <td><span class="badge ${c.tdecq_model_pass ? "ok" : "fail"}">${c.tdecq.tdecq_db == null ? "FAIL" : fix(c.tdecq.tdecq_db, 3) + " dB"}</span><br><span class="sub">Ceq ${fix(c.tdecq.ceq_db, 2)} dB · Σc ${fix(c.tdecq.tap_sum, 6)} · Δgrid ${fix(c.numeric_grid_delta_db, 3)} dB</span></td>
+      <td><span class="badge ${c.link_up ? "ok" : "fail"}">${c.link_up ? "UP" : "DOWN"}</span><br><span class="sub">BER ${c.ber_post_dfe == null ? "—" : sci(c.ber_post_dfe)}</span></td>
+      <td><span class="badge ${c.pattern_exact && c.physical_checks_pass ? "ok" : "fail"}">${c.pattern_exact ? "SSPRQ exact" : "pattern FAIL"}</span></td></tr>`).join("");
+    p.host.appendChild(CE("div", "standard-table", `<h3>${L("Casi fisici end-to-end", "End-to-end physical cases")}</h3><table class="mini"><tr><th>${L("estremo", "endpoint")}</th><th>${L("canale", "channel")}</th><th>TDECQ</th><th>RX/DSP</th><th>PPG</th></tr>${cases}</table></div>`));
+    const steps = d.steps.map(s => `<tr><td><span class="badge ${s.status === "PASS" ? "ok" : s.status === "FAIL" ? "fail" : "warn"}">${s.status}</span></td><td><b>${tr(s.label)}</b><br><span class="sub">${tr(s.requirement)}</span></td><td>${tr(s.evidence)}</td></tr>`).join("");
+    p.host.appendChild(CE("div", "standard-table", `<h3>${L("Checklist procedurale", "Procedure checklist")}</h3><table class="mini"><tr><th>status</th><th>${L("passo / requisito", "step / requirement")}</th><th>${L("evidenza", "evidence")}</th></tr>${steps}</table></div>`));
+    p.host.appendChild(CE("div", "note w", L(
+      "Il link può essere UP e avere BER zero sul record pur fallendo TDECQ: interoperabilità del modello e qualità normativa del trasmettitore sono criteri diversi. Reflection/polarization stress, uncertainty tracciabile e golden-instrument correlation mantengono correttamente il claim a NOT ASSESSED.",
+      "The link can be UP with zero BER in the record while failing TDECQ: model interoperability and normative transmitter quality are different criteria. Reflection/polarization stress, traceable uncertainty, and golden-instrument correlation correctly keep the claim at NOT ASSESSED.")));
+  },
 };
 
 PANEL_DEFS.instruments = {
@@ -2065,7 +2147,7 @@ PANEL_DEFS.instruments = {
       ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit sul time-base: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); la misura ai crossing include correttamente anche DDJ", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (time-base audit: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); crossing measurements correctly include DDJ too"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM Annex 93A subset con PDF@DER e package dichiarato; PAM3/8/16 ed export IBIS-AMI completo restano fuori", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; Annex 93A COM subset with PDF@DER and declared package; PAM3/8/16 and full IBIS-AMI export remain outside"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
       ["Xena Ethernet Test Platform", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler/modifier per stream, impairment drop/misorder/duplicate e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduler/modifiers, drop/misorder/duplicate impairments, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
-      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4, EH/EW@BER e SNDR implementati con confini dichiarati; COM segue un subset Annex 93A e TDECQ la struttura di 121.8.5.3. Il contratto per-misura impedisce limiti fuori clause: conformità sempre NOT ASSESSED senza procedura completa.", "BT4 Ref RX, EH/EW@BER, and SNDR are implemented with declared boundaries; COM follows an Annex 93A subset and TDECQ the 121.8.5.3 structure. The per-measure contract prevents out-of-clause limits: compliance stays NOT ASSESSED without the complete procedure."), "warn", "https://www.ieee802.org/3/"],
+      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4, EH/EW@BER e SNDR hanno confini dichiarati; COM segue un subset Annex 93A. La procedura DR4 v1 esegue SSPRQ completo, estremi di dispersione e catena RX/DSP, ma reflection/polarization stress, uncertainty e golden correlation mantengono la conformità a NOT ASSESSED.", "BT4 Ref RX, EH/EW@BER, and SNDR have declared boundaries; COM follows an Annex 93A subset. DR4 procedure v1 runs the full SSPRQ period, both dispersion endpoints, and the RX/DSP chain, but reflection/polarization stress, uncertainty, and golden correlation keep compliance at NOT ASSESSED."), "warn", "https://www.ieee802.org/3/"],
     ];
     p.body.innerHTML = `<div class="note">${L("Matrice derivata dalla documentazione ufficiale. 'Implementato' significa workflow equivalente nel modello LabPro, non emulazione del firmware o certificazione dello strumento.", "Matrix derived from official documentation. 'Implemented' means an equivalent LabPro model workflow, not firmware emulation or instrument certification.")}</div>
       <table class="mini"><tr><th>${L("riferimento", "reference")}</th><th>${L("funzione manuale", "manual workflow")}</th><th>LabPro</th></tr>
@@ -2749,6 +2831,7 @@ const PALETTE = [
   ["train", "Link training", "digital", 4, 9],
   ["anlt", "AN/LT · Clause 73", "digital", 4, 9.5],
   ["standards", "Standard IEEE/OIF", null, 4, 10],
+  ["dr4proc", L("DR4 · procedura fisica", "DR4 · physical procedure"), "optical", 4, 10.5],
   ["instruments", "Instrument alignment", null, 4, 11],
   ["checks", "Checkpoint & ledger", null, 4, 12],
   ["physics", L("Audit fisico · invarianti", "Physics audit · invariants"), null, 4, 12.5],
@@ -2760,10 +2843,10 @@ const VIEWS = {
   "Sorgente e TX": ["chain", "stimulus", "serpll", "tx", "scope", "jitter"],
   "Canale e ottica": ["chain", "channel", "com", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "pd", "tia", "agc", "ctle", "adc", "timing", "eq", "decisions", "scope"],
-  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "com", "standards", "instruments", "checks", "physics"],
+  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "com", "standards", "dr4proc", "instruments", "checks", "physics"],
   "BERT e traffico": ["chain", "stimulus", "bert", "l2", "anlt", "feclive", "berlive", "train", "cmis"],
   "Scope P/N": ["chain", "scope", "scope", "serpll", "jitter", "spectrum"],
-  "Academy": ["chain", "education", "standards", "instruments", "scope", "jitter", "bert", "l2"],
+  "Academy": ["chain", "education", "standards", "dr4proc", "instruments", "scope", "jitter", "bert", "l2"],
 };
 const VIEW_EN = { "Banco completo": "Full bench", "Essenziale": "Essential",
   "Sorgente e TX": "Source and TX", "Canale e ottica": "Channel and optics",
@@ -2782,6 +2865,7 @@ const PANEL_EN = {
   l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",
   jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent", anlt: "AN/LT · Clause 73 + training",
   standards: "IEEE / OIF standards", checks: "Checkpoints & signal ledger",
+  dr4proc: "DR4 · end-to-end physical procedure",
   physics: "Physics audit · invariants",
   instruments: "Instrument alignment · DCA / BERT / Traffic",
   education: "Academy · block and standards guide",
