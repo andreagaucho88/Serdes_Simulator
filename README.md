@@ -141,8 +141,10 @@ Funzionalità principali:
 4. **Sweep parametrico** e **JTOL-lite** trasformano una manopola in una
    curva end-to-end (compresi i punti LINK DOWN).
 5. Le **viste** nel topbar caricano layout ordinati per flusso del segnale.
-6. Il pulsante **?** apre la scheda Academy del blocco; **IT/EN** cambia lingua
-   e la scelta resta persistente nel browser.
+6. Ogni manopola e ogni azione importante hanno un pulsante **?**: la scheda
+   bilingue dichiara piano fisico, cosa osservare, verifica paired, condizioni
+   di attivazione, limiti, API e stato modificato. Il **?** della card apre la
+   relativa scheda Academy; **IT/EN** cambia lingua e resta persistente.
 7. Il pannello **DR4 · procedura fisica** esegue il workflow versionato senza
    modificare la configurazione del banco e separa `MODEL PASS/FAIL` da
    `NOT ASSESSED` per la conformità.

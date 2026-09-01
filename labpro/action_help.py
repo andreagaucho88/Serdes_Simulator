@@ -1,0 +1,220 @@
+"""Contratti bilingui delle azioni del banco LabPro.
+
+Le manopole descrivono una grandezza fisica; i pulsanti descrivono invece una
+transazione.  Questo catalogo rende espliciti piano osservato, effetto atteso,
+stato modificato e confine del risultato per ogni azione importante della UI.
+"""
+
+from __future__ import annotations
+
+
+ACTION_HELP: dict[str, dict[str, str]] = {}
+
+
+def _a(action, title_it, title_en, block, plane, it, en, observe_it,
+       observe_en, boundary_it, boundary_en, endpoint="", mutates=""):
+    ACTION_HELP[action] = {
+        "title_it": title_it, "title_en": title_en,
+        "block": block, "plane": plane, "it": it, "en": en,
+        "observe_it": observe_it, "observe_en": observe_en,
+        "boundary_it": boundary_it, "boundary_en": boundary_en,
+        "endpoint": endpoint, "mutates": mutates,
+    }
+
+
+_a("bench_run", "RUN / STOP", "RUN / STOP", "LiveBench", "acquisition scheduler",
+   "Avvia o ferma l'acquisizione continua senza cambiare la LinkConfig.",
+   "Starts or stops continuous acquisition without changing LinkConfig.",
+   "Controlla LED, record/s e avanzamento dei contatori.",
+   "Check the LED, records/s, and accumulating counters.",
+   "STOP congela nuovi record; non cancella quelli accumulati.",
+   "STOP freezes new records; it does not clear accumulated data.",
+   "/api/run", "running state")
+_a("bench_reset", "Azzera statistiche", "Reset statistics", "LiveBench", "accumulators",
+   "Azzera BER, FEC, frame, istogrammi e history del banco.",
+   "Clears BER, FEC, frame, histogram, and bench-history accumulators.",
+   "La configurazione e i valori delle manopole devono restare identici.",
+   "Configuration and knob values must remain identical.",
+   "Non è un reset fisico del link o del modello CDR.",
+   "This is not a physical link or CDR-model reset.",
+   "/api/reset", "accumulators only")
+_a("anlt_apply", "AN/LT con applicazione", "AN/LT and apply", "AN/LT", "partner + TX/RX",
+   "Negozia l'HCD, esegue training bidirezionale e applica i tap solo dopo holdout.",
+   "Resolves the HCD, runs bidirectional training, and applies taps only after holdout.",
+   "Verifica HCD, CDR lock, both-ready, Q prima/dopo e flag applied.",
+   "Verify HCD, CDR lock, both-ready, Q before/after, and the applied flag.",
+   "Protocollo didattico Clause 73/72-136: niente segnalazione DME reale.",
+   "Educational Clause 73/72-136 protocol: no real DME signalling.",
+   "/api/experiment/anlt", "TX FIR/CTLE only when holdout passes")
+_a("scope_pause", "Pausa display", "Pause display", "Scope", "browser display",
+   "Congela solo la persistenza dello Scope.", "Freezes Scope persistence only.",
+   "I contatori topbar devono continuare ad avanzare mentre il canvas resta fermo.",
+   "Top-bar counters must keep advancing while the canvas stays frozen.",
+   "Non ferma il LiveBench e non congela un record globale.",
+   "It does not stop LiveBench or freeze a global record.", mutates="local UI only")
+_a("scope_coherent", "P/N · Diff · CM", "P/N · Diff · CM", "Scope", "driver pin planes",
+   "Configura CH A-D sui quattro piani coerenti dello stesso record.",
+   "Maps CH A-D to four coherent planes from the same record.",
+   "Controlla seed/record uguale e identità Vdiff=Vp−Vn, Vcm=(Vp+Vn)/2.",
+   "Check equal seed/record and Vdiff=Vp−Vn, Vcm=(Vp+Vn)/2 identities.",
+   "È una configurazione di probe, non una modifica del trasmettitore.",
+   "This is a probe configuration, not a transmitter change.", mutates="local Scope routing")
+_a("eye_contour", "Contour BER 2D", "2D BER contour", "Scope", "selected CH A plane",
+   "Calcola una mappa fase/ampiezza della BER estrapolata.",
+   "Computes a phase/amplitude map of extrapolated BER.",
+   "Devono apparire isolinee chiuse e assi coerenti col nodo scelto.",
+   "Closed contours and axes consistent with the selected node must appear.",
+   "Code gaussiane dichiarate: non è una mask o contour normativa.",
+   "Declared Gaussian tails: not a normative mask or contour.",
+   "/api/panel/eyecontour", "report only")
+_a("ctle_preset", "Preset CTLE", "CTLE preset", "CTLE", "CTLE transfer",
+   "Carica una topologia zero/polo predefinita nell'editor.",
+   "Loads a predefined zero/pole topology into the editor.",
+   "Verifica ordine dei corner e risposta in frequenza dopo l'applicazione.",
+   "Verify corner ordering and frequency response after applying it.",
+   "Il click del preset applica la topologia al banco; non è auto-tuning.",
+   "The preset click applies the topology to the bench; it is not auto-tuning.",
+   "/api/config", "ctle_zeros_hz + ctle_poles_hz")
+_a("ctle_apply", "Applica CTLE", "Apply CTLE", "CTLE", "CTLE transfer",
+   "Valida e applica le liste GHz inserite nell'editor.",
+   "Validates and applies the GHz lists entered in the editor.",
+   "La curva deve cambiare; valori non ordinati o non numerici devono essere rifiutati.",
+   "The curve must change; unordered or non-numeric values must be rejected.",
+   "Modifica il datapath condiviso e azzera gli accumulatori.",
+   "Changes the shared datapath and clears accumulators.",
+   "/api/config", "ctle_zeros_hz + ctle_poles_hz")
+_a("pattern_apply", "Applica pattern HEX", "Apply HEX pattern", "PPG", "serialized PPG bits",
+   "Normalizza e applica 1..4096 byte HEX ciclici MSB-first.",
+   "Normalizes and applies 1..4096 cyclic MSB-first HEX bytes.",
+   "Controlla periodo, byte normalizzati e digest/readout del PPG.",
+   "Check period, normalized bytes, and the PPG digest/readout.",
+   "Pattern di laboratorio; non sostituisce SSPRQ/QPRBS di clause.",
+   "Lab pattern; it does not replace clause SSPRQ/QPRBS.",
+   "/api/config", "pattern + custom_pattern_hex")
+_a("tx_tap_count", "Numero tap TX FIR", "TX FIR tap count", "TX FIR", "pre-DAC symbols",
+   "Commuta in modo reversibile fra FIR a 3 e 5 tap mantenendo il main cursor.",
+   "Reversibly switches between 3- and 5-tap FIR while preserving the main cursor.",
+   "Verifica H(0), H(Nyquist), swing cost e clipping.",
+   "Verify H(0), H(Nyquist), swing cost, and clipping.",
+   "Aggiungere zeri non deve cambiare la waveform; tap non nulli sì.",
+   "Zero padding must not change the waveform; non-zero taps must.",
+   "/api/config", "tx_ffe_taps")
+_a("s2p_use", "Usa Touchstone", "Use Touchstone", "Channel", "measured S21/SDD21",
+   "Carica il file selezionato e sostituisce il canale analitico nel datapath.",
+   "Loads the selected file and replaces the analytic channel in the datapath.",
+   "Controlla nome sorgente, IL/phase/pulse e BER a valle; il TX a monte non cambia.",
+   "Check source name, IL/phase/pulse, and downstream BER; upstream TX must not change.",
+   "Serve un file S2P/S4P valido; mapping delle coppie obbligatorio per S4P.",
+   "Requires a valid S2P/S4P file; pair mapping is mandatory for S4P.",
+   "/api/s2p", "s2p payload + use_s2p_channel")
+_a("s2p_model", "Torna al canale analitico", "Return to analytic channel", "Channel", "channel S21",
+   "Disabilita l'uso del Touchstone senza cancellarne il contenuto salvato.",
+   "Disables Touchstone use without deleting its saved content.",
+   "Il badge sorgente deve tornare a model e l'S21 alla parametrizzazione del banco.",
+   "The source badge must return to model and S21 to bench parameters.",
+   "Il file resta disponibile per una riattivazione successiva.",
+   "The file remains available for later reactivation.",
+   "/api/config", "use_s2p_channel=false")
+_a("jtf", "Misura jitter transfer", "Measure jitter transfer", "CDR", "TX TIE → recovered clock",
+   "Inietta toni PJ e misura il rapporto di ampiezza sul clock recuperato.",
+   "Injects PJ tones and measures recovered-clock amplitude ratio.",
+   "La JTF deve essere vicina a 0 dB in banda e attenuarsi fuori banda.",
+   "JTF should be near 0 dB in-band and attenuate out-of-band.",
+   "Record finito e fit sinusoidale: diagnostica, non maschera normativa.",
+   "Finite record and sine fit: diagnostic, not a normative mask.",
+   "/api/experiment/jtf", "report only")
+_a("dr4", "Procedura DR4 completa", "Full DR4 procedure", "DR4 TDECQ", "PPG → TX → fiber → RX/DSP",
+   "Esegue il periodo SSPRQ completo su loss, CD e DGD della procedura versionata.",
+   "Runs the complete SSPRQ period over versioned loss, CD, and DGD stress.",
+   "Controlla pattern exact, due endpoint, link/BER, TDECQ e u_grid.",
+   "Check exact pattern, both endpoints, link/BER, TDECQ, and u_grid.",
+   "MODEL PASS/FAIL resta separato da IEEE NOT ASSESSED.",
+   "MODEL PASS/FAIL remains separate from IEEE NOT ASSESSED.",
+   "/api/experiment/dr4-tdecq", "report only")
+_a("academy_open", "Apri pannello associato", "Open associated panel", "Academy", "workspace layout",
+   "Apre la card operativa collegata alla lezione selezionata.",
+   "Opens the operational panel linked to the selected lesson.",
+   "La card deve comparire una sola volta e mantenere l'ordine di flusso.",
+   "The card must appear once and retain signal-flow ordering.",
+   "Cambia solo il layout, non la fisica.", "Changes layout only, not physics.",
+   mutates="layout only")
+_a("bert_inject", "Inserisci errori", "Insert errors", "BERT", "line bits after reference copy",
+   "Inverte bit singoli o in burst dopo aver salvato il riferimento ED.",
+   "Flips individual or burst bits after saving the ED reference.",
+   "Errori, burst e FEC devono reagire; il riferimento TX resta immutato.",
+   "Errors, bursts, and FEC must react; the TX reference remains unchanged.",
+   "L'iniezione vale per il prossimo record, non per una durata continua.",
+   "Injection applies to the next record, not continuously.",
+   "/api/inject", "next-record impairment")
+_a("bert_gate", "Gate START / STOP", "Gate START / STOP", "BERT", "ED accumulation window",
+   "Apre o chiude una finestra statistica indipendente dai contatori globali.",
+   "Opens or closes a statistical window independent of global counters.",
+   "Controlla bit/errori gated e intervallo di confidenza 95%.",
+   "Check gated bits/errors and the 95% confidence interval.",
+   "Non interrompe il segnale e non resetta il banco.",
+   "It neither interrupts the signal nor resets the bench.", mutates="local BERT gate")
+_a("bert_phase", "Auto-search fase", "Phase auto-search", "BERT", "ADC sampling phase",
+   "Scansiona la fase e applica quella con BER migliore.",
+   "Scans sampling phase and applies the one with best BER.",
+   "La tabella deve mostrare tutti i candidati, inclusi eventuali LINK DOWN.",
+   "The table must show every candidate, including any LINK DOWN point.",
+   "Ricerca su record finiti; può sovra-adattare al seed corrente.",
+   "Finite-record search; it can overfit the current seed.",
+   "/api/experiment/sweep", "adc_phase_ui")
+_a("traffic_benchmark", "Benchmark frame size", "Frame-size benchmark", "Traffic", "MAC → PHY → analyzer",
+   "Esegue frame reali a più dimensioni attraverso la catena completa.",
+   "Runs real frames of several sizes through the complete chain.",
+   "Controlla expected/detected/FCS/lost e dipendenza dalla dimensione.",
+   "Check expected/detected/FCS/lost and frame-size dependence.",
+   "PHY benchmark dichiarato; non è RFC 2544.",
+   "Declared PHY benchmark; it is not RFC 2544.",
+   "/api/experiment/traffic", "report only")
+_a("ont", "ONT load ramp e latenza", "ONT load ramp and latency", "Traffic", "offered load → RX frames",
+   "Varia IPG e misura throughput, loss e budget di latenza.",
+   "Varies IPG and measures throughput, loss, and latency budget.",
+   "Più IPG deve ridurre il carico; la latenza analogica è xcorr, le altre voci budget.",
+   "More IPG must reduce load; analog latency is xcorr, other entries are budgeted.",
+   "Non è Y.1564/RFC con timestamp nel payload.",
+   "Not Y.1564/RFC with payload timestamps.",
+   "/api/experiment/ont", "report only")
+_a("disrupt", "Service disruption", "Service disruption", "Traffic", "laser/channel continuity",
+   "Interrompe un record e misura il tempo fino al recupero del lock.",
+   "Interrupts one record and measures time until lock recovery.",
+   "SYNC LOSS deve incrementare e l'outage comparire nel pannello.",
+   "SYNC LOSS must increment and outage must appear in the panel.",
+   "Azione volutamente distruttiva sul prossimo record, ma reversibile automaticamente.",
+   "Intentionally disrupts the next record but recovers automatically.",
+   "/api/disrupt", "one-record impairment")
+_a("anlt_panel", "Esegui AN + LT", "Run AN + LT", "AN/LT", "partner + TX/RX",
+   "Esegue il protocollo senza applicare automaticamente i tap.",
+   "Runs the protocol without automatically applying taps.",
+   "Controlla pagine base, timeline, richieste coefficienti e both-ready.",
+   "Check base pages, timeline, coefficient requests, and both-ready.",
+   "Ottica: risultato contestuale; Clause 73 appartiene a KR/CR.",
+   "Optics: contextual result; Clause 73 belongs to KR/CR.",
+   "/api/experiment/anlt", "report only")
+_a("local_train", "Training locale", "Local training", "Optimizer", "full TX → RX chain",
+   "Ottimizza CTLE e FIR con coordinate descent e verifica su holdout.",
+   "Optimizes CTLE and FIR by coordinate descent and verifies on holdout.",
+   "Score e BER holdout devono migliorare prima di accettare la configurazione.",
+   "Holdout score and BER must improve before accepting configuration.",
+   "Non è link training di clause e modifica il banco se accettato.",
+   "Not clause link training; changes the bench when accepted.",
+   "/api/experiment/train", "CTLE + TX FIR when accepted")
+_a("sweep", "Sweep end-to-end", "End-to-end sweep", "Experiment", "selected knob → BER",
+   "Esegue 3..15 simulazioni variando un solo parametro.",
+   "Runs 3..15 simulations while varying one parameter only.",
+   "La curva deve mostrare effective value, BER e punti LINK DOWN.",
+   "The curve must show effective value, BER, and LINK DOWN points.",
+   "Non modifica la configurazione finale del banco.",
+   "Does not change the final bench configuration.",
+   "/api/experiment/sweep", "report only")
+_a("jtol", "Misura JTOL-lite", "Measure JTOL-lite", "CDR", "TX PJ → link BER",
+   "Cerca per bisezione il PJ massimo tollerato a ogni frequenza.",
+   "Binary-searches the maximum tolerated PJ at each frequency.",
+   "La forma deve riflettere banda e peaking del CDR; i cap vanno marcati.",
+   "Shape must reflect CDR bandwidth and peaking; capped points must be marked.",
+   "Pattern, durata e maschera non sono quelli di una procedura normativa.",
+   "Pattern, duration, and mask are not a normative procedure.",
+   "/api/experiment/jtol", "report only")
+

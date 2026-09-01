@@ -261,7 +261,7 @@ const hline = (y, color = COL.muted, dash = "dot") => ({ type: "line", y0: y, y1
 
 /* ---------------- stato globale ---------------- */
 const S = { cfg: null, acc: null, running: false, presets: [], ws: null,
-  panels: [], controlHelp: {} };
+  panels: [], controlHelp: {}, actionHelp: {} };
 
 function cfgChips() {
   if (!S.cfg) return;
@@ -557,9 +557,8 @@ const _flushCfg = debounce(() => {
 }, 260);
 function postConfig(updates) { Object.assign(_pendingCfg, updates); _flushCfg(); }
 
-function showControlHelp(field) {
-  const h = S.controlHelp[field];
-  if (!h) return toast(L(`Spiegazione mancante per ${field}`, `Missing help for ${field}`));
+function showHelpRecord(h, title) {
+  if (!h) return toast(L("Spiegazione mancante", "Missing help"));
   let dlg = $("#control-help-dialog");
   if (!dlg) {
     dlg = CE("dialog", "control-help-dialog"); dlg.id = "control-help-dialog";
@@ -567,14 +566,29 @@ function showControlHelp(field) {
   }
   dlg.innerHTML = `<button class="icon-btn help-close" aria-label="close">×</button>
     <div class="help-kicker">${h.block} · ${h.plane}</div>
-    <h3>${L(PARAMS[field]?.l || field, PARAM_EN[field])}</h3>
+    <h3>${title}</h3>
     <div class="help-lang"><b>IT</b><p>${h.it}</p></div>
     <div class="help-lang"><b>EN</b><p>${h.en}</p></div>
     ${h.formula ? `<div class="help-formula">${h.formula}</div>` : ""}
-    <div class="sub">${L("Attivo quando", "Active when")}: ${h.active}</div>`;
+    ${h.observe_it ? `<div class="help-detail"><b>${L("COSA OSSERVARE", "WHAT TO OBSERVE")}</b><p>${L(h.observe_it, h.observe_en)}</p></div>` : ""}
+    ${h.verify_it ? `<div class="help-detail"><b>${L("VALIDAZIONE PAIRED", "PAIRED VALIDATION")}</b><p>${L(h.verify_it, h.verify_en)}</p></div>` : ""}
+    ${h.boundary_it ? `<div class="help-detail warn"><b>${L("CONFINE E CAUTELA", "BOUNDARY AND CAUTION")}</b><p>${L(h.boundary_it, h.boundary_en)}</p></div>` : ""}
+    ${h.endpoint ? `<div class="help-meta"><b>API</b> ${h.endpoint}</div>` : ""}
+    ${h.mutates ? `<div class="help-meta"><b>${L("STATO MODIFICATO", "STATE MUTATED")}</b> ${h.mutates}</div>` : ""}
+    ${h.active ? `<div class="sub">${L("Attivo quando", "Active when")}: ${h.active}</div>` : ""}`;
   dlg.querySelector(".help-close").onclick = () => dlg.close();
   dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
   dlg.showModal();
+}
+function showControlHelp(field) {
+  const h = S.controlHelp[field];
+  if (!h) return toast(L(`Spiegazione mancante per ${field}`, `Missing help for ${field}`));
+  showHelpRecord(h, L(PARAMS[field]?.l || field, PARAM_EN[field]));
+}
+function showActionHelp(action) {
+  const h = S.actionHelp[action];
+  if (!h) return toast(L(`Azione non documentata: ${action}`, `Undocumented action: ${action}`));
+  showHelpRecord(h, L(h.title_it, h.title_en));
 }
 function controlHelpButton(field) {
   const b = CE("button", "control-help-btn", "?");
@@ -587,12 +601,27 @@ function controlHelpButton(field) {
   b.onclick = e => { e.preventDefault(); e.stopPropagation(); showControlHelp(field); };
   return b;
 }
+function actionHelpButton(action) {
+  const b = CE("button", "control-help-btn action-help-btn", "?");
+  b.type = "button"; b.dataset.helpFor = action;
+  const h = S.actionHelp[action];
+  b.title = h ? `IT: ${h.it}\nEN: ${h.en}` : L("contratto dell'azione", "action contract");
+  b.setAttribute("aria-label", `action help ${action}`);
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); showActionHelp(action); };
+  return b;
+}
 function decorateControls(root) {
   for (const b of root.querySelectorAll("button")) {
+    const h = b.dataset.action ? S.actionHelp[b.dataset.action] : null;
+    if (h) b.title = `IT: ${h.it}\nEN: ${h.en}`;
     if (!b.title) {
       const action = (b.textContent || b.dataset.k || "action").trim();
       b.title = `IT: esegue “${action}” sul banco condiviso; verifica il readout del pannello.\nEN: runs “${action}” on the shared bench; verify the panel readout.`;
     }
+  }
+  for (const b of root.querySelectorAll("button[data-action]")) {
+    if (b.nextElementSibling?.dataset?.helpFor === b.dataset.action) continue;
+    b.after(actionHelpButton(b.dataset.action));
   }
   for (const e of root.querySelectorAll("select,input")) {
     if (!e.title && !e.closest(".param")) e.title = L(
@@ -852,7 +881,7 @@ PANEL_DEFS.scope = {
       <select data-k="mode"><option>densità</option><option>fosforo</option></select>
       <span>persist <input type="range" min="1" max="30" value="8" data-k="persist"></span>
       <span>rate <input type="range" min="1" max="40" value="12" data-k="rate"></span>
-      <button class="icon-btn" data-k="pause">⏸</button>
+      <button class="icon-btn" data-k="pause" data-action="scope_pause">⏸</button>
       <label><input type="checkbox" data-k="overlay" checked> livelli/soglie</label>
       <label><input type="checkbox" data-k="cursor"> cursore</label>
       <input type="range" min="-90" max="90" value="0" data-k="curpos" style="width:90px" disabled>
@@ -934,6 +963,7 @@ PANEL_DEFS.scope = {
     }
     multi.after(vbar);
     const pn4 = CE("button", "btn", "P/N · Diff · CM");
+    pn4.dataset.action = "scope_coherent";
     pn4.title = L("mostra i quattro reference plane dallo stesso record", "show all four reference planes from the same record");
     pn4.onclick = () => {
       p.node = "vp"; p.headSel.value = "vp";
@@ -944,6 +974,7 @@ PANEL_DEFS.scope = {
     p.body.appendChild(multi);
     const cbar = CE("div", "scope-bar");
     const btnCont = CE("button", "btn", L("Contour BER 2D (~2 s)", "2D BER contour (~2 s)"));
+    btnCont.dataset.action = "eye_contour";
     btnCont.onclick = async () => {
       btnCont.disabled = true;
       try {
@@ -1238,12 +1269,12 @@ PANEL_DEFS.ctle = {
     p.body.innerHTML = "";
     const editor = CE("div", "ctle-editor");
     editor.innerHTML = `<div class="scope-bar"><b>${L("TOPOLOGIA", "TOPOLOGY")}</b>
-      <button class="btn" data-preset="1z1p">1Z / 1P</button>
-      <button class="btn" data-preset="1z2p">1Z / 2P</button>
-      <button class="btn" data-preset="2z3p">2Z / 3P</button>
+      <button class="btn" data-preset="1z1p" data-action="ctle_preset">1Z / 1P</button>
+      <button class="btn" data-preset="1z2p" data-action="ctle_preset">1Z / 2P</button>
+      <button class="btn" data-preset="2z3p" data-action="ctle_preset">2Z / 3P</button>
       <span>${L("zeri", "zeros")} [GHz] <input data-k="zeros" type="text" style="width:150px"></span>
       <span>${L("poli", "poles")} [GHz] <input data-k="poles" type="text" style="width:180px"></span>
-      <button class="btn btn-accent" data-k="apply">${L("APPLICA", "APPLY")}</button></div>`;
+      <button class="btn btn-accent" data-k="apply" data-action="ctle_apply">${L("APPLICA", "APPLY")}</button></div>`;
     p.body.appendChild(editor);
     p.zInput = editor.querySelector("[data-k=zeros]");
     p.pInput = editor.querySelector("[data-k=poles]");
@@ -1513,6 +1544,7 @@ PANEL_DEFS.stimulus = {
     p.hexInput = CE("input"); p.hexInput.type = "text"; p.hexInput.maxLength = 12288;
     p.hexInput.spellcheck = false; p.hexInput.placeholder = "A5 C3 F0 0F";
     p.hexApply = CE("button", "btn btn-accent", L("APPLICA HEX", "APPLY HEX"));
+    p.hexApply.dataset.action = "pattern_apply";
     p.hexStatus = CE("span", "sub");
     const applyHex = async () => {
       try {
@@ -1588,6 +1620,7 @@ PANEL_DEFS.tx = {
       });
       const w2 = CE("div", "param");
       const tog = CE("button", "btn", taps.length === 3 ? "3 → 5 tap (c±2)" : "5 → 3 tap");
+      tog.dataset.action = "tx_tap_count";
       tog.title = L("numero di tap del FIR TX: a 5 tap l'LT può equalizzare canali più duri", "TX FIR tap count: with 5 taps LT can equalize harder channels");
       tog.onclick = () => {
         const t2 = [...S.cfg.tx_ffe_taps];
@@ -1647,6 +1680,7 @@ PANEL_DEFS.channel = {
     const up = CE("div", "scope-bar");
     up.innerHTML = `<input type="file" accept=".s2p,.S2P,.txt" style="font-size:11px"> <button class="btn" style="padding:3px 9px">usa S2P nel percorso</button> <button class="btn" style="padding:3px 9px">torna al modello</button>`;
     const [fileEl, btnUse, btnBack] = up.querySelectorAll("input,button");
+    btnUse.dataset.action = "s2p_use"; btnBack.dataset.action = "s2p_model";
     btnUse.title = TT("carica S21/SDD21 dal file e lo inserisce nel datapath", "loads S21/SDD21 from file and inserts it in the datapath");
     btnBack.title = TT("bypassa il file e ripristina il modello analitico", "bypasses the file and restores the analytic model");
     btnUse.onclick = async () => {
@@ -1901,6 +1935,7 @@ PANEL_DEFS.timing = {
     p.strip = CE("div", "plot"); p.body.appendChild(p.strip);
     const bar = CE("div", "scope-bar");
     const btnJtf = CE("button", "btn btn-accent", L("Misura jitter transfer (~3 s)", "Measure jitter transfer (~3 s)"));
+    btnJtf.dataset.action = "jtf";
     btnJtf.onclick = async () => {
       btnJtf.disabled = true;
       try {
@@ -2092,6 +2127,7 @@ PANEL_DEFS.dr4proc = {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
     p.run = CE("button", "btn btn-accent", L("ESEGUI DR4 COMPLETA (~7 s)", "RUN FULL DR4 (~7 s)"));
+    p.run.dataset.action = "dr4";
     p.run.title = TT("usa tutti i 65.535 simboli SSPRQ e i due estremi di dispersione; non modifica il banco", "uses all 65,535 SSPRQ symbols and both dispersion endpoints; does not modify the bench");
     p.seed = CE("input"); p.seed.type = "number"; p.seed.min = "0"; p.seed.max = "4294967295"; p.seed.value = "500283"; p.seed.style.width = "110px";
     bar.append(p.run, CE("span", "", "seed"), p.seed);
@@ -2197,7 +2233,7 @@ PANEL_DEFS.education = {
       </aside>
     </article>`;
     const ob = p.host.querySelector("[data-open]");
-    if (ob) ob.onclick = () => addPanel(ob.dataset.open);
+    if (ob) { ob.dataset.action = "academy_open"; ob.onclick = () => addPanel(ob.dataset.open); }
   },
 };
 
@@ -2372,6 +2408,7 @@ PANEL_DEFS.bert = {
     const bar = CE("div", "scope-bar");
     p.nIns = CE("input"); p.nIns.type = "number"; p.nIns.value = 10; p.nIns.min = 1; p.nIns.max = 200; p.nIns.style.width = "60px";
     const btn = CE("button", "btn btn-accent", L("Inserisci errori", "Insert errors"));
+    btn.dataset.action = "bert_inject";
     btn.onclick = () => POST("/api/inject", { bits: +p.nIns.value, burst: p.burstChk.checked })
       .then(() => { p.note.innerHTML = `<span class="warn">${LANG === "en" ? `${p.nIns.value} TX bits will be inverted in the next record: inspect the error map and FEC counters.` : `<span class="warn">${p.nIns.value} ${L("bit invertiti al TX sul prossimo record: guarda il picco nella mappa e (con FEC) le correzioni.", "bits flipped at TX on the next record: watch the spike in the map and (with FEC) the corrections.")}</span>`}</span>`; })
       .catch(e => toast(e.message));
@@ -2382,6 +2419,7 @@ PANEL_DEFS.bert = {
     // gating stile BERT: Start/Stop su finestra dei contatori cumulativi
     const gbar = CE("div", "scope-bar");
     p.gateBtn = CE("button", "btn", L("Gate START", "Gate START"));
+    p.gateBtn.dataset.action = "bert_gate";
     p.gateInfo = CE("span", "", "");
     p.targetBer = CE("input"); p.targetBer.type = "text"; p.targetBer.value = "1e-3"; p.targetBer.style.width = "64px";
     p.gateBtn.onclick = () => {
@@ -2396,6 +2434,7 @@ PANEL_DEFS.bert = {
     gbar.append(p.gateBtn, CE("span", "", L("target BER:", "target BER:")), p.targetBer, p.gateInfo);
     // auto-search stile MP1900A: trova la fase di campionamento a BER minima
     p.autoBtn = CE("button", "btn", L("Auto search fase (~5 s)", "Phase auto search (~5 s)"));
+    p.autoBtn.dataset.action = "bert_phase";
     p.autoBtn.onclick = async () => {
       p.autoBtn.disabled = true; p.autoBtn.textContent = L("ricerca…", "searching…");
       try {
@@ -2487,6 +2526,7 @@ PANEL_DEFS.l2 = {
     p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes", "l2_ipg_bytes", "l2_streams"]));
     const toolsBar = CE("div", "scope-bar");
     const bench = CE("button", "btn btn-accent", L("Benchmark frame size", "Frame-size benchmark"));
+    bench.dataset.action = "traffic_benchmark";
     bench.onclick = async () => {
       bench.disabled = true; bench.textContent = L("misura…", "measuring…");
       try {
@@ -2505,6 +2545,7 @@ PANEL_DEFS.l2 = {
       bench.disabled = false; bench.textContent = L("Benchmark frame size", "Frame-size benchmark");
     };
     const ont = CE("button", "btn", L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)"));
+    ont.dataset.action = "ont";
     ont.onclick = async () => {
       ont.disabled = true; ont.textContent = L("misura…", "measuring…");
       try {
@@ -2528,6 +2569,7 @@ PANEL_DEFS.l2 = {
       ont.disabled = false; ont.textContent = L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)");
     };
     const disr = CE("button", "btn", L("Service disruption", "Service disruption"));
+    disr.dataset.action = "disrupt";
     disr.title = L("interrompe il segnale per un record (fibra tagliata) e misura l'outage fino al ritorno del lock — il test di disruption di un ONT", "kills the signal for one record (fiber cut) and measures the outage until lock returns — an ONT disruption test");
     disr.onclick = () => POST("/api/disrupt", {}).then(() => toast(L("segnale interrotto: guarda SYNC LOSS e l'outage misurato", "signal cut: watch SYNC LOSS and the measured outage"))).catch(e => toast(e.message));
     p.disrInfo = CE("span", "", "");
@@ -2596,6 +2638,7 @@ PANEL_DEFS.anlt = {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
     const btn = CE("button", "btn btn-accent", L("Avvia AN + LT (~15 s)", "Run AN + LT (~15 s)"));
+    btn.dataset.action = "anlt_panel";
     p.applyChk = CE("input"); p.applyChk.type = "checkbox";
     const lab = CE("label", "", ""); lab.append(p.applyChk, document.createTextNode(L(" applica i tap negoziati", " apply negotiated taps")));
     btn.onclick = async () => {
@@ -2653,6 +2696,7 @@ PANEL_DEFS.train = {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
     const btn = CE("button", "btn btn-accent", L("Avvia training (~10 s)", "Start training (~10 s)"));
+    btn.dataset.action = "local_train";
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "training…";
       try {
@@ -2733,6 +2777,7 @@ PANEL_DEFS.sweep = {
     p.fieldSel.onchange = syncRange;
     if (S.sweepable && Object.keys(S.sweepable).length) syncRange();
     const btn = CE("button", "btn btn-accent", L("Esegui", "Run"));
+    btn.dataset.action = "sweep";
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "sweep…";
       try {
@@ -2771,6 +2816,7 @@ PANEL_DEFS.jtol = {
     p.freqs = CE("input"); p.freqs.type = "text"; p.freqs.value = "50, 200, 800, 2000"; p.freqs.style.width = "150px";
     p.target = CE("input"); p.target.type = "text"; p.target.value = "4e-2"; p.target.style.width = "70px";
     const btn = CE("button", "btn btn-accent", "Misura JTOL");
+    btn.dataset.action = "jtol";
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "bisezione… (~10 s)";
       try {
@@ -3004,7 +3050,8 @@ async function boot() {
   const st = await GET("/api/state");
   S.cfg = st.cfg; S.acc = st.acc; S.running = st.running; S.presets = st.presets;
   S.defaults = st.defaults || {}; S.sweepable = st.sweepable || {};
-  S.controlHelp = st.control_help || {};
+  S.controlHelp = st.control_help || {}; S.actionHelp = st.action_help || {};
+  decorateControls($("#topbar"));
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— ${L("preset didattici", "educational presets")} —</option>`;
   for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = tr(p.name); o.title = tr(p.desc); ps.appendChild(o); }

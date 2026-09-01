@@ -1255,6 +1255,9 @@ def test_control_help_covers_every_engine_knob_and_visible_param():
     assert set(CONTROL_HELP) == expected
     for name, item in CONTROL_HELP.items():
         assert item["it"] and item["en"] and item["block"] and item["plane"], name
+        assert item["observe_it"] and item["observe_en"], name
+        assert item["verify_it"] and item["verify_en"], name
+        assert item["boundary_it"] and item["boundary_en"], name
 
     source = (Path(__file__).resolve().parent.parent /
               "labpro/static/app.js").read_text(encoding="utf-8")
@@ -1263,6 +1266,29 @@ def test_control_help_covers_every_engine_knob_and_visible_param():
     visible = set(re.findall(r"^\s{2}([a-z][a-z0-9_]*):", params,
                              flags=re.MULTILINE))
     assert visible <= set(CONTROL_HELP), sorted(visible - set(CONTROL_HELP))
+
+
+def test_every_declared_ui_action_has_a_rich_help_contract():
+    """Ogni bottone operativo marcato nella UI deve avere un contratto
+    bilingue: effetto, piano, osservabile, confine e stato/API coinvolti."""
+    import re
+    from labpro.action_help import ACTION_HELP
+
+    root = Path(__file__).resolve().parent.parent
+    source = ((root / "labpro/static/app.js").read_text(encoding="utf-8")
+              + (root / "labpro/static/index.html").read_text(encoding="utf-8"))
+    used = set(re.findall(r'data-action="([a-z0-9_]+)"', source))
+    used |= set(re.findall(r'\.dataset\.action\s*=\s*"([a-z0-9_]+)"', source))
+    assert used == set(ACTION_HELP), {
+        "used_without_help": sorted(used - set(ACTION_HELP)),
+        "dead_help": sorted(set(ACTION_HELP) - used),
+    }
+    required = {"title_it", "title_en", "block", "plane", "it", "en",
+                "observe_it", "observe_en", "boundary_it", "boundary_en"}
+    for action, item in ACTION_HELP.items():
+        assert required <= set(item), action
+        assert all(item[k] for k in required), action
+        assert item["endpoint"] or item["mutates"], action
 
 
 def test_physics_audit_closes_current_record_invariants():

@@ -29,6 +29,7 @@ from serdes_sim.engine import (anlt_session, jitter_tolerance, jitter_transfer, 
 from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
+from labpro.action_help import ACTION_HELP   # noqa: E402
 from labpro.control_help import CONTROL_HELP  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -129,6 +130,7 @@ class ApiState(Base):
             "sweepable": {k: {"label": v[0], "lo": v[1], "hi": v[2]}
                           for k, v in SWEEPABLE_FIELDS.items()},
             "control_help": CONTROL_HELP,
+            "action_help": ACTION_HELP,
         })
 
 

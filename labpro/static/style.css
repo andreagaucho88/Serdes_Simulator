@@ -123,6 +123,8 @@ select, input[type=number], input[type=text] { background: var(--panel-2); color
   background: #101923; color: var(--muted); font: 600 10px/16px var(--mono);
   cursor: pointer; }
 .control-help-btn:hover { color: var(--electrical); border-color: var(--electrical); }
+.action-help-btn { position: static; display: inline-grid; place-items: center;
+  flex: 0 0 18px; margin-left: -3px; vertical-align: middle; }
 .control-help-dialog { width: min(680px, calc(100vw - 36px)); border: 1px solid #395061;
   border-radius: 10px; background: #0d151d; color: var(--ink); padding: 22px 24px;
   box-shadow: 0 24px 80px rgba(0,0,0,.65); }
@@ -138,6 +140,15 @@ select, input[type=number], input[type=text] { background: var(--panel-2); color
 .help-lang p { margin: 0; line-height: 1.45; }
 .help-formula { margin: 12px 0; padding: 9px 11px; border-left: 2px solid var(--digital);
   background: rgba(180,156,255,.06); font: 500 12px var(--mono); }
+.help-detail { margin: 9px 0; padding: 9px 11px; border: 1px solid var(--grid);
+  border-radius: 7px; background: rgba(86,200,232,.035); }
+.help-detail.warn { border-color: rgba(232,197,90,.35); background: rgba(232,197,90,.045); }
+.help-detail b, .help-meta b { color: var(--electrical); font: 600 9px var(--mono);
+  letter-spacing: .08em; }
+.help-detail.warn b { color: var(--amber); }
+.help-detail p { margin: 5px 0 0; line-height: 1.42; }
+.help-meta { display: inline-block; margin: 4px 12px 4px 0; color: var(--muted);
+  font: 10px var(--mono); }
 
 /* ---------- readouts ---------- */
 .readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
