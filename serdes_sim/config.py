@@ -154,6 +154,20 @@ class LinkConfig:
     adc_gain_mismatch_rms: float = 0.006
     adc_offset_mismatch_rms_v: float = 1.2e-3
     adc_skew_mismatch_rms_fs: float = 35.0
+    # --- architettura di nuova generazione (112G/224G ADC-based RX) --------
+    # rank di track&hold in testa all'array SAR: i lane condividono skew e
+    # banda del proprio rank (1 = array flat, comportamento storico)
+    adc_ranks: int = 1
+    # banda del front-end T/H (1° ordine); 0 = disattivo (storico)
+    adc_frontend_bw_hz: float = 0.0
+    # spread rms della banda fra i rank: mismatch DIPENDENTE dalla frequenza,
+    # NON correggibile dalla calibrazione gain/offset/skew (servono FFE/lane)
+    adc_bw_mismatch_pct: float = 0.0
+    # calibrazione dell'array: foreground = residui statici che scalano col
+    # PVT (storico); background = insegue PVT/temperatura; off = SAR grezzo
+    adc_cal_mode: str = "foreground"
+    # rumore termico input-referred dell'ADC (prima della quantizzazione)
+    adc_noise_rms_mv: float = 0.0
 
     # CDR (timing recovery NEL datapath; "oracle" è la modalità idealizzata
     # dichiarata: fase dal minimo MSE con i simboli noti)
@@ -275,6 +289,16 @@ class LinkConfig:
                 problems.append(f"{name} deve essere > 0")
         if self.adc_sps < 1 or self.adc_interleaves < 1:
             problems.append("adc_sps e adc_interleaves devono essere >= 1")
+        if self.adc_ranks < 1 or self.adc_interleaves % self.adc_ranks:
+            problems.append("adc_ranks >= 1 e divisore di adc_interleaves")
+        if self.adc_cal_mode not in ("background", "foreground", "off"):
+            problems.append("adc_cal_mode deve essere background/foreground/off")
+        if self.adc_frontend_bw_hz < 0:
+            problems.append("adc_frontend_bw_hz deve essere >= 0 (0 = off)")
+        if not 0 <= self.adc_bw_mismatch_pct <= 30:
+            problems.append("adc_bw_mismatch_pct fuori range [0, 30]")
+        if not 0 <= self.adc_noise_rms_mv <= 20:
+            problems.append("adc_noise_rms_mv fuori range [0, 20] mV")
         if self.dfe_taps < 1:
             problems.append("dfe_taps deve essere >= 1")
         if not (0 <= self.tx_rj_rms_fs <= 2000):

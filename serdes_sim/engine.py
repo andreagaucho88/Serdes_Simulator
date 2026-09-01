@@ -654,6 +654,8 @@ SWEEPABLE_FIELDS = {
     "tx_rj_rms_fs": ("RJ TX [fs rms]", 0.0, 1200.0),
     "cdr_bw": ("Banda loop CDR [·f_baud]", 0.0004, 0.005),
     "adc_phase_ui": ("Fase di campionamento ADC [UI]", -0.35, 0.35),
+    "adc_frontend_bw_hz": ("Banda front-end T/H ADC [Hz]", 15e9, 60e9),
+    "adc_noise_rms_mv": ("Rumore ADC input-referred [mV rms]", 0.0, 8.0),
     "pvt_temp_c": ("Temperatura die RX [°C]", -40.0, 125.0),
     "pvt_vdd_pct": ("Supply RX [Δ%]", -10.0, 10.0),
     "rx_ppm_offset": ("Offset clock RX [ppm]", -300.0, 300.0),

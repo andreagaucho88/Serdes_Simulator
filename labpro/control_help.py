@@ -216,6 +216,60 @@ _add("ctle_zero_hz ctle_pole_hz ctle_hf_pole_hz ctle_zeros_hz ctle_poles_hz ctle
 _add("adc_sps adc_bits adc_full_scale_vpp adc_phase_ui adc_jitter_rms_fs", "ADC", "A/D sampling plane",
      "controlla rate, quantizzazione, full scale, fase e jitter di apertura del campionatore nel datapath.",
      "controls sample rate, quantization, full scale, phase, and aperture jitter in the datapath.")
+_add("adc_ranks", "Time-interleaved ADC", "T/H front-end ranks",
+     "rank di track&hold davanti all'array SAR (architettura 112/224G: pochi "
+     "T/H veloci, molti SAR lenti): i lane di un rank CONDIVIDONO skew e "
+     "banda del rank, concentrando le spur alle righe k·fs/R invece di "
+     "k·fs/M. 1 = array flat (storico). Deve dividere le vie di interleave.",
+     "track&hold ranks in front of the SAR array (112/224G architecture: a "
+     "few fast T/Hs, many slow SARs): lanes in a rank SHARE the rank's skew "
+     "and bandwidth, concentrating spurs at k·fs/R lines instead of k·fs/M. "
+     "1 = flat array (legacy). Must divide the interleave count.",
+     active="adc_ranks > 1 (skew/banda per rank)")
+
+_add("adc_frontend_bw_hz", "Time-interleaved ADC", "T/H input bandwidth",
+     "banda del front-end T/H (polo 1° ordine) prima del campionamento: "
+     "limita il contenuto ad alta frequenza che l'ADC vede davvero. 0 = "
+     "disattivo (storico). Da targa SOTA: ~0.5–0.7·f_baud.",
+     "T/H front-end bandwidth (1st-order pole) before sampling: limits the "
+     "high-frequency content the ADC actually sees. 0 = off (legacy). "
+     "SOTA datasheet range: ~0.5–0.7·f_baud.",
+     active="adc_frontend_bw_hz > 0")
+
+_add("adc_bw_mismatch_pct", "Time-interleaved ADC", "per-rank bandwidth spread",
+     "spread rms della banda fra i rank T/H: un mismatch DIPENDENTE dalla "
+     "frequenza (ampiezza+fase) che la calibrazione gain/offset/skew NON "
+     "corregge — servono equalizzatori per-lane. È la firma spettrale "
+     "dominante degli interleaved reali vicino a Nyquist.",
+     "rms bandwidth spread across T/H ranks: a frequency-DEPENDENT mismatch "
+     "(amplitude+phase) that gain/offset/skew calibration canNOT correct — "
+     "per-lane equalizers would be needed. It is the dominant spectral "
+     "signature of real interleaved ADCs near Nyquist.",
+     active="adc_frontend_bw_hz > 0")
+
+_add("adc_cal_mode", "Time-interleaved ADC", "array calibration loop",
+     "quanto mismatch residuo resta e se insegue il PVT: foreground = "
+     "residui statici calibrati a nominale (col PVT il residuo scala — "
+     "storico); background = la cal insegue lentamente PVT/temperatura "
+     "(residuo di targa anche a caldo); off = SAR grezzo, mismatch ×8 "
+     "DICHIARATO. La differenza si vede coi corner PVT e la camera.",
+     "how much residual mismatch remains and whether it tracks PVT: "
+     "foreground = static residuals calibrated at nominal (residual scales "
+     "with PVT — legacy); background = the cal slowly tracks "
+     "PVT/temperature (datasheet residual even when hot); off = raw SAR, "
+     "mismatch ×8 DECLARED. Visible with PVT corners and the chamber.",
+     active="sempre / always")
+
+_add("adc_noise_rms_mv", "Time-interleaved ADC", "input-referred noise",
+     "rumore termico input-referred dell'ADC (kT/C + comparatore + "
+     "reference) aggiunto prima della quantizzazione: abbassa l'ENOB "
+     "effettivo sotto il limite di quantizzazione, come nei convertitori "
+     "reali. 0 = disattivo (storico).",
+     "ADC input-referred thermal noise (kT/C + comparator + reference) "
+     "added before quantization: it drags the effective ENOB below the "
+     "quantization limit, as in real converters. 0 = off (legacy).",
+     active="adc_noise_rms_mv > 0")
+
 _add("adc_interleaves adc_gain_mismatch_rms adc_offset_mismatch_rms_v adc_skew_mismatch_rms_fs", "Time-interleaved ADC", "ADC sub-converters",
      "imposta numero di slice e mismatch statici; genera spur periodici legati a fs/M.",
      "sets slice count and static mismatches; creates periodic spurs tied to fs/M.")

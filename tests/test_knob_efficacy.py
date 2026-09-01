@@ -154,6 +154,14 @@ KNOBS = {
     "adc_gain_mismatch_rms": (0.02, {}, {"adc"}, {"driver", "pfib", "vctle"}),
     "adc_offset_mismatch_rms_v": (5e-3, {}, {"adc"}, {"driver", "pfib", "vctle"}),
     "adc_skew_mismatch_rms_fs": (150.0, {}, {"adc"}, {"driver", "pfib", "vctle"}),
+    # architettura SOTA: rank T/H, banda front-end, calibrazione, rumore
+    "adc_ranks": (4, {"adc_skew_mismatch_rms_fs": 150.0},
+                  {"adc"}, {"driver", "pfib", "vctle"}),
+    "adc_frontend_bw_hz": (28e9, {}, {"adc"}, {"driver", "pfib", "vctle"}),
+    "adc_bw_mismatch_pct": (10.0, {"adc_frontend_bw_hz": 35e9, "adc_ranks": 4},
+                            {"adc"}, {"driver", "pfib", "vctle"}),
+    "adc_cal_mode": ("off", {}, {"adc"}, {"driver", "pfib", "vctle"}),
+    "adc_noise_rms_mv": (3.0, {}, {"adc"}, {"driver", "pfib", "vctle"}),
     "rx_ppm_offset": (150.0, {}, {"adc"}, {"driver", "pfib", "vctle"}),
     # DSP: tocca solo la BER
     "cdr_mode": ("oracle", {}, {"ber"}, {"driver", "pfib", "vctle", "adc"}),

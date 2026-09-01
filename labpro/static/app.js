@@ -595,6 +595,13 @@ const PARAMS = {
   adc_gain_mismatch_rms: { l: "Gain mism.", u: "%", min: 0, max: 3, step: 0.05, scale: 0.01 },
   adc_offset_mismatch_rms_v: { l: "Offset mism.", u: "mV", min: 0, max: 8, step: 0.1, scale: 1e-3 },
   adc_skew_mismatch_rms_fs: { l: "Skew mism.", u: "fs", min: 0, max: 200, step: 5 },
+  adc_interleaves: { l: "Vie interleave", type: "select", opts: [4, 8, 16, 32, 64] },
+  adc_ranks: { l: "Rank T/H", type: "select", opts: [1, 2, 4, 8] },
+  adc_frontend_bw_hz: { l: "Banda T/H", u: "GHz", min: 0, max: 60, step: 1, scale: 1e9 },
+  adc_bw_mismatch_pct: { l: "BW mism. rank", u: "%", min: 0, max: 15, step: 0.5 },
+  adc_cal_mode: { l: "Calibrazione", type: "select", opts: ["background", "foreground", "off"],
+    names: { background: "background (insegue PVT)", foreground: "foreground (residui statici)", off: "off (SAR grezzo)" } },
+  adc_noise_rms_mv: { l: "Rumore ADC", u: "mV", min: 0, max: 10, step: 0.1 },
   cdr_mode: { l: "Modo CDR", type: "select", opts: ["gardner", "mm", "oracle"],
     names: { gardner: "Gardner (2 sps)", mm: "Mueller-Müller", oracle: "oracle (ideale)" } },
   cdr_bw: { l: "Banda loop", u: "·f_baud", min: 0.0002, max: 0.006, step: 0.0002 },
@@ -647,6 +654,9 @@ const PARAM_EN = {
   ctle_dc_gain_db: "DC gain", adc_bits: "ADC bits", adc_full_scale_vpp: "ADC full scale",
   adc_jitter_rms_fs: "Aperture jitter", adc_phase_ui: "Sample phase",
   adc_gain_mismatch_rms: "Gain mismatch", adc_offset_mismatch_rms_v: "Offset mismatch",
+  adc_interleaves: "Interleave lanes", adc_ranks: "T/H ranks",
+  adc_frontend_bw_hz: "T/H bandwidth", adc_bw_mismatch_pct: "Rank BW mismatch",
+  adc_cal_mode: "Calibration", adc_noise_rms_mv: "ADC noise",
   adc_skew_mismatch_rms_fs: "Skew mismatch", cdr_mode: "CDR mode",
   cdr_bw: "Loop bandwidth", cdr_damping: "Damping", rx_ppm_offset: "RX clock offset",
   fse_taps: "FSE taps", dfe_taps: "DFE taps", causal_filters: "Causal filters",
@@ -658,6 +668,9 @@ const OPTION_EN = {
   "Mueller-Müller": "Mueller-Mueller", "oracle (ideale)": "oracle (ideal)",
   "clock 0101": "0101 clock", "clock 4+4": "4+4 clock",
   "frame Ethernet (L2)": "Ethernet frames (L2)",
+  "background (insegue PVT)": "background (tracks PVT)",
+  "foreground (residui statici)": "foreground (static residuals)",
+  "off (SAR grezzo)": "off (raw SAR array)",
   "differenziale Vp−Vn": "differential Vp−Vn", "single-ended P": "single-ended P",
   "single-ended N": "single-ended N", "MZM push-pull": "push-pull MZM",
   "EML integrated": "integrated EML", "DFB-DML direct": "direct DFB-DML",
@@ -2049,7 +2062,8 @@ PANEL_DEFS.adc = {
   title: "ADC interleaved · sampling & decisioni", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs"]));
+    p.body.appendChild(paramsBlock(["adc_bits", "adc_full_scale_vpp", "adc_jitter_rms_fs", "adc_phase_ui", "adc_gain_mismatch_rms", "adc_offset_mismatch_rms_v", "adc_skew_mismatch_rms_fs",
+      "adc_interleaves", "adc_ranks", "adc_cal_mode", "adc_frontend_bw_hz", "adc_bw_mismatch_pct", "adc_noise_rms_mv"]));
     const g = CE("div", "grid2");
     p.plotHist = CE("div", "plot"); p.plotScat = CE("div", "plot");
     g.append(p.plotHist, p.plotScat); p.body.appendChild(g);
@@ -2091,11 +2105,13 @@ PANEL_DEFS.adc = {
       mergeAxis(lay, "xaxis", { title: { text: "GHz", font: { size: 10 } } });
       plot(p.plotEl, [
         { x: d.tone_f_ghz, y: d.tone_ideal_db, name: L("quantizzazione", "quantization"), line: { color: COL.muted, width: 1 } },
-        { x: d.tone_f_ghz, y: d.tone_mm_db, name: L("con mismatch", "with mismatch"), line: { color: COL.dg, width: 1 } }], lay);
+        { x: d.tone_f_ghz, y: d.tone_mm_db, name: L("effettivo (mism.+jitter+rumore)", "effective (mism.+jitter+noise)"), line: { color: COL.dg, width: 1 } }], lay);
+      const ar = d.arch || {};
       p.tbl.innerHTML = `<div class="readout">
-        <div class="ro"><label>SNDR</label><b>${fix(d.sndr[1], 1)} dB</b><span class="sub">${L("ideale", "ideal")} ${fix(d.sndr[0], 1)}</span></div>
-        <div class="ro"><label>ENOB</label><b>${fix(d.enob[1], 2)}</b><span class="sub">${L("bit (tono, non PAM4)", "bits (tone, not PAM4)")}</span></div>
-        <div class="ro"><label>LSB / clip</label><b>${fix(d.lsb_mv, 2)} mV</b><span class="sub">${fix(d.clip_pct, 3)}%</span></div></div>`;
+        <div class="ro"><label>SNDR / ENOB</label><b>${fix(d.sndr[1], 1)} dB · ${fix(d.enob[1], 2)} b</b><span class="sub">${L("tono basso", "low tone")} ${d.tone_low_ghz ? fix(d.tone_low_ghz, 1) + " GHz" : ""} · ${L("ideale", "ideal")} ${fix(d.sndr[0], 1)} dB</span></div>
+        <div class="ro"><label>ENOB @ Nyq</label><b>${d.enob_nyq ? fix(d.enob_nyq[1], 2) + " b" : "—"}</b><span class="sub">${d.sndr_nyq ? "SNDR " + fix(d.sndr_nyq[1], 1) + " dB · spur " + fix(d.spur_nyq_dbfs, 0) + " dBFS @ " + fix(d.tone_nyq_ghz, 1) + " GHz" : ""}</span></div>
+        <div class="ro"><label>${L("architettura", "architecture")}</label><b>${ar.interleaves || "—"}×${ar.ranks || 1}R</b><span class="sub">cal ${ar.cal_mode || "—"} ×${fix(ar.cal_effective, 2)}${ar.frontend_bw_ghz ? " · T/H " + fix(ar.frontend_bw_ghz, 0) + " GHz" : ""}${ar.rank_bw_ghz ? " (" + ar.rank_bw_ghz.map(b => fix(b, 0)).join("/") + ")" : ""}</span></div>
+        <div class="ro"><label>LSB / clip</label><b>${fix(d.lsb_mv, 2)} mV</b><span class="sub">${fix(d.clip_pct, 3)}%${ar.noise_rms_mv ? " · " + L("rumore", "noise") + " " + fix(ar.noise_rms_mv, 1) + " mV" : ""}</span></div></div>`;
     } else {
       plot(p.plotEl, [{ x: d.code_hist.x, y: d.code_hist.h.map(v => Math.max(v, 0.5)), type: "bar", marker: { color: COL.el } }],
         (() => { const l3 = PL({ height: 150, showlegend: false, shapes: [vline(-d.fs_v, COL.fail, "dash"), vline(d.fs_v, COL.fail, "dash")] });
@@ -2149,6 +2165,9 @@ PANEL_DEFS.timing = {
       const c = d.cdr;
       p.ro.appendChild(readout([
         { l: "CDR " + d.mode, v: c.locked ? "LOCKED" : "UNLOCKED", cls: c.locked ? "ok" : "fail", sub: c.locked ? `${L("lock @ simbolo", "lock @ symbol")} ${c.lock_symbol}` : c.detail, big: true },
+        // il TED è il cuore del loop: errore di fase per simbolo dalle
+        // decisioni (Gardner/M&M), guadagno stimato con probe cieco S-curve
+        { l: "TED " + (d.mode === "mm" ? "Mueller-Müller" : d.mode === "gardner" ? "Gardner" : d.mode), v: c.ted_gain != null ? fix(c.ted_gain, 2) + " /UI" : "—", sub: L("guadagno S-curve (probe cieco) · TED → filtro PI → NCO", "S-curve gain (blind probe) · TED → PI filter → NCO"), title: L("l'errore di fase per simbolo viene dal TED sulle decisioni; il loop PI lo integra e muove l'NCO", "the per-symbol phase error comes from the decision-based TED; the PI loop integrates it and steers the NCO") },
         { l: "pattern lock (BERT)", v: c.pattern_locked ? "SYNC" : "NO SYNC", cls: c.pattern_locked ? "ok" : "fail", sub: c.pattern_lag != null ? `lag ${c.pattern_lag} · |corr| ${fix(Math.abs(c.pattern_corr), 2)}` : "—" },
         { l: "cycle slips", v: String(c.cycle_slips), cls: c.cycle_slips ? "fail" : "ok" },
         { l: "link", v: d.link_up ? "UP" : "DOWN", cls: d.link_up ? "ok" : "fail", sub: c.ppm_set ? `${L("offset impostato", "set offset")} ${c.ppm_set} ppm` : "" },

@@ -816,6 +816,19 @@ def adc_panel(sim, cfg):
         "lsb_mv": sim.adc.adc_lsb_v * 1e3,
         "clip_pct": 100 * sim.adc.adc_clip_fraction,
         "fs_v": fs,
+        # architettura di nuova generazione: interleave×rank, calibrazione e
+        # front-end T/H — il pannello dichiara COSA sta modellando
+        "arch": {
+            "interleaves": cfg.adc_interleaves,
+            "ranks": cfg.adc_ranks,
+            "cal_mode": cfg.adc_cal_mode,
+            "cal_effective": sim.adc.cal_effective,
+            "frontend_bw_ghz": (cfg.adc_frontend_bw_hz / 1e9
+                                if cfg.adc_frontend_bw_hz > 0 else None),
+            "rank_bw_ghz": (list(sim.adc.rank_bw_hz / 1e9)
+                            if sim.adc.rank_bw_hz is not None else None),
+            "noise_rms_mv": cfg.adc_noise_rms_mv,
+        },
     }
     # occupazione dei codici ADC su tutto il full-scale: mostra quanto l'AGC
     # usa il range e se le code toccano il clipping
@@ -856,6 +869,11 @@ def adc_panel(sim, cfg):
             "sndr": [tl.sndr_ideal_db, tl.sndr_mismatch_db],
             "enob": [tl.enob_ideal, tl.enob_mismatch],
             "lines_ghz": tl.interleave_lines_hz / 1e9,
+            "tone_low_ghz": tl.tone_low_hz / 1e9,
+            "tone_nyq_ghz": tl.tone_nyq_hz / 1e9,
+            "sndr_nyq": [tl.sndr_nyq_ideal_db, tl.sndr_nyq_db],
+            "enob_nyq": [tl.enob_nyq_ideal, tl.enob_nyq],
+            "spur_nyq_dbfs": tl.spur_nyq_dbfs,
         })
     return J(out)
 
@@ -868,6 +886,7 @@ def timing_panel(sim, cfg):
         out.update({
             "cdr": {
                 "locked": c.locked, "lock_symbol": c.lock_symbol,
+                "ted_gain": c.ted_gain,
                 "cycle_slips": c.cycle_slips,
                 "tau": c.tau_trace_ui[::sub],
                 "fppm": c.freq_trace_ppm[::sub],
