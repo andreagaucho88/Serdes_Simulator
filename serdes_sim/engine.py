@@ -517,7 +517,8 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     # --- 9c. SNR/Q e grandezze ottiche -------------------------------------
     # Ogni piano di osservazione ha le SUE statistiche/soglie: FSE, DFE e
     # baseline 1 sps non sono interscambiabili.
-    result.snr = metrics_block.snr_report(y_soft, d_soft, result.level_stats)
+    result.snr = metrics_block.snr_report(y_soft, d_soft, result.level_stats,
+                                          spec=spec)
     dfe_stats, _ = metrics_block.level_statistics(
         eq.dfe_output[eq.train_fse], eq.d_fse[eq.train_fse], spec=spec)
     result.level_stats_dfe = dfe_stats
@@ -528,7 +529,7 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     result.level_stats_baud = baud_stats
     result.thresholds_baud = metrics_block.decision_thresholds(baud_stats)
     result.snr_dfe = metrics_block.snr_report(
-        eq.dfe_output[eq.validation_fse], truth_val, dfe_stats)
+        eq.dfe_output[eq.validation_fse], truth_val, dfe_stats, spec=spec)
     if result.optical is not None:
         result.optical_levels = metrics_block.optical_level_proxies(
             result.optical.P_fiber_w)
@@ -1113,16 +1114,34 @@ def traffic_sweep(cfg: LinkConfig, frame_sizes=(64, 128, 256, 512, 1024),
 
 def sweep(cfg: LinkConfig, field_name: str, values, seed=20240731,
           progress_callback=None):
-    """Ripete la simulazione light variando un solo parametro."""
+    """Ripete la simulazione light variando un solo parametro effettivo.
+
+    ``ctle_zero_hz`` è il nome pubblico storico dello sweep. Se è attiva una
+    topologia multi-sezione, deve muovere il primo zero della lista realmente
+    consumata dal datapath, non il campo legacy inattivo.
+    """
     if field_name not in SWEEPABLE_FIELDS:
         raise ValueError(f"campo non sweepable: {field_name}")
     rows = []
     for i, v in enumerate(values):
         v_cast = int(v) if field_name == "adc_bits" else float(v)
-        c = cfg.with_updates(**{field_name: v_cast})
+        if field_name == "ctle_zero_hz" and cfg.ctle_zeros_hz:
+            zeros = list(cfg.ctle_zeros_effective_hz)
+            upper = 0.95 * zeros[1] if len(zeros) > 1 else float("inf")
+            zeros[0] = min(v_cast, upper)
+            c = cfg.with_updates(ctle_zeros_hz=tuple(zeros))
+        else:
+            c = cfg.with_updates(**{field_name: v_cast})
         r = simulate(c, seed=seed, depth="light")
         rows.append({
             field_name: v_cast,
+            # Il valore richiesto puo essere limitato o tradotto nel
+            # parametro realmente consumato dal datapath (oggi accade per
+            # il primo zero delle topologie CTLE multi-sezione). Esporlo
+            # impedisce che GUI e optimizer dichiarino uno sweep fantasma.
+            "effective_value": (c.ctle_zeros_effective_hz[0]
+                                if field_name == "ctle_zero_hz" else
+                                getattr(c, field_name)),
             "link_up": r.link_up,
             "BER_pre_EQ": r.ber_pre_eq,
             "BER_FSE": r.ber_post_fse,

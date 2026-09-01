@@ -169,6 +169,16 @@ def test_sweep_carries_val_bits():
     assert all(np.isfinite(r["FER_RS544_iid"]) for r in rows)
 
 
+def test_extended_ctle_sweep_moves_the_zero_consumed_by_datapath():
+    """Regression: lo sweep storico dello zero non deve diventare morto
+    quando il CTLE usa liste 2Z/3P."""
+    cfg = LinkConfig(ctle_zeros_hz=(7e9, 18e9),
+                     ctle_poles_hz=(24e9, 45e9, 75e9))
+    rows = sweep(cfg, "ctle_zero_hz", [5e9, 11e9], seed=17)
+    assert [r["effective_value"] for r in rows] == [5e9, 11e9]
+    assert rows[0]["BER_FSE_DFE"] != rows[1]["BER_FSE_DFE"]
+
+
 # --- piani di riferimento ----------------------------------------------------
 
 def test_threshold_planes_are_distinct(baseline_full):
@@ -879,3 +889,182 @@ def test_cmis_states_follow_bench():
     assert dn["datapath_state"] != "DataPathActivated"
     assert dn["lane_flags"][0]["rx_lol"] or dn["lane_flags"][0]["rx_los"]
     assert len(up["dom"]) == 5 and len(up["vdm"]) >= 3
+
+
+# --- audit fisico/UI severo -------------------------------------------------
+
+def test_control_help_covers_every_engine_knob_and_visible_param():
+    """Un nuovo campo fisico non puo comparire senza spiegazione IT/EN e
+    piano di riferimento; vale anche per ogni parametro esposto dalla UI."""
+    import re
+    from dataclasses import fields
+    from labpro.control_help import CONTROL_HELP
+
+    expected = {f.name for f in fields(LinkConfig)}
+    assert set(CONTROL_HELP) == expected
+    for name, item in CONTROL_HELP.items():
+        assert item["it"] and item["en"] and item["block"] and item["plane"], name
+
+    source = (Path(__file__).resolve().parent.parent /
+              "labpro/static/app.js").read_text(encoding="utf-8")
+    params = source[source.index("const PARAMS = {"):
+                    source.index("const PARAM_EN")]
+    visible = set(re.findall(r"^\s{2}([a-z][a-z0-9_]*):", params,
+                             flags=re.MULTILINE))
+    assert visible <= set(CONTROL_HELP), sorted(visible - set(CONTROL_HELP))
+
+
+def test_physics_audit_closes_current_record_invariants():
+    from labpro.paneldata import physics_audit_panel
+    cfg = LinkConfig()
+    sim = simulate(cfg, seed=20240731, depth="light")
+    audit = physics_audit_panel(sim, cfg)
+    assert audit["failed"] == 0 and audit["warnings"] == 0
+    assert {row["name"] for row in audit["rows"]} >= {
+        "TX FIR H(0)", "TX FIR H(Nyquist)", "Optical field identity",
+        "Optical budget closure", "MZM quadrature mean", "Shot-noise PSD",
+        "P/N identities", "TIA VGA range", "AGC gain range",
+        "CTLE DC gain", "BER counted vs Gaussian levels",
+    }
+
+
+def test_tia_vga_sign_range_and_agc_hard_limit_are_observable():
+    hi = simulate(LinkConfig(laser_dbm=9.0), seed=81, depth="light").receiver
+    min_zt = 2500.0 * 10 ** (-10.0 / 20)
+    assert min_zt <= hi.tia_effective_transimpedance_ohm <= 2500.0
+    assert 0 <= hi.tia_vga_atten_db <= 10.0
+    assert hi.tia_vga_atten_db == pytest.approx(
+        -20 * np.log10(hi.tia_effective_transimpedance_ohm / 2500.0))
+
+    low = simulate(LinkConfig(laser_dbm=-6.0, agc_target_rms_v=0.4),
+                   seed=81, depth="light").receiver
+    assert low.agc_at_limit
+    assert 20 * np.log10(low.agc_gain) == pytest.approx(24.0)
+    assert low.agc_unconstrained_gain > low.agc_gain
+
+
+def test_channel_panel_exposes_pulse_impulse_and_effective_ctle_path():
+    from labpro.paneldata import channel_panel
+    cfg = LinkConfig(ctle_zeros_hz=(7e9, 18e9),
+                     ctle_poles_hz=(24e9, 45e9, 75e9))
+    data = channel_panel(simulate(cfg, seed=83, depth="light"), cfg)
+    assert len(data["pulse_combo"]) == len(data["impulse_combo"])
+    assert len(data["impulse"]) == len(data["impulse_t_ui"])
+    assert np.isfinite(data["isi_rms_combo"]) and data["isi_rms_combo"] > 0
+    assert "before AGC/clip/ADC" in data["pulse_plane"]
+
+
+def _poly_mul_mod(a, b, polynomial, degree):
+    out = 0
+    while b:
+        if b & 1:
+            out ^= a
+        b >>= 1
+        a <<= 1
+        if a & (1 << degree):
+            a ^= polynomial
+    return out
+
+
+def _poly_pow_x(exponent, polynomial, degree):
+    result, base = 1, 2
+    while exponent:
+        if exponent & 1:
+            result = _poly_mul_mod(result, base, polynomial, degree)
+        base = _poly_mul_mod(base, base, polynomial, degree)
+        exponent >>= 1
+    return result
+
+
+def test_prbs_period_balance_and_primitive_polynomial_certificates():
+    """I periodi corti sono verificati per enumerazione; PRBS23/31 con il
+    certificato algebrico di primitivita, senza allocare miliardi di bit."""
+    from serdes_sim.blocks.stimulus import prbs_bits
+    polynomials = {
+        7: (1 << 7) | (1 << 6) | 1,
+        9: (1 << 9) | (1 << 5) | 1,
+        11: (1 << 11) | (1 << 9) | 1,
+        13: (1 << 13) | (1 << 12) | (1 << 2) | (1 << 1) | 1,
+        15: (1 << 15) | (1 << 14) | 1,
+        23: (1 << 23) | (1 << 18) | 1,
+        31: (1 << 31) | (1 << 28) | 1,
+    }
+    prime_factors = {
+        7: (127,), 9: (7, 73), 11: (23, 89), 13: (8191,),
+        15: (7, 31, 151), 23: (47, 178481), 31: (2147483647,),
+    }
+    for degree, polynomial in polynomials.items():
+        period = 2 ** degree - 1
+        assert _poly_pow_x(period, polynomial, degree) == 1
+        for factor in prime_factors[degree]:
+            assert _poly_pow_x(period // factor, polynomial, degree) != 1
+        if degree <= 15:
+            bits = prbs_bits(degree, 2 * period)
+            assert np.array_equal(bits[:period], bits[period:])
+            assert int(bits[:period].sum()) == 2 ** (degree - 1)
+
+
+def test_tx_fir_exact_endpoints_and_panel_report():
+    from labpro.paneldata import tx_panel
+    cfg = LinkConfig(tx_ffe_taps=(-0.03, -0.2, 0.9, -0.07, 0.01))
+    data = tx_panel(simulate(cfg, seed=89, depth="light"), cfg)
+    taps = np.asarray(cfg.tx_ffe_taps)
+    assert data["h0"] == pytest.approx(float(taps.sum()))
+    assert data["hnyquist"] == pytest.approx(
+        float(np.sum(taps * (-1.0) ** np.arange(len(taps)))))
+    assert len(data["f_norm"]) == len(data["ffe_db"]) == len(data["combined_db"])
+
+
+def test_channel_il_slider_is_smooth_loss_not_mismatch_ripple():
+    from serdes_sim.blocks.channel import channel_response
+    ideal_rl = LinkConfig(return_loss_db=120.0)
+    total_ideal = -20 * np.log10(abs(channel_response(
+        np.asarray([ideal_rl.nyquist_hz]), ideal_rl)[0]))
+    assert total_ideal == pytest.approx(ideal_rl.channel_il_nyquist_db,
+                                       abs=0.02)
+    cfg = LinkConfig(return_loss_db=14.0)
+    total = -20 * np.log10(abs(channel_response(
+        np.asarray([cfg.nyquist_hz]), cfg)[0]))
+    assert abs(total - cfg.channel_il_nyquist_db) > 0.05
+
+
+def test_tx_clock_stress_calibration_rj_pj_and_ssc():
+    from serdes_sim.blocks.tx import tx_clock_tie_ui
+    ui_s = LinkConfig().ui_s
+    rj_cfg = LinkConfig(tx_rj_rms_fs=1000.0)
+    rj = tx_clock_tie_ui(rj_cfg, np.random.default_rng(20240731))
+    assert np.std(rj) * ui_s / 1e-15 == pytest.approx(1000.0, rel=0.03)
+
+    pj_cfg = LinkConfig(tx_pj_amp_ui=0.06, tx_pj_freq_mhz=200.0)
+    pj = tx_clock_tie_ui(pj_cfg, np.random.default_rng(1))
+    freq = np.fft.rfftfreq(len(pj), d=ui_s)
+    amp = 2 * np.abs(np.fft.rfft(pj - pj.mean())) / len(pj)
+    peak = int(np.argmax(amp[1:]) + 1)
+    assert freq[peak] / 1e6 == pytest.approx(200.0, abs=5.0)
+    # La FFT corta non e bin-centred: l'ampiezza va stimata al tono noto,
+    # altrimenti lo scalloping loss appare falsamente come errore fisico.
+    k = np.arange(len(pj))
+    omega = 2 * np.pi * pj_cfg.tx_pj_freq_mhz * 1e6 * ui_s
+    design = np.column_stack((np.sin(omega * k), np.cos(omega * k),
+                              np.ones(len(k))))
+    coeff, *_ = np.linalg.lstsq(design, pj, rcond=None)
+    fitted_amp = float(np.hypot(coeff[0], coeff[1]))
+    assert fitted_amp == pytest.approx(0.06, rel=1e-6)
+
+    ssc_cfg = LinkConfig(tx_ssc_ppm=4000.0, tx_ssc_khz=33.0)
+    ssc = tx_clock_tie_ui(ssc_cfg, np.random.default_rng(1))
+    measured_ppm = float(np.mean(np.diff(ssc)) * 1e6)
+    k = np.arange(ssc_cfg.n_symbols)
+    period = 1 / (ssc_cfg.tx_ssc_khz * 1e3)
+    frac = ((k / ssc_cfg.symbol_rate_hz) / period) % 1
+    tri = np.where(frac < .5, 2 * frac, 2 - 2 * frac)
+    expected_ppm = float(np.mean(-ssc_cfg.tx_ssc_ppm * tri[1:]))
+    assert measured_ppm == pytest.approx(expected_ppm, abs=1e-9)
+
+
+def test_full_gaussian_level_ber_matches_counted_baseline():
+    sim = simulate(LinkConfig(), seed=20240731, depth="light")
+    counted = sim.ber_post_dfe
+    gaussian = sim.snr_dfe["ber_gaussian_levels"]
+    assert sim.metrics_rows[2]["bit_errors"] >= 30
+    assert gaussian == pytest.approx(counted, rel=0.10)

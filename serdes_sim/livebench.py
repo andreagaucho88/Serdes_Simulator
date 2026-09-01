@@ -317,6 +317,12 @@ class LiveBench:
                            if r is not None and r.link_up else float("nan")),
                 "q_min": (r.snr_dfe["q_min"]
                           if r is not None and r.link_up else float("nan")),
+                "ber_qmin_gaussian": (r.snr_dfe["ber_from_qmin_gaussian"]
+                                       if r is not None and r.link_up
+                                       else float("nan")),
+                "ber_levels_gaussian": (r.snr_dfe["ber_gaussian_levels"]
+                                         if r is not None and r.link_up
+                                         else float("nan")),
                 "checks_fail": (sum(1 for c in r.checks if c["status"] == "FAIL")
                                 if r is not None else 0),
                 "p_pd_dbm": (r.optical.power_budget_dbm["PD input"]

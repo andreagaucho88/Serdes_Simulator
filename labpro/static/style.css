@@ -103,12 +103,32 @@ select, input[type=number], input[type=text] { background: var(--panel-2); color
 /* ---------- controlli parametro ---------- */
 .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px 14px; margin-bottom: 8px; }
-.param { font-size: 11px; }
+.param { font-size: 11px; position: relative; padding-right: 26px; }
 .param label { display: flex; justify-content: space-between; color: var(--muted);
   font-family: var(--mono); margin-bottom: 2px; }
 .param label b { color: var(--ink); font-weight: 500; }
 .param input[type=range] { width: 100%; accent-color: var(--optical); height: 20px; }
 .param select { width: 100%; }
+.control-help-btn { position: absolute; right: 3px; top: 1px; width: 18px;
+  height: 18px; padding: 0; border: 1px solid #3b5161; border-radius: 50%;
+  background: #101923; color: var(--muted); font: 600 10px/16px var(--mono);
+  cursor: pointer; }
+.control-help-btn:hover { color: var(--electrical); border-color: var(--electrical); }
+.control-help-dialog { width: min(680px, calc(100vw - 36px)); border: 1px solid #395061;
+  border-radius: 10px; background: #0d151d; color: var(--ink); padding: 22px 24px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.65); }
+.control-help-dialog::backdrop { background: rgba(2,6,10,.72); backdrop-filter: blur(2px); }
+.control-help-dialog .help-close { position: absolute; right: 12px; top: 10px; }
+.help-kicker { color: var(--electrical); font: 600 10px var(--mono);
+  text-transform: uppercase; letter-spacing: .08em; }
+.control-help-dialog h3 { margin: 7px 0 14px; font: 600 20px var(--display); }
+.help-lang { display: grid; grid-template-columns: 30px 1fr; gap: 10px; margin: 8px 0;
+  padding: 9px 10px; background: rgba(255,255,255,.025); border: 1px solid var(--grid);
+  border-radius: 6px; }
+.help-lang b { color: var(--amber); font: 600 10px var(--mono); }
+.help-lang p { margin: 0; line-height: 1.45; }
+.help-formula { margin: 12px 0; padding: 9px 11px; border-left: 2px solid var(--digital);
+  background: rgba(180,156,255,.06); font: 500 12px var(--mono); }
 
 /* ---------- readouts ---------- */
 .readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));

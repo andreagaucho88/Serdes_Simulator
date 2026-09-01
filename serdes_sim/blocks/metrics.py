@@ -67,7 +67,7 @@ def level_statistics(train_out, train_truth, spec=PAM4_GRAY):
     return rows, openings
 
 
-def snr_report(y, truth, level_stats):
+def snr_report(y, truth, level_stats, spec=PAM4_GRAY):
     """SNR e Q-factor al piano di decisione.
 
     - SNR_slicer = E[d²]/E[(y−d)²] su validation: include rumore, ISI residua
@@ -85,12 +85,37 @@ def snr_report(y, truth, level_stats):
     for a, b in zip(level_stats[:-1], level_stats[1:]):
         denom = a["sigma"] + b["sigma"]
         q_per_eye.append((b["mean"] - a["mean"]) / denom if denom > 0 else float("inf"))
+    # Approssimazione da Q_min per M-PAM Gray: ogni soglia è attraversata da
+    # due livelli adiacenti. Il fattore 2(M-1)/(M log2 M) è indispensabile:
+    # usare direttamente Q(q_min) sovrastima la BER PAM4 del 33%.
+    m = len(spec.levels_array)
+    q_min = float(min(q_per_eye)) if q_per_eye else float("nan")
+    q_factor = 2 * (m - 1) / (m * spec.bits_per_symbol)
+    ber_qmin = float(q_factor * qfunc(q_min)) if q_per_eye else float("nan")
+
+    # Modello gaussiano per-livello completo: integra ogni N(mu_i,sigma_i)
+    # fra le soglie calibrate e pesa le regioni decise con la distanza di
+    # Hamming. È il confronto corretto con la BER contata; Q_min resta un
+    # indicatore worst-eye, non un modello esatto dell'intero PAMn.
+    _, thresholds = decision_thresholds(level_stats)
+    bounds = np.r_[-np.inf, np.asarray(thresholds), np.inf]
+    counts = np.asarray([r["count"] for r in level_stats], dtype=float)
+    priors = counts / max(float(np.sum(counts)), 1.0)
+    ber_levels = 0.0
+    for i, row in enumerate(level_stats):
+        sigma = max(float(row["sigma"]), 1e-30)
+        cdf = stats.norm.cdf((bounds - float(row["mean"])) / sigma)
+        decision_prob = np.diff(cdf)
+        for j, prob in enumerate(decision_prob):
+            hamming = np.count_nonzero(spec.bit_array[i] != spec.bit_array[j])
+            ber_levels += priors[i] * float(prob) * hamming / spec.bits_per_symbol
     return {
         "snr_slicer_db": snr_db,
         "error_rms": float(np.sqrt(error_power)),
         "q_per_eye": q_per_eye,
-        "q_min": float(min(q_per_eye)) if q_per_eye else float("nan"),
-        "ber_from_qmin_gaussian": float(qfunc(min(q_per_eye))) if q_per_eye else float("nan"),
+        "q_min": q_min,
+        "ber_from_qmin_gaussian": ber_qmin,
+        "ber_gaussian_levels": float(ber_levels),
     }
 
 

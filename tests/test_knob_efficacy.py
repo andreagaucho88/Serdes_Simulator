@@ -21,7 +21,7 @@ from serdes_sim.blocks.channel import DEMO_S2P
 
 # (perturbazione, extra prerequisiti, stadi che DEVONO cambiare,
 #  stadi che NON devono cambiare)
-# stadi osservati: driver, pfib (potenza al PD), vctle, adc, ber
+# stadi osservati: driver, pfib (potenza al PD), vtia, vctle, adc, ber
 KNOBS = {
     "symbol_rate_hz": (60e9, {}, {"driver"}, set()),
     "analog_sps": (8, {}, {"driver"}, set()),
@@ -50,7 +50,12 @@ KNOBS = {
     "group_delay_ripple_ps": (3.0, {}, {"pfib"}, {"driver"}),
     "return_loss_db": (8.0, {}, {"pfib"}, {"driver"}),
     "echo_delay_ui": (2.5, {}, {"pfib"}, {"driver"}),
-    "s2p_text": (DEMO_S2P, {"use_s2p_channel": True}, {"pfib"}, {"driver"}),
+    # Il baseline deve essere a sua volta un canale misurato valido: in questo
+    # modo isoliamo il CONTENUTO Touchstone dall'interruttore use_s2p_channel.
+    "s2p_text": (DEMO_S2P,
+                 {"use_s2p_channel": True,
+                  "s2p_text": DEMO_S2P.replace("-19.5 -86", "-29.5 -86")},
+                 {"pfib"}, {"driver"}),
     # PPG / BERT / L2
     "pattern": ("clock2", {}, {"driver"}, set()),
     "l2_frame_bytes": (128, {"pattern": "eth"}, {"driver"}, set()),
@@ -71,8 +76,11 @@ KNOBS = {
     "xtalk_fext_db": (-25.0, {}, {"pfib"}, {"driver"}),
     "link_medium": ("copper", {}, {"vctle"}, {"driver"}),
     # ottica
-    "optical_modulator": ("eml", {"laser_type": "dfb_eml_integrated"}, {"pfib"}, {"driver"}),
-    "laser_type": ("dfb_eml_integrated", {"optical_modulator": "eml"}, {"pfib"}, {"driver"}),
+    # Questi due campi formano un solo controllo atomico nella UI. Cambiarne
+    # uno soltanto produrrebbe intenzionalmente una configurazione invalida;
+    # il comportamento accoppiato è verificato nel test dedicato sotto.
+    "optical_modulator": None,
+    "laser_type": None,
     "laser_dbm": (5.0, {}, {"pfib"}, {"driver"}),
     "laser_linewidth_mhz": (300.0, {"fiber_km": 10.0}, {"pfib"}, {"driver"}),
     "vpi_v": (2.5, {}, {"pfib"}, {"driver"}),
@@ -107,9 +115,17 @@ KNOBS = {
     "tia_noise_a_rt_hz": (60e-12, {}, {"vctle"}, {"driver", "pfib"}),
     # oltre il range del VGA (~10 dB): overload reale contro le rail
     "tia_transimpedance_ohm": (20000.0, {}, {"vctle"}, {"driver", "pfib"}),
+    "tia_vga_range_db": (0.0, {"laser_dbm": 9.0}, {"vctle"}, {"driver", "pfib"}),
+    # L'AGC ideale puo normalizzare la variazione a valle: il piano corretto
+    # da osservare per il target del VGA TIA e l'uscita TIA stessa.
+    "tia_headroom_ratio": (0.35, {}, {"vtia"}, {"driver", "pfib"}),
     "tia_bw_hz": (22e9, {}, {"vctle"}, {"driver", "pfib"}),
     "tia_clip_v": (0.05, {}, {"vctle"}, {"driver", "pfib"}),
     "agc_target_rms_v": (0.35, {}, {"vctle"}, {"driver", "pfib"}),
+    "agc_min_gain_db": (0.0, {"agc_target_rms_v": 0.05}, {"vctle"}, {"driver", "pfib"}),
+    "agc_max_gain_db": (0.0, {"laser_dbm": -3.0,
+                               "agc_target_rms_v": 0.4},
+                              {"vctle"}, {"driver", "pfib"}),
     "ctle_zero_hz": (5e9, {}, {"vctle"}, {"driver", "pfib"}),
     "ctle_pole_hz": (20e9, {}, {"vctle"}, {"driver", "pfib"}),
     "ctle_hf_pole_hz": (70e9, {}, {"vctle"}, {"driver", "pfib"}),
@@ -148,6 +164,7 @@ def _observe(r):
         "driver": r.tx.driver_voltage_v,
         "pfib": (r.optical.P_fiber_w if r.optical is not None
                  else np.zeros(1)),
+        "vtia": r.receiver.v_tia_v,
         "vctle": r.receiver.v_ctle_v,
         "adc": r.adc.adc_samples_v,
         "ber": (r.ber_post_dfe if r.link_up else None),
@@ -166,27 +183,46 @@ def _changed(a, b):
     return out
 
 
-@pytest.fixture(scope="module")
-def base_obs():
-    return _observe(simulate(LinkConfig(), depth="light"))
-
-
 def test_every_config_field_has_a_knob_spec():
     missing = [f.name for f in fields(LinkConfig) if f.name not in KNOBS]
     assert missing == [], f"campi senza voce nell'audit manopole: {missing}"
 
 
+def test_optical_architecture_control_is_atomic_and_effective():
+    """Il selettore UI cambia insieme modulatore e sorgente compatibile."""
+    base = _observe(simulate(LinkConfig(), seed=731, depth="light"))
+    eml = _observe(simulate(LinkConfig(optical_modulator="eml",
+                                       laser_type="dfb_eml_integrated"),
+                            seed=731, depth="light"))
+    changed = _changed(base, eml)
+    assert "pfib" in changed
+    assert "driver" not in changed
+
+
 @pytest.mark.parametrize("field", [k for k, v in KNOBS.items() if v is not None])
-def test_knob_has_effect_in_the_right_places(field, base_obs):
+def test_knob_has_effect_in_the_right_places(field):
+    """Isola davvero la manopola sotto test.
+
+    I prerequisiti ``extra`` (per esempio EML attivo mentre si cambia la sua
+    banda) devono essere presenti in ENTRAMBE le simulazioni.  Confrontarli
+    col default, come faceva la prima versione dell'audit, produceva falsi
+    positivi: bastava che fosse il prerequisito a cambiare il segnale anche
+    se la manopola fosse completamente scollegata dal datapath.
+    """
     value, extra, must_change, must_not_change = KNOBS[field]
-    r = simulate(LinkConfig(**{field: value, **extra}), depth="light")
-    obs = _observe(r)
-    changed = _changed(base_obs, obs)
+    baseline = _observe(simulate(LinkConfig(**extra), seed=731,
+                                 depth="light"))
+    exercised = dict(extra)
+    exercised[field] = value
+    obs = _observe(simulate(LinkConfig(**exercised), seed=731,
+                            depth="light"))
+    changed = _changed(baseline, obs)
     assert changed, f"manopola MORTA: {field}={value} non cambia nulla"
     missing = must_change - changed
     assert not missing, (f"{field}: atteso effetto su {missing}, "
                          f"cambiati solo {changed}")
-    # località: mai effetti a MONTE del blocco (extra prerequisiti esclusi)
-    if not extra:
-        leaked = must_not_change & changed
-        assert not leaked, (f"{field}: effetto illegittimo a monte su {leaked}")
+    # Località: i prerequisiti sono identici nei due lati del confronto, quindi
+    # ora possiamo (e dobbiamo) controllare gli effetti a monte anche per i
+    # parametri condizionali.
+    leaked = must_not_change & changed
+    assert not leaked, (f"{field}: effetto illegittimo a monte su {leaked}")

@@ -111,9 +111,13 @@ class LinkConfig:
     rin_db_hz: float = -145.0
     tia_noise_a_rt_hz: float = 28e-12
     tia_transimpedance_ohm: float = 2500.0
+    tia_vga_range_db: float = 10.0
+    tia_headroom_ratio: float = 0.70
     tia_bw_hz: float = 35e9
     tia_clip_v: float = 0.8
     agc_target_rms_v: float = 0.22
+    agc_min_gain_db: float = -12.0
+    agc_max_gain_db: float = 24.0
 
     # CTLE / ADC
     ctle_zero_hz: float = 9e9
@@ -311,6 +315,13 @@ class LinkConfig:
             problems.append("vcm_noise_mv fuori range [0, 200] mV")
         if not (0 <= self.tx_diff_noise_mv <= 200):
             problems.append("tx_diff_noise_mv fuori range [0, 200] mV")
+        if not (0 <= self.tia_vga_range_db <= 30):
+            problems.append("tia_vga_range_db fuori range [0, 30] dB")
+        if not (0.2 <= self.tia_headroom_ratio <= 0.95):
+            problems.append("tia_headroom_ratio fuori range [0.2, 0.95]")
+        if not (-40 <= self.agc_min_gain_db <= self.agc_max_gain_db <= 60):
+            problems.append("richiesto -40 <= agc_min_gain_db <= "
+                            "agc_max_gain_db <= 60")
         if not (0 <= self.err_insert_bits <= 200):
             problems.append("err_insert_bits fuori range [0, 200]")
         if self.s4p_pairs not in ("13_24", "12_34"):

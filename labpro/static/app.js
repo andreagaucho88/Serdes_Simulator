@@ -5,6 +5,7 @@
 
 const LANG = localStorage.getItem("labpro_lang") === "en" ? "en" : "it";
 const L = (it, en) => LANG === "en" ? (en || it) : it;
+const TT = (it, en) => `IT: ${it}\nEN: ${en}`;
 
 /* Traduzione delle stringhe generate dal server (check, sorgenti, align…):
    frammenti IT→EN applicati solo in modalità EN. */
@@ -136,7 +137,8 @@ const vline = (x, color = COL.muted, dash = "dash") => ({ type: "line", x0: x, x
 const hline = (y, color = COL.muted, dash = "dot") => ({ type: "line", y0: y, y1: y, xref: "paper", x0: 0, x1: 1, line: { color, dash, width: 1 } });
 
 /* ---------------- stato globale ---------------- */
-const S = { cfg: null, acc: null, running: false, presets: [], ws: null, panels: [] };
+const S = { cfg: null, acc: null, running: false, presets: [], ws: null,
+  panels: [], controlHelp: {} };
 
 function cfgChips() {
   if (!S.cfg) return;
@@ -307,9 +309,13 @@ const PARAMS = {
   rin_db_hz: { l: "RIN", u: "dB/Hz", min: -160, max: -125, step: 1 },
   tia_noise_a_rt_hz: { l: "Rumore TIA", u: "pA/√Hz", min: 5, max: 80, step: 1, scale: 1e-12 },
   tia_transimpedance_ohm: { l: "Z_T", u: "Ω", min: 500, max: 6000, step: 100 },
+  tia_vga_range_db: { l: "Range VGA TIA", u: "dB", min: 0, max: 20, step: 0.5 },
+  tia_headroom_ratio: { l: "Headroom TIA", u: "×rail", min: 0.3, max: 0.9, step: 0.05 },
   tia_bw_hz: { l: "Banda TIA", u: "GHz", min: 15, max: 60, step: 1, scale: 1e9 },
   tia_clip_v: { l: "Clip TIA", u: "±V", min: 0.2, max: 1.5, step: 0.05 },
   agc_target_rms_v: { l: "Target AGC", u: "Vrms", min: 0.05, max: 0.5, step: 0.01 },
+  agc_min_gain_db: { l: "Gain AGC min", u: "dB", min: -24, max: 6, step: 1 },
+  agc_max_gain_db: { l: "Gain AGC max", u: "dB", min: 0, max: 40, step: 1 },
   ctle_zero_hz: { l: "Zero", u: "GHz", min: 2, max: 24, step: 0.5, scale: 1e9 },
   ctle_pole_hz: { l: "Polo", u: "GHz", min: 8, max: 45, step: 0.5, scale: 1e9 },
   ctle_hf_pole_hz: { l: "Polo alto", u: "GHz", min: 30, max: 90, step: 1, scale: 1e9 },
@@ -366,7 +372,9 @@ const PARAM_EN = {
   pd_dark_current_a: "Dark current", pd_saturation_a: "PD saturation",
   pd_responsivity_a_w: "Responsivity", pd_bw_hz: "PD bandwidth",
   rin_db_hz: "RIN", tia_noise_a_rt_hz: "TIA noise", tia_transimpedance_ohm: "Transimpedance",
+  tia_vga_range_db: "TIA VGA range", tia_headroom_ratio: "TIA headroom",
   tia_bw_hz: "TIA bandwidth", tia_clip_v: "TIA clip", agc_target_rms_v: "AGC target",
+  agc_min_gain_db: "AGC minimum gain", agc_max_gain_db: "AGC maximum gain",
   ctle_zero_hz: "Zero", ctle_pole_hz: "Pole", ctle_hf_pole_hz: "High pole",
   ctle_dc_gain_db: "DC gain", adc_bits: "ADC bits", adc_full_scale_vpp: "ADC full scale",
   adc_jitter_rms_fs: "Aperture jitter", adc_phase_ui: "Sample phase",
@@ -395,6 +403,50 @@ const _flushCfg = debounce(() => {
   POST("/api/config", { updates }).catch(e => toast(e.message));
 }, 260);
 function postConfig(updates) { Object.assign(_pendingCfg, updates); _flushCfg(); }
+
+function showControlHelp(field) {
+  const h = S.controlHelp[field];
+  if (!h) return toast(L(`Spiegazione mancante per ${field}`, `Missing help for ${field}`));
+  let dlg = $("#control-help-dialog");
+  if (!dlg) {
+    dlg = CE("dialog", "control-help-dialog"); dlg.id = "control-help-dialog";
+    document.body.appendChild(dlg);
+  }
+  dlg.innerHTML = `<button class="icon-btn help-close" aria-label="close">×</button>
+    <div class="help-kicker">${h.block} · ${h.plane}</div>
+    <h3>${L(PARAMS[field]?.l || field, PARAM_EN[field])}</h3>
+    <div class="help-lang"><b>IT</b><p>${h.it}</p></div>
+    <div class="help-lang"><b>EN</b><p>${h.en}</p></div>
+    ${h.formula ? `<div class="help-formula">${h.formula}</div>` : ""}
+    <div class="sub">${L("Attivo quando", "Active when")}: ${h.active}</div>`;
+  dlg.querySelector(".help-close").onclick = () => dlg.close();
+  dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+  dlg.showModal();
+}
+function controlHelpButton(field) {
+  const b = CE("button", "control-help-btn", "?");
+  b.type = "button";
+  const h = S.controlHelp[field];
+  b.title = h
+    ? `IT: ${h.it}\nEN: ${h.en}`
+    : L("spiegazione fisica del controllo", "physical control explanation");
+  b.setAttribute("aria-label", `help ${field}`);
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); showControlHelp(field); };
+  return b;
+}
+function decorateControls(root) {
+  for (const b of root.querySelectorAll("button")) {
+    if (!b.title) {
+      const action = (b.textContent || b.dataset.k || "action").trim();
+      b.title = `IT: esegue “${action}” sul banco condiviso; verifica il readout del pannello.\nEN: runs “${action}” on the shared bench; verify the panel readout.`;
+    }
+  }
+  for (const e of root.querySelectorAll("select,input")) {
+    if (!e.title && !e.closest(".param")) e.title = L(
+      "controllo locale del pannello; non modifica la fisica salvo indicazione esplicita",
+      "local panel control; does not alter link physics unless explicitly stated");
+  }
+}
 
 function mkParam(field) {
   const d = PARAMS[field];
@@ -435,6 +487,7 @@ function mkParam(field) {
     };
     wrap.append(lab, rng);
   }
+  wrap.appendChild(controlHelpButton(field));
   return wrap;
 }
 function syncParams(root) {
@@ -474,8 +527,24 @@ const NODE_OPTS = {
   vdiff: ["V_diff", "V_diff"], vcm: ["V_cm", "V_cm"],
 };
 const OPTICAL_NODES = new Set(["pfiber", "pmzm"]);
+const NODE_BLOCK = { driver: "drv", vp: "drv", vn: "drv", vdiff: "drv", vcm: "drv",
+  chan: "ch", pmzm: "mzm", pfiber: "fib", vtia: "tia", vagc: "agc", vctle: "ctle" };
+function activeDcaProbes() {
+  const out = [];
+  S.panels.filter(p => p.type === "scope").forEach((p, si) => {
+    [p.node, ...(p.auxNodes || [])].forEach((node, ci) => {
+      if (node && NODE_BLOCK[node]) out.push({ node, block: NODE_BLOCK[node],
+        label: `DCA${si + 1}:${String.fromCharCode(65 + ci)}` });
+    });
+  });
+  return out;
+}
+function refreshDcaProbes() {
+  for (const p of S.panels.filter(p => p.type === "chain")) PANEL_DEFS.chain.onConfig(p);
+}
 function nodeSelect(panel, cb, def = "vctle") {
   const sel = CE("select");
+  sel.title = TT("piano fisico acquisito dallo strumento", "physical plane acquired by the instrument");
   const fill = () => {
     const cur = sel.value || def;
     sel.innerHTML = "";
@@ -501,7 +570,7 @@ PANEL_DEFS.chain = {
     p.body.innerHTML = "";
     p.svgHost = CE("div");
     p.body.appendChild(p.svgHost);
-    p.body.appendChild(CE("div", "note", L("Clicca un blocco per aprire il suo pannello. I blocchi FEC sono attivi solo con FEC in-path (pannello FEC live).", "Click a block to open its panel. FEC blocks are active only with in-path FEC (FEC live panel).")));
+    p.body.appendChild(CE("div", "note", L("Clicca un blocco per aprire il suo pannello. I triangoli ambra DCA1:A…DCA2:D mostrano esattamente i reference plane acquisiti dagli Scope aperti. I blocchi FEC sono attivi solo con FEC in-path.", "Click a block to open its panel. Amber DCA1:A…DCA2:D triangles show the exact reference planes acquired by open Scope panels. FEC blocks are active only with in-path FEC.")));
     this.onConfig(p);
   },
   onConfig(p) {
@@ -531,7 +600,7 @@ PANEL_DEFS.chain = {
       row.forEach(([id, label, dom, target], i) => {
         const x = X0 + i * (W + G), y = Y[ri], c = cmap[dom];
         svg += `<a data-target="${target}"><g opacity="${dom === "off" ? 0.45 : 1}">
-          <rect data-b="${id}" x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="rgba(255,255,255,0.03)" stroke="${c}" stroke-width="1.3"><title></title></rect>
+          <rect data-b="${id}" data-c="${c}" x="${x}" y="${y}" width="${W}" height="${H}" rx="8" fill="rgba(255,255,255,0.03)" stroke="${c}" stroke-width="1.3"><title></title></rect>
           <text x="${x + W / 2}" y="${y + H / 2 + 4}" text-anchor="middle" fill="${COL.ink}" font-size="11.5">${label}</text></g></a>`;
         if (i < row.length - 1) {
           const nc = cmap[row[i + 1][2]];
@@ -539,6 +608,22 @@ PANEL_DEFS.chain = {
         }
       });
     });
+    // Sonde DCA: il marker è sul blocco che produce il reference plane
+    // selezionato. Più canali sullo stesso piano vengono impilati.
+    const blockPos = {};
+    rows.forEach((row, ri) => row.forEach(([id], i) => {
+      blockPos[id] = { x: X0 + i * (W + G) + W / 2, y: Y[ri], row: ri };
+    }));
+    const stack = {};
+    for (const probe of activeDcaProbes()) {
+      const pos = blockPos[probe.block]; if (!pos) continue;
+      const n = stack[probe.block] || 0; stack[probe.block] = n + 1;
+      const y = pos.y - 4 - n * 10;
+      svg += `<g class="dca-probe" data-node="${probe.node}">
+        <path d="M ${pos.x - 4} ${y - 4} h 8 l -4 5 z" fill="${COL.am}"/>
+        <text x="${pos.x + 7}" y="${y}" fill="${COL.am}" font-size="7.5">${probe.label}</text>
+        <title>${probe.label} · ${probe.node}</title></g>`;
+    }
     const fx = X0 + (rows[0].length - 1) * (W + G) + W, fy = Y[0] + H / 2, px = X0, py = Y[1] + H / 2;
     svg += `<path d="M ${fx} ${fy} h 6 q 7 0 7 7 V ${(Y[0] + H + Y[1]) / 2} H ${px - 12} q -7 0 -7 7 V ${py - 7} q 0 7 7 7 h 10" fill="none" stroke="${COL.op}" stroke-width="1.5"/>`;
     // reference plane E/O (prima del MZM, idx 8) e A/D (all'ADC, riga 2 idx 3)
@@ -572,6 +657,10 @@ PANEL_DEFS.chain = {
         }
       }
       for (const r of p.svgHost.querySelectorAll("rect[data-b]")) {
+        r.setAttribute("stroke", r.dataset.c);
+        r.setAttribute("stroke-width", "1.3");
+        r.setAttribute("fill", "rgba(255,255,255,0.03)");
+        r.querySelector("title").textContent = "";
         const msg = bad[r.dataset.b];
         if (msg) {
           r.setAttribute("stroke", COL.fail);
@@ -588,7 +677,7 @@ PANEL_DEFS.chain = {
         : `<span class="ok">● ${L("tutti i checkpoint della catena PASS", "all chain checkpoints PASS")}</span>`;
     } catch (e) { /* pannello checks non disponibile: nessun colore */ }
   },
-  onTick(p) { if (throttled(p, 2000)) this.refetch(p); },
+  onTick(p) { if (throttled(p, 2000)) this.health(p); },
 };
 
 /* --- scope DCA --- */
@@ -599,7 +688,7 @@ PANEL_DEFS.scope = {
     p.node = "vctle"; p.persist = 8; p.rate = 12; p.idx = 0; p.count = 0; p.paused = false;
     p.auxNodes = ["", "", ""]; p.auxData = [];
     p.mode = "densità"; p.cursorUi = null; p.maskOn = false; p.maskW = 30; p.maskH = 40;
-    p.headSel = nodeSelect(p, () => { p.node = p.headSel.value; this.refetch(p); });
+    p.headSel = nodeSelect(p, () => { p.node = p.headSel.value; refreshDcaProbes(); this.refetch(p); });
     p.body.innerHTML = "";
     p.canvas = CE("canvas", "scope"); p.canvas.width = 1000; p.canvas.height = 380;
     p.body.appendChild(p.canvas);
@@ -619,6 +708,20 @@ PANEL_DEFS.scope = {
       <input type="range" min="5" max="80" value="40" data-k="maskh" style="width:60px" title="altezza mask %eye" disabled>
       <span data-k="readout"></span>`;
     const q = k => bar.querySelector(`[data-k=${k}]`);
+    const scopeHelp = {
+      mode: TT("sceglie color-grade a densità o persistenza fosforo", "selects density color-grade or phosphor persistence"),
+      persist: TT("costante di decadimento dell'accumulo visuale; non cambia i dati acquisiti", "visual accumulation decay; does not change acquired data"),
+      rate: TT("waveform disegnate per frame browser; non cambia il rate del simulatore", "waveforms drawn per browser frame; does not change simulation rate"),
+      pause: TT("congela solo il display mantenendo intatto il banco", "freezes display only while leaving the bench untouched"),
+      overlay: TT("mostra medie dei livelli e soglie di decisione misurate", "shows measured level means and decision thresholds"),
+      cursor: TT("abilita cursore temporale e istogramma verticale al tempo scelto", "enables time cursor and vertical histogram at the selected time"),
+      curpos: TT("posizione del cursore in UI rispetto al centro dell'occhio", "cursor position in UI relative to eye center"),
+      rf: TT("applica il ricevitore di riferimento BT4 a tracce e misure, non al datapath", "applies the BT4 reference receiver to traces and measurements, not the datapath"),
+      mask: TT("abilita una mask didattica scalabile e conta le waveform che la violano", "enables a scalable educational mask and counts violating waveforms"),
+      maskw: TT("larghezza orizzontale della mask in percentuale di UI", "horizontal mask width as a percentage of UI"),
+      maskh: TT("altezza verticale della mask rispetto alla separazione dei livelli", "vertical mask height relative to level separation"),
+    };
+    for (const [k, title] of Object.entries(scopeHelp)) q(k).title = title;
     q("mode").onchange = e => { p.mode = e.target.value; p.acc.fill(0); };
     q("persist").oninput = e => p.persist = +e.target.value;
     q("rate").oninput = e => p.rate = +e.target.value;
@@ -640,15 +743,19 @@ PANEL_DEFS.scope = {
         const cur = p.auxNodes[slot] || ""; sel.innerHTML = `<option value="">CH${String.fromCharCode(66 + slot)} off</option>`;
         for (const [k, v] of Object.entries(NODE_OPTS)) {
           if (S.cfg && S.cfg.link_medium === "copper" && OPTICAL_NODES.has(k)) continue;
-          const o = CE("option"); o.value = k; o.textContent = `CH${String.fromCharCode(66 + slot)} · ${v}`; sel.appendChild(o);
+          const o = CE("option"); o.value = k;
+          o.textContent = `CH${String.fromCharCode(66 + slot)} · ${Array.isArray(v) ? L(v[0], v[1]) : v}`;
+          sel.appendChild(o);
         }
         sel.value = [...sel.options].some(o => o.value === cur) ? cur : "";
         p.auxNodes[slot] = sel.value;
       });
     };
     for (let slot = 0; slot < 3; slot++) {
-      const sel = CE("select"); p.auxSels.push(sel); multi.appendChild(sel);
-      sel.onchange = () => { p.auxNodes[slot] = sel.value; p.acc.fill(0); this.refetch(p); };
+      const sel = CE("select");
+      sel.title = TT("canale ausiliario acquisito nello stesso record coerente del CH A", "auxiliary channel acquired from the same coherent record as CH A");
+      p.auxSels.push(sel); multi.appendChild(sel);
+      sel.onchange = () => { p.auxNodes[slot] = sel.value; p.acc.fill(0); refreshDcaProbes(); this.refetch(p); };
     }
     p.fillAux();
     // scala/offset/deskew per canale (come i controlli verticali di un DCA)
@@ -676,7 +783,7 @@ PANEL_DEFS.scope = {
     pn4.title = L("mostra i quattro reference plane dallo stesso record", "show all four reference planes from the same record");
     pn4.onclick = () => {
       p.node = "vp"; p.headSel.value = "vp";
-      p.auxNodes = ["vn", "vdiff", "vcm"]; p.fillAux(); p.acc.fill(0); this.refetch(p);
+      p.auxNodes = ["vn", "vdiff", "vcm"]; p.fillAux(); p.acc.fill(0); refreshDcaProbes(); this.refetch(p);
     };
     multi.appendChild(pn4);
     multi.appendChild(CE("span", "sub", L("stesso seed/record; densità su CH A, overlay B–D", "same seed/record; density on CH A, B–D overlays")));
@@ -970,6 +1077,12 @@ PANEL_DEFS.ctle = {
     }}).catch(e => toast(e.message));
     const presets = { "1z1p": [[9], [40]], "1z2p": [[9], [28, 55]],
       "2z3p": [[6, 16], [24, 45, 75]] };
+    for (const b of editor.querySelectorAll("[data-preset]")) b.title = TT(
+      "carica questa topologia nel CTLE realmente usato dal datapath",
+      "loads this topology into the CTLE actually used by the datapath");
+    editor.querySelector("[data-k=apply]").title = TT(
+      "valida e applica tutti gli zeri/poli elencati al datapath",
+      "validates and applies every listed zero/pole to the datapath");
     for (const b of editor.querySelectorAll("[data-preset]")) b.onclick = () => {
       const [z, q] = presets[b.dataset.preset]; p.zInput.value = z.join(", ");
       p.pInput.value = q.join(", "); applyTopology(z, q);
@@ -1199,6 +1312,7 @@ PANEL_DEFS.berlive = {
       { l: "BER cumulativa", v: a.bit_errors_total ? sci(a.ber_cum) : (a.bits_total ? "< " + sci(ci[1]) : "—"), big: true, sub: `${eng(a.bit_errors_total)} err / ${eng(a.bits_total)}b`, title: "IC 95% con ipotesi IID: gli errori correlati dal DFE lo allargano" },
       { l: L("ultimo record", "last record"), v: sci(a.last.ber), sub: "GMI " + fix(a.last.gmi, 3) },
       { l: "SNR slicer", v: fix(a.last.snr_db, 1) + " dB", sub: "Q min " + fix(a.last.q_min, 2) },
+      { l: L("BER gaussiana", "Gaussian BER"), v: sci(a.last.ber_levels_gaussian), sub: `Qmin PAM${S.cfg.modulation === "NRZ" ? 2 : 4}: ${sci(a.last.ber_qmin_gaussian)}`, title: L("modello completo per livello con soglie calibrate e distanza di Hamming; Qmin è il proxy worst-eye", "full per-level model with calibrated thresholds and Hamming distance; Qmin is the worst-eye proxy") },
       { l: "P @ PD", v: fix(a.last.p_pd_dbm, 2) + " dBm" },
     ]));
     const lay = PL({ height: 150, showlegend: false });
@@ -1215,9 +1329,14 @@ PANEL_DEFS.berlive = {
 /* --- pannelli parametrici + plot --- */
 PANEL_DEFS.stimulus = {
   title: "PPG — pattern e modulazione", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["symbol_rate_hz", "pattern", "prbs_order", "modulation", "pam4_mapping", "l2_frame_bytes", "n_symbols"])); p.ro = CE("div"); p.body.appendChild(p.ro); p.plotEl = CE("div", "plot"); p.body.appendChild(p.plotEl); this.refetch(p); },
   async refetch(p) {
     const d = await GET("/api/panel/stimulus"); acqBadge(p, d);
+    p.ro.innerHTML = "";
+    p.ro.appendChild(readout([
+      { l: `PRBS${d.prbs} ${L("periodo", "period")}`, v: Number(d.prbs_period).toLocaleString(), sub: d.prbs_poly },
+      { l: L("bilanciamento su un periodo", "full-period balance"), v: `${Number(d.prbs_ones).toLocaleString()} / ${Number(d.prbs_zeros).toLocaleString()}`, sub: L("uno / zero (differenza esatta: 1)", "ones / zeros (exact difference: 1)") },
+    ]));
     const lay = PL({ height: 210, showlegend: false });
     mergeAxis(lay, "xaxis", { title: { text: "simbolo", font: { size: 10 } } });
     plot(p.plotEl, [{ y: d.symbols, line: { shape: "hv", color: COL.dg } }], lay);
@@ -1243,7 +1362,7 @@ PANEL_DEFS.tx = {
         const rng = CE("input"); rng.type = "range"; rng.min = lims[0]; rng.max = lims[1]; rng.step = 0.01; rng.value = v;
         rng.oninput = () => { lab.querySelector("b").textContent = fix(+rng.value, 2);
           const t2 = [...S.cfg.tx_ffe_taps]; t2[i] = +rng.value; postConfig({ tx_ffe_taps: t2 }); };
-        w.append(lab, rng); p.ffe.appendChild(w);
+        w.append(lab, rng, controlHelpButton("tx_ffe_taps")); p.ffe.appendChild(w);
       });
       const w2 = CE("div", "param");
       const tog = CE("button", "btn", taps.length === 3 ? "3 → 5 tap (c±2)" : "5 → 3 tap");
@@ -1257,12 +1376,39 @@ PANEL_DEFS.tx = {
     p.buildFfe();
     p.body.appendChild(p.ffe);
     p.body.appendChild(paramsBlock(["dac_bits", "dac_bw_hz", "dac_full_scale_vpp", "driver_gain_v_per_unit", "driver_bw_hz", "driver_clip_v", "causal_filters"]));
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.plotH = CE("div", "plot"); p.body.appendChild(p.plotH);
+    p.plotW = CE("div", "plot"); p.body.appendChild(p.plotW);
     p.body.appendChild(CE("div", "note w", L("Il clipping del driver è non invertibile: nessun equalizzatore a valle ricostruisce i picchi tagliati.", "Driver clipping is non-invertible: no downstream equalizer can rebuild the clipped peaks.")));
+    this.refetch(p);
+  },
+  async refetch(p) {
+    const d = await GET(`/api/panel/tx?source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
+    p.ro.innerHTML = "";
+    p.ro.appendChild(readout([
+      { l: "TX FIR H(0)", v: fix(d.h0, 4), sub: "Σc[k]" },
+      { l: "TX FIR H(Nyq)", v: fix(d.hnyquist, 4), sub: "Σ(−1)ᵏc[k]" },
+      { l: L("costo swing", "swing cost"), v: "×" + fix(d.swing_cost, 3), sub: `DAC LSB ${fix(1e3 * d.dac_lsb_v, 2)} mV` },
+      { l: "clip DAC / driver", v: `${fix(d.dac_clip_pct, 3)} / ${fix(d.driver_clip_pct, 3)} %`, cls: d.driver_clip_pct > 0.1 ? "fail" : "ok" },
+    ]));
+    const lh = PL({ height: 205 });
+    mergeAxis(lh, "xaxis", { title: { text: "f / Nyquist", font: { size: 10 } } });
+    mergeAxis(lh, "yaxis", { title: { text: "dB", font: { size: 10 } } });
+    plot(p.plotH, [
+      { x: d.f_norm, y: d.ffe_db, name: "TX FIR", line: { color: COL.dg } },
+      { x: d.f_norm, y: d.analog_db, name: "DAC×driver", line: { color: COL.el } },
+      { x: d.f_norm, y: d.combined_db, name: L("totale TX", "TX total"), line: { color: COL.am, width: 2 } }], lh);
+    const lw = PL({ height: 160, showlegend: false });
+    mergeAxis(lw, "xaxis", { title: { text: "time [UI]", font: { size: 9 } } });
+    mergeAxis(lw, "yaxis", { title: { text: "driver [V]", font: { size: 9 } } });
+    plot(p.plotW, [{ x: d.t_ui, y: d.driver_v, line: { color: COL.el, width: 1 } }], lw);
   },
   onConfig(p) { syncParams(p.body);
-    if (p.ffe.querySelectorAll("[data-ffe]").length !== S.cfg.tx_ffe_taps.length) { p.buildFfe(); return; }
+    if (p.ffe.querySelectorAll("[data-ffe]").length !== S.cfg.tx_ffe_taps.length) p.buildFfe();
     for (const w of p.ffe.querySelectorAll("[data-ffe]")) { const i = +w.dataset.ffe; const r = w.querySelector("input");
-      if (document.activeElement !== r) { r.value = S.cfg.tx_ffe_taps[i]; w.querySelector("label b").textContent = fix(S.cfg.tx_ffe_taps[i], 2); } } },
+      if (document.activeElement !== r) { r.value = S.cfg.tx_ffe_taps[i]; w.querySelector("label b").textContent = fix(S.cfg.tx_ffe_taps[i], 2); } }
+    this.refetch(p); },
+  onTick(p) { if (throttled(p, 1800)) this.refetch(p); },
 };
 
 PANEL_DEFS.channel = {
@@ -1274,10 +1420,13 @@ PANEL_DEFS.channel = {
     p.src = CE("div"); p.body.appendChild(p.src);
     p.plotS = CE("div", "plot"); p.body.appendChild(p.plotS);
     p.plotP = CE("div", "plot"); p.body.appendChild(p.plotP);
+    p.plotI = CE("div", "plot"); p.body.appendChild(p.plotI);
     p.plotC = CE("div", "plot"); p.body.appendChild(p.plotC);
     const up = CE("div", "scope-bar");
     up.innerHTML = `<input type="file" accept=".s2p,.S2P,.txt" style="font-size:11px"> <button class="btn" style="padding:3px 9px">usa S2P nel percorso</button> <button class="btn" style="padding:3px 9px">torna al modello</button>`;
     const [fileEl, btnUse, btnBack] = up.querySelectorAll("input,button");
+    btnUse.title = TT("carica S21/SDD21 dal file e lo inserisce nel datapath", "loads S21/SDD21 from file and inserts it in the datapath");
+    btnBack.title = TT("bypassa il file e ripristina il modello analitico", "bypasses the file and restores the analytic model");
     btnUse.onclick = async () => {
       const f = fileEl.files[0]; if (!f) return toast(L("scegli un file .s2p", "choose an .s2p file"));
       const text = await f.text();
@@ -1300,6 +1449,12 @@ PANEL_DEFS.channel = {
     plot(p.plotP, [
       { x: d.pulse_t_ui, y: d.pulse, name: L("solo canale", "channel only"), line: { color: COL.el, width: 1.6 } },
       { x: d.pulse_t_ui, y: d.pulse_combo, name: L("canale × CTLE", "channel × CTLE"), line: { color: COL.ok, width: 1.6 } }], lp);
+    const li = PL({ height: 190 });
+    mergeAxis(li, "xaxis", { title: { text: L("tempo impulso [UI]", "impulse time [UI]"), font: { size: 10 } } });
+    mergeAxis(li, "yaxis", { title: { text: L("impulse normalizzata", "normalized impulse"), font: { size: 10 } } });
+    plot(p.plotI, [
+      { x: d.impulse_t_ui, y: d.impulse, name: L("solo canale", "channel only"), line: { color: COL.el, width: 1.4 } },
+      { x: d.impulse_t_ui, y: d.impulse_combo, name: L("canale × CTLE", "channel × CTLE"), line: { color: COL.ok, width: 1.4 } }], li);
     const l2 = PL({ height: 190, showlegend: false });
     mergeAxis(l2, "xaxis", { title: { text: "cursor [UI]", font: { size: 10 } } });
     mergeAxis(l2, "yaxis", { title: { text: "p[k]/p[0]", font: { size: 10 } } });
@@ -1582,6 +1737,7 @@ PANEL_DEFS.decisions = {
     p.ro.appendChild(readout([
       { l: "SNR slicer", v: fix(d.snr_db, 2) + " dB" },
       { l: "Q min", v: fix(d.q_min, 2), sub: d.q_per_eye.map(q => fix(q, 1)).join(" · ") },
+      { l: L("BER gaussiana livelli / Qmin", "Gaussian level / Qmin BER"), v: `${sci(d.ber_levels_gaussian)} / ${sci(d.ber_qmin_gaussian)}`, title: L("la prima integra le gaussiane di ogni livello e la distanza Hamming; la seconda usa il solo occhio peggiore con il fattore PAMn corretto", "the first integrates each level Gaussian and Hamming distance; the second uses only the worst eye with the correct PAMn factor") },
       { l: "GMI", v: fix(d.gmi, 3) + "/" + d.bps, sub: d.gmi_per_bit.map(g => fix(g, 3)).join(" · ") },
     ]));
     const colors = [COL.el, COL.ok, COL.am, COL.op];
@@ -1646,12 +1802,13 @@ PANEL_DEFS.instruments = {
   title: "Instrument alignment · DCA / BERT / Traffic", size: "s8",
   make(p) {
     const rows = [
-      ["Keysight FlexDCA", "SE P/N + differential/common-mode, simultaneous waveforms", L("implementato: CH A-D coerenti; quick-set P/N/Diff/CM", "implemented: coherent CH A-D; P/N/Diff/CM quick-set"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Channels/channel-elect-diff-setup.htm"],
+      ["Keysight FlexDCA", "SE P/N + differential/common-mode, simultaneous waveforms", L("implementato: CH A-D coerenti; quick-set P/N/Diff/CM; marker DCA dinamici sui reference plane della catena", "implemented: coherent CH A-D; P/N/Diff/CM quick-set; dynamic DCA markers on chain reference planes"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Channels/channel-elect-diff-setup.htm"],
       ["Keysight FlexDCA", "color-grade eye, mask, levels, rise/fall", L("implementato come misura/proxy LabPro", "implemented as a LabPro measurement/proxy"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Eye-Mask-Mode/Advanced-Eye/a_adv_eye_toolbar.htm"],
       ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4; mancano Jn (J2/J9), decomposizione interferenze e de-embedding", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX; missing Jn (J2/J9), interference decomposition, de-embedding"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
       ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, error analysis burst/EFI; mancano pattern editor e SSPRQ bit-esatto di clause", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, burst/EFI error analysis; missing pattern editor and bit-exact clause SSPRQ"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
-      ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit: RJ 1005/1000 fs, SSC −24.1/−24.1 ppm); rumore CM/differenziale presente; manca la calibrazione assoluta da strumento", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (audit: RJ 1005/1000 fs, SSC −24.1/−24.1 ppm); CM/differential noise present; missing instrument-grade absolute calibration"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
-      ["Xena Valkyrie", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler per stream e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduling, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/tdl-xoa-driver/en/latest/api_ref/lli/submodules/ps_commands.html"],
+      ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit sul time-base: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); la misura ai crossing include correttamente anche DDJ", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (time-base audit: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); crossing measurements correctly include DDJ too"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
+      ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM statistico, PAM3/8/16 ed export IBIS-AMI completo restano fuori dal modello attuale", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; statistical COM, PAM3/8/16, and full IBIS-AMI export remain outside the current model"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
+      ["Xena Ethernet Test Platform", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler/modifier per stream, impairment drop/misorder/duplicate e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduler/modifiers, drop/misorder/duplicate impairments, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
       ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4 (0.75/0.5·Bd), EH/EW@BER, SNDR con fit lineare, 17 profili verificati (link su e FEC che corregge su tutti); COM e TDECQ con procedura di clause restano non implementati", "BT4 Ref RX (0.75/0.5·Bd), EH/EW@BER, linear-fit SNDR, 17 verified profiles (link up and FEC correcting on all); clause-procedure COM and TDECQ remain unimplemented"), "warn", "https://www.ieee802.org/3/"],
     ];
     p.body.innerHTML = `<div class="note">${L("Matrice derivata dalla documentazione ufficiale. 'Implementato' significa workflow equivalente nel modello LabPro, non emulazione del firmware o certificazione dello strumento.", "Matrix derived from official documentation. 'Implemented' means an equivalent LabPro model workflow, not firmware emulation or instrument certification.")}</div>
@@ -1725,9 +1882,31 @@ PANEL_DEFS.checks = {
   onTick(p) { if (throttled(p, 2500)) this.refetch(p); },
 };
 
+PANEL_DEFS.physics = {
+  title: "Audit fisico · invarianti", size: "s8",
+  make(p) {
+    p.body.innerHTML = ""; p.host = CE("div"); p.body.appendChild(p.host);
+    p.body.appendChild(CE("div", "note", L(
+      "Queste righe chiudono equazioni sul record corrente. Un PASS non è un claim di compliance IEEE/OIF: dimostra che i blocchi condividono grandezze e unità coerenti.",
+      "These rows close equations on the current record. PASS is not an IEEE/OIF compliance claim: it proves blocks share consistent quantities and units.")));
+    this.refetch(p);
+  },
+  async refetch(p) {
+    const d = await GET(`/api/panel/physics?source=${S.running ? "live" : "auto"}`); acqBadge(p, d);
+    const rows = d.rows.map(r => `<tr>
+      <td><span class="badge ${r.status === "PASS" ? "ok" : (r.status === "WARN" ? "warn" : "fail")}">${r.status}</span></td>
+      <td><b>${r.name}</b><br><span class="sub">${LANG === "en" ? r.en : r.it}</span></td>
+      <td>${r.value}</td><td>${r.expected}</td><td>${r.tolerance}</td></tr>`).join("");
+    p.host.innerHTML = `<div class="scope-bar"><b class="${d.failed ? "fail" : "ok"}">${d.passed} PASS · ${d.warnings || 0} WARN · ${d.failed} FAIL</b></div>
+      <table class="mini"><tr><th>status</th><th>${L("invariante", "invariant")}</th><th>${L("misurato", "measured")}</th><th>${L("atteso", "expected")}</th><th>${L("tolleranza/nota", "tolerance/note")}</th></tr>${rows}</table>`;
+  },
+  onConfig(p) { this.refetch(p); },
+  onTick(p) { if (throttled(p, 2500)) this.refetch(p); },
+};
+
 PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"])); p.body.appendChild(CE("div", "note", L("Il noise budget e l'ENBW sono nello Spectrum analyzer (nodo 'Uscita TIA') e nel pannello Checkpoint. PD o TIA in saturazione accendono il checkpoint (e il blocco in catena).", "The noise budget and ENBW live in the Spectrum analyzer ('TIA output' node) and in the Checkpoint panel. A saturated PD or TIA lights up the checkpoint (and the chain block)."))); },
   onConfig(p) { syncParams(p.body); },
 };
 
@@ -1762,13 +1941,13 @@ PANEL_DEFS.tia = {
   title: "TIA / electrical AFE", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_bw_hz", "tia_clip_v"]));
+    p.body.appendChild(paramsBlock(["tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v"]));
     p.ro = CE("div"); p.plotT = CE("div", "plot"); p.plotH = CE("div", "plot"); p.body.append(p.ro, p.plotT, p.plotH); this.refetch(p);
   },
   async refetch(p) {
     const d = await GET(`/api/panel/tia?source=${S.running ? "live" : "auto"}`); acqBadge(p, d); p.ro.innerHTML = "";
     p.ro.appendChild(readout([
-      { l: d.medium === "optical" ? "TIA ZT" : "AFE", v: d.transimpedance_ohm ? eng(d.transimpedance_ohm) + "Ω" : L("voltage input", "voltage input") },
+      { l: d.medium === "optical" ? "TIA ZT max → eff." : "AFE", v: d.transimpedance_ohm ? `${eng(d.transimpedance_ohm)}Ω → ${eng(d.effective_transimpedance_ohm)}Ω` : L("voltage input", "voltage input"), sub: d.medium === "optical" ? `${fix(d.vga_atten_db, 2)} dB · range ${fix(d.vga_range_db, 1)} dB` : "" },
       { l: "BW / ENBW", v: `${fix(d.bandwidth_ghz, 1)} / ${fix(d.enbw_ghz, 1)} GHz` },
       { l: "output RMS", v: fix(d.out_rms_v, 3) + " V" },
       { l: "overload", v: fix(d.clip_pct, 4) + "%", cls: d.clip_pct > 0.1 ? "fail" : "ok", sub: `rail ±${fix(d.clip_v, 2)} V` },
@@ -1789,13 +1968,13 @@ PANEL_DEFS.tia = {
 PANEL_DEFS.agc = {
   title: "AGC · gain & headroom", size: "s6",
   make(p) {
-    p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["agc_target_rms_v"]));
+    p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"]));
     p.ro = CE("div"); p.plotEl = CE("div", "plot"); p.body.append(p.ro, p.plotEl); this.refetch(p);
   },
   async refetch(p) {
     const d = await GET(`/api/panel/agc?source=${S.running ? "live" : "auto"}`); acqBadge(p, d); p.ro.innerHTML = "";
     p.ro.appendChild(readout([
-      { l: "gain", v: fix(d.gain_db, 2) + " dB", sub: "×" + fix(d.gain, 2) },
+      { l: "gain", v: fix(d.gain_db, 2) + " dB", cls: d.at_limit ? "warn" : "", sub: d.at_limit ? `${L("LIMITATO", "LIMITED")} · request ${fix(d.unconstrained_gain_db, 2)} dB` : "×" + fix(d.gain, 2), title: `${L("range VGA", "VGA range")} ${fix(d.min_gain_db, 1)}…${fix(d.max_gain_db, 1)} dB` },
       { l: "RMS in → out", v: `${fix(d.input_rms_v, 3)} → ${fix(d.output_rms_v, 3)} V`, sub: `target ${fix(d.target_rms_v, 3)} V` },
       { l: "ADC headroom", v: fix(d.headroom_to_adc_v, 3) + " V", cls: d.headroom_to_adc_v < 0 ? "fail" : "ok" },
     ]));
@@ -2256,15 +2435,16 @@ const PALETTE = [
   ["standards", "Standard IEEE/OIF", null, 4, 10],
   ["instruments", "Instrument alignment", null, 4, 11],
   ["checks", "Checkpoint & ledger", null, 4, 12],
+  ["physics", L("Audit fisico · invarianti", "Physics audit · invariants"), null, 4, 12.5],
   ["education", L("Academy · guida ai blocchi", "Academy · block guide"), null, 0, 1],
 ];
 const VIEWS = {
-  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "pd", "tia", "agc", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks"],
+  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "pd", "tia", "agc", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks", "physics"],
   "Essenziale": ["chain", "scope", "berlive", "feclive"],
   "Sorgente e TX": ["chain", "stimulus", "serpll", "tx", "scope", "jitter"],
   "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "pd", "tia", "agc", "ctle", "adc", "timing", "eq", "decisions", "scope"],
-  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "instruments", "checks"],
+  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "instruments", "checks", "physics"],
   "BERT e traffico": ["chain", "stimulus", "bert", "l2", "anlt", "feclive", "berlive", "train", "cmis"],
   "Scope P/N": ["chain", "scope", "scope", "serpll", "jitter", "spectrum"],
   "Academy": ["chain", "education", "standards", "instruments", "scope", "jitter", "bert", "l2"],
@@ -2286,6 +2466,7 @@ const PANEL_EN = {
   l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",
   jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent", anlt: "AN/LT · Clause 73 + training",
   standards: "IEEE / OIF standards", checks: "Checkpoints & signal ledger",
+  physics: "Physics audit · invariants",
   instruments: "Instrument alignment · DCA / BERT / Traffic",
   education: "Academy · block and standards guide",
 };
@@ -2337,12 +2518,13 @@ function addPanel(type, size) {
     learn.onclick = () => openEducation(PANEL_LEARN[type]);
     p.head.appendChild(learn);
   }
-  const btnSize = CE("button", "icon-btn", "◱"); btnSize.title = "ridimensiona";
+  const btnSize = CE("button", "icon-btn", "◱"); btnSize.title = TT("ridimensiona la card senza cambiare il banco", "resizes the card without changing the bench");
   btnSize.onclick = () => { const i = SIZES.indexOf(p.size); p.el.classList.remove(p.size); p.size = SIZES[(i + 1) % SIZES.length]; p.el.classList.add(p.size); saveLayout(); };
-  const btnClose = CE("button", "icon-btn", "×"); btnClose.title = "chiudi";
+  const btnClose = CE("button", "icon-btn", "×"); btnClose.title = TT("chiude la card senza spegnere il blocco", "closes the card without disabling the block");
   btnClose.onclick = () => {
     const grid = p.el.parentElement;
     p.el.remove(); S.panels = S.panels.filter(x => x !== p);
+    if (p.type === "scope") refreshDcaProbes();
     if (grid && !grid.children.length) grid.parentElement.remove();
     saveLayout();
   };
@@ -2354,7 +2536,9 @@ function addPanel(type, size) {
   const next = [...grid.children].find(el => +el.dataset.order > p.order);
   grid.insertBefore(p.el, next || null);
   S.panels.push(p);
-  try { def.make(p); } catch (e) { p.body.innerHTML = `<div class="note w">${e.message}</div>`; console.error(e); }
+  try { def.make(p); decorateControls(p.body); }
+  catch (e) { p.body.innerHTML = `<div class="note w">${e.message}</div>`; console.error(e); }
+  if (type === "scope") refreshDcaProbes();
   // reset ai default: appare solo nei pannelli con manopole
   if (p.body.querySelector(".param, [data-ffe]")) {
     const btnReset = CE("button", "icon-btn", "↺");
@@ -2385,6 +2569,7 @@ function applyView(name) {
     [[scopes[0], "vp"], [scopes[1], "vn"]].forEach(([p, node]) => {
       if (p && p.headSel) { p.headSel.value = node; p.node = node; PANEL_DEFS.scope.refetch(p); }
     });
+    refreshDcaProbes();
   }
   saveLayout();
 }
@@ -2401,6 +2586,7 @@ async function boot() {
   const st = await GET("/api/state");
   S.cfg = st.cfg; S.acc = st.acc; S.running = st.running; S.presets = st.presets;
   S.defaults = st.defaults || {}; S.sweepable = st.sweepable || {};
+  S.controlHelp = st.control_help || {};
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— ${L("preset didattici", "educational presets")} —</option>`;
   for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = p.name; o.title = p.desc; ps.appendChild(o); }
@@ -2431,6 +2617,12 @@ async function boot() {
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };
   $("#btn-run").title = L("Avvia/ferma acquisizione continua", "Start/stop continuous acquisition");
+  $("#preset-select").title = TT("carica una configurazione didattica completa", "loads a complete educational configuration");
+  $("#profile-select").title = TT("carica un contesto per-lane IEEE/OIF; non equivale a compliance di clause", "loads an IEEE/OIF per-lane context; this is not clause compliance");
+  $("#view-select").title = TT("cambia solo il layout delle card", "changes card layout only");
+  $("#btn-add").title = TT("apre il catalogo delle card; non altera il datapath", "opens the card catalog; does not alter the datapath");
+  $("#btn-reset").title = TT("azzera statistiche e istogrammi senza cambiare configurazione", "clears statistics and histograms without changing configuration");
+  $("#btn-anlt").title = TT("esegue AN didattica e link training con holdout prima di applicare i tap", "runs educational AN and link training with holdout before applying taps");
   $("#btn-reset").textContent = L("AZZERA", "RESET");
   $("#btn-add").textContent = L("＋ Pannello", "＋ Panel");
   const topLabels = [L("record", "records"), L("bit", "bits"), "BER cum.",

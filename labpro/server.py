@@ -28,6 +28,7 @@ from serdes_sim.engine import (anlt_session, jitter_tolerance, jitter_transfer, 
                                l2_ont_report, link_train, traffic_sweep)
 from serdes_sim.livebench import LiveBench   # noqa: E402
 from labpro import paneldata                 # noqa: E402
+from labpro.control_help import CONTROL_HELP  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PERSIST = Path(__file__).resolve().parent / ".labpro_session.json"
@@ -113,6 +114,7 @@ class ApiState(Base):
                          for k, v in STANDARD_PROFILES.items()],
             "sweepable": {k: {"label": v[0], "lo": v[1], "hi": v[2]}
                           for k, v in SWEEPABLE_FIELDS.items()},
+            "control_help": CONTROL_HELP,
         })
 
 
@@ -393,7 +395,7 @@ class ApiPanel(Base):
         if source in ("auto", "live") and name in (
                 "eye", "spectrum", "jitter", "pd", "tia", "agc", "optical",
                 "timing", "eq", "decisions", "bert", "checks", "adc", "l2",
-                "eyecontour"):
+                "eyecontour", "physics", "tx"):
             sim = live_sim
             if sim is not None and sim.cfg == cfg:
                 source_used = "live"

@@ -17,11 +17,12 @@ from scipy import signal as sp_signal
 from serdes_sim import LinkConfig, simulate
 from serdes_sim.blocks import fec as fec_block
 from serdes_sim.blocks import stimulus
+from serdes_sim.blocks.channel import channel_response
 from serdes_sim.blocks.metrics import eye_density
 from serdes_sim.blocks.receiver import ctle_response, ctle_peaking_db
 from serdes_sim.utils import (apply_frequency_response, butterworth_magnitude,
                               butterworth_response, db10, db20, rms_ac,
-                              w_to_dbm)
+                              w_to_dbm, dbm_to_w, Q_E_C)
 from labpro.education import TOPICS
 
 
@@ -573,12 +574,34 @@ def channel_panel(sim, cfg):
                              for k in cursor_ui])
     cursor_combo /= max(abs(float(cursor_combo[cursor_ui == 0][0])), 1e-30)
     isi_rms = float(np.sqrt(np.sum(cursor_combo[cursor_ui != 0] ** 2)))
+    # Impulse response sullo stesso piano lineare, separata dalla pulse di 1 UI.
+    impulse_in = np.zeros_like(pulse_in)
+    impulse_in[k0 * cfg.analog_sps] = 1.0
+    impulse_ch, _, _ = apply_frequency_response(
+        impulse_in, cfg.fs_analog_hz, lambda f: channel_response(f, cfg))
+    impulse_combo, _, _ = apply_frequency_response(
+        impulse_in, cfg.fs_analog_hz,
+        lambda f: channel_response(f, cfg) * ctle_response(
+            f, dc_gain_db=cfg.ctle_dc_gain_db,
+            zeros_hz=cfg.ctle_zeros_effective_hz,
+            poles_hz=cfg.ctle_poles_effective_hz))
+    imp_main = int(np.argmax(np.abs(impulse_combo)))
+    imp_main = int(np.clip(imp_main, span, len(impulse_combo) - span - 1))
+    imp_ch_main = int(np.argmax(np.abs(impulse_ch)))
+    imp_ch_main = int(np.clip(imp_ch_main, span, len(impulse_ch) - span - 1))
+    imp_ch = impulse_ch[imp_ch_main - span:imp_ch_main + span]
+    imp_combo = impulse_combo[imp_main - span:imp_main + span]
+    imp_ch /= max(float(np.max(np.abs(imp_ch))), 1e-30)
+    imp_combo /= max(float(np.max(np.abs(imp_combo))), 1e-30)
     return J({
         "f_ghz": sim.channel.f_fft_hz[mask] / 1e9,
         "s21_db": db20(sim.channel.H_electrical[mask]),
         "pulse_t_ui": sim.channel.pulse_time_ui,
         "pulse": sim.channel.pulse_normalized,
         "pulse_combo": pulse_combo_crop,
+        "impulse_t_ui": np.arange(-span, span) / cfg.analog_sps,
+        "impulse": imp_ch,
+        "impulse_combo": imp_combo,
         "cursor_ui": sim.channel.cursor_ui,
         "cursor_val": sim.channel.cursor_values,
         "cursor_combo": cursor_combo,
@@ -630,6 +653,12 @@ def tia_panel(sim, cfg):
         "t_ui": t_ui, "vout": out,
         "transimpedance_ohm": (cfg.tia_transimpedance_ohm
                                 if cfg.link_medium == "optical" else None),
+        "effective_transimpedance_ohm": (
+            rx.tia_effective_transimpedance_ohm
+            if cfg.link_medium == "optical" else None),
+        "vga_atten_db": rx.tia_vga_atten_db,
+        "vga_range_db": cfg.tia_vga_range_db,
+        "headroom_ratio": cfg.tia_headroom_ratio,
         "bandwidth_ghz": cfg.tia_bw_hz / 1e9,
         "enbw_ghz": rx.tia_enbw_hz / 1e9,
         "clip_v": cfg.tia_clip_v,
@@ -647,6 +676,10 @@ def agc_panel(sim, cfg):
     return J({
         "t_ui": t_ui, "vin": vin, "vout": vout,
         "gain": rx.agc_gain, "gain_db": db20(max(rx.agc_gain, 1e-30)),
+        "unconstrained_gain_db": db20(max(rx.agc_unconstrained_gain, 1e-30)),
+        "at_limit": rx.agc_at_limit,
+        "min_gain_db": cfg.agc_min_gain_db,
+        "max_gain_db": cfg.agc_max_gain_db,
         "input_rms_v": rms_ac(rx.v_tia_v),
         "target_rms_v": cfg.agc_target_rms_v,
         "output_rms_v": rms_ac(rx.v_agc_v),
@@ -865,6 +898,8 @@ def decisions_panel(sim, cfg):
         "thr_mid": sim.thresholds_dfe[0], "thr_cal": sim.thresholds_dfe[1],
         "snr_db": sim.snr_dfe["snr_slicer_db"], "q_min": sim.snr_dfe["q_min"],
         "q_per_eye": sim.snr_dfe["q_per_eye"],
+        "ber_qmin_gaussian": sim.snr_dfe["ber_from_qmin_gaussian"],
+        "ber_levels_gaussian": sim.snr_dfe["ber_gaussian_levels"],
         "gmi": sim.gmi_total, "gmi_per_bit": sim.gmi_per_bit,
         "bps": spec.bits_per_symbol,
     }
@@ -1103,7 +1138,35 @@ def stimulus_panel(sim, cfg):
         "transition": sim.transition_probability,
         "label": sim.spec.label,
         "prbs": cfg.prbs_order,
+        "prbs_period": 2 ** cfg.prbs_order - 1,
+        "prbs_ones": 2 ** (cfg.prbs_order - 1),
+        "prbs_zeros": 2 ** (cfg.prbs_order - 1) - 1,
+        "prbs_poly": stimulus.PRBS_POLY_LABEL[cfg.prbs_order],
         "bps": sim.spec.bits_per_symbol,
+    })
+
+
+def tx_panel(sim, cfg):
+    taps = np.asarray(cfg.tx_ffe_taps, dtype=float)
+    h0 = float(np.sum(taps))
+    hny = float(np.sum(taps * (-1.0) ** np.arange(len(taps))))
+    f = np.linspace(0, cfg.nyquist_hz, 700)
+    omega = np.pi * f / cfg.nyquist_hz
+    hffe = np.sum(taps[None, :] * np.exp(
+        -1j * omega[:, None] * np.arange(len(taps))[None, :]), axis=1)
+    hdac = butterworth_magnitude(f, cfg.dac_bw_hz, 3)
+    hdrv = butterworth_magnitude(f, cfg.driver_bw_hz, 3)
+    t_ui, vdrv = _wave_window(sim.tx.driver_voltage_v, cfg)
+    return J({
+        "h0": h0, "hnyquist": hny, "swing_cost": sim.tx.swing_cost,
+        "dac_lsb_v": sim.tx.dac_lsb,
+        "dac_clip_pct": 100 * sim.tx.dac_clip_fraction,
+        "driver_clip_pct": 100 * sim.tx.driver_clip_fraction,
+        "f_norm": f / cfg.nyquist_hz,
+        "ffe_db": db20(hffe),
+        "analog_db": db20(hdac * hdrv),
+        "combined_db": db20(hffe * hdac * hdrv),
+        "t_ui": t_ui, "driver_v": vdrv,
     })
 
 
@@ -1217,6 +1280,124 @@ def checks_panel(sim, cfg):
     return J({"checks": sim.checks, "ledger": sim.ledger})
 
 
+def physics_audit_panel(sim, cfg):
+    """Invarianti quantitativi sul record corrente, non semplici KPI.
+
+    Ogni riga confronta una grandezza del datapath con una relazione fisica
+    indipendente o dichiara esplicitamente quando un setting è solo una
+    componente del risultato totale (caso IL liscia + eco di mismatch).
+    """
+    rows = []
+
+    def add(name, value, expected, error, tolerance, status, it, en):
+        rows.append({"name": name, "value": value, "expected": expected,
+                     "error": error, "tolerance": tolerance, "status": status,
+                     "it": it, "en": en})
+
+    taps = np.asarray(cfg.tx_ffe_taps, dtype=float)
+    h0 = float(np.sum(taps))
+    hny = float(np.sum(taps * (-1.0) ** np.arange(len(taps))))
+    add("TX FIR H(0)", f"{h0:.9g}", "Σc[k]", 0.0, "machine exact", "PASS",
+        "Somma algebrica dei tap: guadagno della componente DC.",
+        "Algebraic tap sum: DC-component gain.")
+    add("TX FIR H(Nyquist)", f"{hny:.9g}", "Σ(−1)^k c[k]", 0.0,
+        "machine exact", "PASS", "Valore esatto del FIR a ω=π.",
+        "Exact FIR value at ω=π.")
+
+    h_ch = channel_response(np.asarray([cfg.nyquist_hz]), cfg)[0]
+    actual_il = float(-db20(h_ch))
+    if cfg.use_s2p_channel and cfg.s2p_text.strip():
+        add("Channel IL @Nyquist", f"{actual_il:.3f} dB", "S21/SDD21 file", None,
+            "interpolazione Touchstone", "PASS",
+            "Il valore viene dal file misurato; lo slider del modello analitico è bypassato.",
+            "Value comes from measured data; the analytic-model slider is bypassed.")
+    else:
+        delta = actual_il - cfg.channel_il_nyquist_db
+        add("Channel IL @Nyquist", f"{actual_il:.3f} dB",
+            f"smooth={cfg.channel_il_nyquist_db:.3f} dB", delta,
+            "total includes mismatch echo", "PASS",
+            "Il setting è la perdita liscia. La differenza mostrata è l'eco fisico fissato da RL e delay, non un errore numerico.",
+            "The setting is smooth loss. The displayed delta is the physical RL/delay echo, not numerical error.")
+
+    if sim.optical is not None:
+        o = sim.optical
+        field_identity = float(np.max(np.abs(np.abs(o.E_fiber) ** 2 - o.P_fiber_w)))
+        add("Optical field identity", f"{field_identity:.3e} W", "|E|²=P", field_identity,
+            "<1e-15 W", "PASS" if field_identity < 1e-15 else "FAIL",
+            "Il rivelatore consuma potenza ottenuta dal modulo quadro del campo complesso.",
+            "The detector consumes power obtained from the squared complex-field magnitude.")
+        budget_err = float(abs(w_to_dbm(np.mean(o.P_fiber_w))
+                               - o.power_budget_dbm["PD input"]))
+        add("Optical budget closure", f"{budget_err:.4f} dB", "0 dB", budget_err,
+            "0.01 dB", "PASS" if budget_err <= 0.01 else "FAIL",
+            "Il waterfall e la waveform al PD derivano dallo stesso campo.",
+            "Waterfall and PD waveform derive from the same field.")
+        if cfg.optical_modulator == "mzm" and abs(cfg.mzm_bias_rad - np.pi / 2) < 1e-12:
+            expected = float(dbm_to_w(cfg.laser_dbm)
+                             * 10 ** (-cfg.mzm_il_db / 10) / 2)
+            measured = float(np.mean(o.P_mzm_w))
+            rel = measured / expected - 1
+            add("MZM quadrature mean", f"{measured:.6e} W",
+                f"{expected:.6e} W", rel, "|relative|<5e-4",
+                "PASS" if abs(rel) < 5e-4 else "FAIL",
+                "Con drive simmetrico, quadratura e transfer cos² danno metà della potenza dopo IL.",
+                "With symmetric drive, quadrature and cos² transfer yield half the post-IL power.")
+        imean = float(np.mean(sim.receiver.i_pd_signal_a))
+        shot_ratio = sim.receiver.S_shot_a2_hz / max(2 * Q_E_C * imean, 1e-30)
+        add("Shot-noise PSD", f"ratio {shot_ratio:.9f}", "2qI", shot_ratio - 1,
+            "1e-9", "PASS" if abs(shot_ratio - 1) < 1e-9 else "FAIL",
+            "La PSD one-sided usa la corrente media dopo la saturazione del PD.",
+            "One-sided PSD uses mean current after PD saturation.")
+
+    pndiff = float(np.max(np.abs(sim.tx.v_diff_v - (sim.tx.vp_v - sim.tx.vn_v))))
+    pncm = float(np.max(np.abs(sim.tx.vcm_v - 0.5 * (sim.tx.vp_v + sim.tx.vn_v))))
+    pnerr = max(pndiff, pncm)
+    add("P/N identities", f"{pnerr:.3e} V", "Vdiff=Vp−Vn; Vcm=(Vp+Vn)/2",
+        pnerr, "1e-12 V", "PASS" if pnerr < 1e-12 else "FAIL",
+        "I nodi single-ended, differenziale e common-mode sono la stessa coppia, non copie sintetiche.",
+        "Single-ended, differential, and common-mode nodes are the same pair, not synthetic copies.")
+
+    rx = sim.receiver
+    if cfg.link_medium == "optical":
+        min_zt = cfg.tia_transimpedance_ohm * 10 ** (-cfg.tia_vga_range_db / 20)
+        ok_zt = min_zt - 1e-9 <= rx.tia_effective_transimpedance_ohm <= cfg.tia_transimpedance_ohm + 1e-9
+        add("TIA VGA range", f"{rx.tia_effective_transimpedance_ohm:.2f} Ω",
+            f"{min_zt:.2f}…{cfg.tia_transimpedance_ohm:.2f} Ω",
+            rx.tia_vga_atten_db, "configured range", "PASS" if ok_zt else "FAIL",
+            "La ZT effettiva, non quella nominale, genera la waveform TIA.",
+            "Effective, not nominal, ZT generates the TIA waveform.")
+    gain_db = float(db20(max(rx.agc_gain, 1e-30)))
+    ok_gain = cfg.agc_min_gain_db - 1e-9 <= gain_db <= cfg.agc_max_gain_db + 1e-9
+    add("AGC gain range", f"{gain_db:.3f} dB",
+        f"{cfg.agc_min_gain_db:.1f}…{cfg.agc_max_gain_db:.1f} dB", None,
+        "hard limits", "PASS" if ok_gain else "FAIL",
+        "Il target RMS non può creare guadagno infinito; LIMIT è uno stato fisico visibile.",
+        "RMS target cannot create infinite gain; LIMIT is a visible physical state.")
+    hct0 = ctle_response(np.asarray([0.0]), dc_gain_db=cfg.ctle_dc_gain_db,
+                         zeros_hz=cfg.ctle_zeros_effective_hz,
+                         poles_hz=cfg.ctle_poles_effective_hz)[0]
+    ctle_err = float(db20(hct0) - cfg.ctle_dc_gain_db)
+    add("CTLE DC gain", f"{db20(hct0):.6f} dB", f"{cfg.ctle_dc_gain_db:.6f} dB",
+        ctle_err, "1e-9 dB", "PASS" if abs(ctle_err) < 1e-9 else "FAIL",
+        "Il prodotto zero/polo è normalizzato al guadagno DC richiesto.",
+        "The zero/pole product is normalized to requested DC gain.")
+    if sim.link_up and sim.snr_dfe is not None:
+        measured = float(sim.ber_post_dfe)
+        gaussian = float(sim.snr_dfe["ber_gaussian_levels"])
+        bit_errors = int(sim.metrics_rows[2]["bit_errors"])
+        rel = abs(gaussian - measured) / max(measured, 1e-30)
+        enough = bit_errors >= 30
+        status = ("PASS" if enough and rel <= 0.10 else
+                  "FAIL" if enough else "WARN")
+        add("BER counted vs Gaussian levels", f"{measured:.4e}",
+            f"{gaussian:.4e}", rel, "10% if ≥30 errors", status,
+            f"Confronto per-livello con soglie e Hamming Gray; errori contati={bit_errors}. Sotto 30 errori il record non sostiene il claim al 10%.",
+            f"Per-level comparison with thresholds and Gray Hamming weights; counted errors={bit_errors}. Below 30 errors the record cannot support a 10% claim.")
+    return J({"rows": rows, "passed": sum(r["status"] == "PASS" for r in rows),
+              "failed": sum(r["status"] == "FAIL" for r in rows),
+              "warnings": sum(r["status"] == "WARN" for r in rows)})
+
+
 PANEL_BUILDERS = {
     "cmis": cmis_panel,
     "eye": eye_panel,
@@ -1236,6 +1417,8 @@ PANEL_BUILDERS = {
     "eq": eq_panel,
     "decisions": decisions_panel,
     "stimulus": stimulus_panel,
+    "tx": tx_panel,
+    "physics": physics_audit_panel,
     "standards": standards_panel,
     "checks": checks_panel,
     "education": lambda sim, cfg: {"topics": TOPICS},

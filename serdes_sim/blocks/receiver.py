@@ -58,7 +58,11 @@ class ReceiverResult:
     i_pd_noisy_a: np.ndarray
     v_tia_v: np.ndarray
     tia_clip_fraction: float
+    tia_effective_transimpedance_ohm: float
+    tia_vga_atten_db: float
     agc_gain: float
+    agc_unconstrained_gain: float
+    agc_at_limit: bool
     v_agc_v: np.ndarray
     v_ctle_v: np.ndarray
     H_ctle: np.ndarray
@@ -88,7 +92,12 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
     v_afe = np.clip(v_filtered, -cfg.tia_clip_v, cfg.tia_clip_v)
     clip_fraction = float(np.mean(np.abs(v_filtered) > cfg.tia_clip_v))
     v_ac = v_afe - np.mean(v_afe)
-    agc_gain = float(cfg.agc_target_rms_v / max(rms_ac(v_ac), 1e-30))
+    agc_unconstrained_gain = float(
+        cfg.agc_target_rms_v / max(rms_ac(v_ac), 1e-30))
+    agc_gain = float(np.clip(
+        agc_unconstrained_gain,
+        10 ** (cfg.agc_min_gain_db / 20),
+        10 ** (cfg.agc_max_gain_db / 20)))
     v_agc_v = agc_gain * v_ac
 
     dc_gain_db = getattr(cfg, "ctle_dc_gain_db", 0.0)
@@ -113,7 +122,12 @@ def run_receiver_copper(cfg, v_in, rng) -> ReceiverResult:
             np.sqrt(S_v2_hz * enbw_hz))},
         i_pd_noisy_a=zeros,
         v_tia_v=v_afe, tia_clip_fraction=clip_fraction,
-        agc_gain=agc_gain, v_agc_v=v_agc_v, v_ctle_v=v_ctle_v,
+        tia_effective_transimpedance_ohm=0.0,
+        tia_vga_atten_db=0.0,
+        agc_gain=agc_gain,
+        agc_unconstrained_gain=agc_unconstrained_gain,
+        agc_at_limit=not np.isclose(agc_gain, agc_unconstrained_gain),
+        v_agc_v=v_agc_v, v_ctle_v=v_ctle_v,
         H_ctle=H_ctle, f_fft_hz=f_fft_hz,
         ctle_noise_enhancement_db=noise_enh_db,
     )
@@ -159,13 +173,18 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     # riduce Z_T invece di lasciar clippare l'ampiezza — senza questo, un
     # profilo DR/FR con potenza da clause schiaccia il livello PAM4 alto
     # (visto sul banco: q dell'occhio superiore 0.2 con Z_T fissa).
-    # Il range del VGA è limitato (~10 dB di attenuazione, come nei chip
-    # veri): oltre, l'overload clippa davvero contro le rail.
+    # Il range del VGA e il target di headroom sono espliciti: oltre quel
+    # range l'overload clippa davvero contro le rail.
     zt_ohm = float(cfg.tia_transimpedance_ohm)
     v_pk_nominal = float(np.percentile(np.abs(zt_ohm * i_pd_noisy_a), 99.5))
-    if v_pk_nominal > 0.7 * cfg.tia_clip_v:
-        atten = 0.7 * cfg.tia_clip_v / v_pk_nominal
-        zt_ohm *= max(atten, 10 ** (-10 / 20))
+    if v_pk_nominal > cfg.tia_headroom_ratio * cfg.tia_clip_v:
+        atten = cfg.tia_headroom_ratio * cfg.tia_clip_v / v_pk_nominal
+        zt_ohm *= max(atten, 10 ** (-cfg.tia_vga_range_db / 20))
+    # Attenuazione, per convenzione, positiva: ZT_eff=ZT_max·10^(−A/20).
+    # La versione iniziale esponeva correttamente ZT_eff ma mostrava −1 dB
+    # per una attenuazione di 1 dB, incoerente con etichetta e range UI.
+    tia_vga_atten_db = float(-20 * np.log10(
+        max(zt_ohm / cfg.tia_transimpedance_ohm, 1e-30)))
     v_tia_unfiltered_v = zt_ohm * i_pd_noisy_a
     v_tia_filtered_v, _, _ = apply_frequency_response(
         v_tia_unfiltered_v, cfg.fs_analog_hz,
@@ -174,7 +193,12 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     v_tia_v = np.clip(v_tia_filtered_v, -cfg.tia_clip_v, cfg.tia_clip_v)
     tia_clip_fraction = float(np.mean(np.abs(v_tia_filtered_v) > cfg.tia_clip_v))
     v_tia_ac_v = v_tia_v - np.mean(v_tia_v)
-    agc_gain = float(cfg.agc_target_rms_v / max(rms_ac(v_tia_ac_v), 1e-30))
+    agc_unconstrained_gain = float(
+        cfg.agc_target_rms_v / max(rms_ac(v_tia_ac_v), 1e-30))
+    agc_gain = float(np.clip(
+        agc_unconstrained_gain,
+        10 ** (cfg.agc_min_gain_db / 20),
+        10 ** (cfg.agc_max_gain_db / 20)))
     v_agc_v = agc_gain * v_tia_ac_v
 
     # --- CTLE ---------------------------------------------------------------
@@ -204,7 +228,11 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
         i_pd_noisy_a=i_pd_noisy_a,
         v_tia_v=v_tia_v,
         tia_clip_fraction=tia_clip_fraction,
+        tia_effective_transimpedance_ohm=zt_ohm,
+        tia_vga_atten_db=tia_vga_atten_db,
         agc_gain=agc_gain,
+        agc_unconstrained_gain=agc_unconstrained_gain,
+        agc_at_limit=not np.isclose(agc_gain, agc_unconstrained_gain),
         v_agc_v=v_agc_v,
         v_ctle_v=v_ctle_v,
         H_ctle=H_ctle,
