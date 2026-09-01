@@ -1006,6 +1006,57 @@ def test_standard_catalog_is_consistent_and_honest():
     assert all(not cfg.validate() for cfg, _ in STANDARD_PROFILES.values())
 
 
+def test_clause93a_package_equations_and_gaussian_golden():
+    """Golden vectors calcolabili a mano per il nucleo COM.
+
+    A package length of zero is an identity.  With Gaussian noise only,
+    A_ni=Q^-1(DER0)*sigma and COM=20log10(A_s/A_ni).
+    """
+    from scipy.stats import norm
+    from serdes_sim.blocks.com import margin_from_components, package_s21
+
+    f = np.array([-53.125e9, 0.0, 53.125e9])
+    assert np.allclose(package_s21(f, 0.0), 1.0)
+    out = margin_from_components(0.100, 0.010, der0=1e-4)
+    expected_ani = norm.isf(1e-4) * 0.010
+    assert out["a_ni_v"] == pytest.approx(expected_ani, rel=1e-10)
+    assert out["com_db"] == pytest.approx(
+        20 * np.log10(0.100 / expected_ani), rel=1e-10)
+
+
+def test_clause93a_com_is_profile_scoped_and_never_claims_compliance():
+    from serdes_sim.blocks.com import com_report
+    from serdes_sim.config import STANDARD_PROFILES
+
+    optical = com_report(LinkConfig())
+    assert not optical["applicable"]
+    assert optical["model_result"] == "NOT APPLICABLE"
+
+    kr1 = STANDARD_PROFILES[
+        "IEEE 802.3ck — 100GBASE-KR1 · backplane elettrico"][0]
+    out = com_report(kr1)
+    assert out["applicable"] and out["normative"] is False
+    assert out["compliance_result"] == "NOT ASSESSED"
+    assert out["threshold_db"] == 3.0 and out["parameters"]["der0"] == 1e-4
+    assert len(out["package_cases"]) == 2
+    assert all(np.isfinite(r["com_db"]) for r in out["package_cases"])
+    assert out["com_db"] == min(r["com_db"] for r in out["package_cases"])
+    assert out["worst_case"]["peak_isi_at_der_mv"] >= 0
+
+
+def test_every_measure_has_an_explicit_standards_contract():
+    from serdes_sim.standards import measurement_contracts
+
+    rows = measurement_contracts(LinkConfig())
+    ids = {r["id"] for r in rows}
+    assert {"com", "tdecq", "sndr", "rlm", "optical_levels",
+            "eye_opening", "jitter", "ber", "fec", "jtol", "traffic"} <= ids
+    assert all(r["standard"] and r["clause"] and r["reference_plane"]
+               for r in rows)
+    # No partial/proxy measurement may emit a normative verdict.
+    assert all(r["compliance"] == "not-assessed" for r in rows)
+
+
 def test_education_catalog_is_bilingual_and_covers_chain():
     from labpro.education import TOPICS_BY_ID
     required = {"stimulus", "fec", "serpll", "tx", "channel", "optical",

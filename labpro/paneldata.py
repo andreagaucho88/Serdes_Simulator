@@ -620,6 +620,16 @@ def channel_panel(sim, cfg):
     })
 
 
+def com_panel(sim, cfg):
+    """IEEE 802.3 Annex 93A-scoped channel operating margin report.
+
+    ``sim`` is intentionally unused: COM evaluates the passive channel and
+    its clause reference equalizers, not the implementation RX datapath.
+    """
+    from serdes_sim.blocks.com import com_report
+    return J(com_report(cfg))
+
+
 def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
     """Finestra compatta ma temporalmente coerente per i pannelli RX."""
     a = int(start_ui * cfg.analog_sps)
@@ -1217,6 +1227,8 @@ def standards_panel(sim, cfg):
     exact = [name for name, item in STANDARD_PROFILES.items() if item[0] == cfg]
     active_profile = exact[0] if exact else None
     active_meta = STANDARD_PROFILE_META.get(active_profile, {})
+    from serdes_sim.standards import measurement_contracts
+    measure_contracts = measurement_contracts(cfg, active_profile, active_meta)
     tx_arch = (f"{len(cfg.tx_ffe_taps)}-tap FFE · {cfg.dac_bits}-bit DAC · "
                f"{cfg.electrical_drive_mode}")
     ctle_arch = (f"{len(cfg.ctle_zeros_effective_hz)}Z/"
@@ -1267,6 +1279,7 @@ def standards_panel(sim, cfg):
     ]
     out = {"gbd": gbd, "lane_gbs": gbd * bps, "modulation": sim.spec.label,
            "active_profile": active_profile, "manifest": manifest,
+           "measurement_contracts": measure_contracts,
            "family": fam[2] if fam else None,
            "family_gbd": fam[0] if fam else None,
            "deviation_pct": 100 * dev if dev is not None else None,
@@ -1438,6 +1451,7 @@ PANEL_BUILDERS = {
     "spectrum": spectrum_panel,
     "ctle": ctle_panel,
     "channel": channel_panel,
+    "com": com_panel,
     "pd": pd_panel,
     "tia": tia_panel,
     "agc": agc_panel,

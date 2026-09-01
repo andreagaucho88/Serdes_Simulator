@@ -178,6 +178,25 @@ async function POST(url, body) {
   if (!r.ok) throw new Error(j.error || r.status);
   return j;
 }
+async function loadNamedConfig(name, otherSelect) {
+  try {
+    const d = await POST("/api/preset", { name });
+    // The WebSocket broadcast normally arrives first, but it can be missed while
+    // the page is still connecting.  Reconcile the POST response so config-only
+    // panels (COM, standards, education) never keep the previous profile.
+    const changed = d.cfg && hashCfg(S.cfg) !== hashCfg(d.cfg);
+    if (d.cfg) {
+      S.cfg = d.cfg;
+      cfgChips();
+      if (changed) notify("config");
+    }
+    const st = await GET("/api/state");
+    S.acc = st.acc;
+    S.running = st.running;
+    tickTopbar();
+    if (otherSelect) otherSelect.value = "";
+  } catch (e) { toast(e.message); }
+}
 const sci = (v, d = 2) => (v == null || !isFinite(v)) ? "—" : Number(v).toExponential(d).replace("e", "e");
 const fix = (v, d = 2) => (v == null || !isFinite(v)) ? "—" : Number(v).toFixed(d);
 const eng = (v) => {
@@ -1594,6 +1613,65 @@ PANEL_DEFS.channel = {
   onConfig(p) { syncParams(p.body); this.refetch(p); },
 };
 
+PANEL_DEFS.com = {
+  title: "COM · IEEE 802.3 Annex 93A", size: "s8",
+  make(p) {
+    p.body.innerHTML = "";
+    p.ro = CE("div"); p.body.appendChild(p.ro);
+    p.table = CE("div", "standard-table"); p.body.appendChild(p.table);
+    const grid = CE("div"); grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    p.plotGrid = grid;
+    p.plotP = CE("div", "plot"); p.plotN = CE("div", "plot"); grid.append(p.plotP, p.plotN);
+    p.body.appendChild(grid);
+    p.note = CE("div", "note w"); p.body.appendChild(p.note);
+    this.refetch(p);
+  },
+  async refetch(p) {
+    const requestId = (p.requestId || 0) + 1;
+    p.requestId = requestId;
+    const d = await GET("/api/panel/com");
+    if (requestId !== p.requestId) return;
+    acqBadge(p, d);
+    if (!d.applicable) {
+      p.ro.innerHTML = `<div class="note w"><b>${d.standard} · ${d.clause}</b><br>${L("Non applicabile alla configurazione attiva.", "Not applicable to the active configuration.")} ${d.reason || ""}</div>`;
+      p.table.innerHTML = p.note.innerHTML = "";
+      p.plotGrid.style.display = "none";
+      return;
+    }
+    p.plotGrid.style.display = "grid";
+    const w = d.worst_case;
+    p.ro.innerHTML = "";
+    p.ro.appendChild(readout([
+      { l: "COM", v: fix(d.com_db, 2) + " dB", cls: d.com_db >= d.threshold_db ? "ok" : "fail", sub: `${d.model_result} · ${L("soglia modello", "model threshold")} ${fix(d.threshold_db, 1)} dB`, title: L("COM = 20·log10(A_s/A_ni), con A_ni dalla PDF cumulativa al DER₀. Il colore confronta il modello con la soglia, non certifica il canale.", "COM = 20·log10(A_s/A_ni), with A_ni from the cumulative PDF at DER₀. The color compares the model with the threshold; it does not certify the channel.") },
+      { l: "FOM", v: fix(d.fom_db, 2) + " dB", sub: L("ottimizzazione RMS prima della PDF", "RMS optimization before the PDF") },
+      { l: "A_s / A_ni", v: `${fix(w.a_s_mv, 2)} / ${fix(w.a_ni_mv, 2)} mV`, sub: `DER₀ ${sci(d.parameters.der0)}` },
+      { l: L("conformità", "compliance"), v: d.compliance_result, cls: "warn", sub: L("nessun claim IEEE", "no IEEE claim") },
+      { l: "CTLE / TX FFE", v: `${fix(w.ctle_gdc_db, 0)} dB`, sub: `[${w.tx_ffe.map(v => fix(v, 2)).join(", ")}]` },
+      { l: L("ingresso", "input"), v: d.input_kind, sub: `${d.standard} · ${d.clause}` },
+    ]));
+    const rows = d.package_cases.map(r => r.com_db == null ? `<tr><td>${r.case.name}</td><td colspan="6">${r.error}</td></tr>` : `<tr>
+      <td>${r.case.name}<br><span class="sub">TX ${r.case.tx_mm} / RX ${r.case.rx_mm} mm · ${r.case.zc_ohm} Ω</span></td>
+      <td><b>${fix(r.com_db, 2)} dB</b></td><td>${fix(r.fom_db, 2)} dB</td>
+      <td>${fix(r.peak_isi_at_der_mv, 2)} mV</td><td>${fix(r.peak_xtalk_at_der_mv, 2)} mV</td>
+      <td>${fix(r.gaussian_at_der_mv, 2)} mV</td><td>${fix(r.ctle_gdc_db, 0)} dB</td></tr>`).join("");
+    p.table.innerHTML = `<table class="mini"><tr><th>package case</th><th>COM</th><th>FOM</th><th>ISI@DER₀</th><th>XT@DER₀</th><th>Gaussian@DER₀</th><th>CTLE</th></tr>${rows}</table>`;
+    const lp = PL({ height: 210, showlegend: false });
+    mergeAxis(lp, "xaxis", { title: { text: "time [UI]", font: { size: 10 } } });
+    mergeAxis(lp, "yaxis", { title: { text: L("pulse equalizzata [V]", "equalized pulse [V]"), font: { size: 10 } } });
+    requestAnimationFrame(() => {
+      if (requestId === p.requestId) plot(p.plotP, [{ x: w.pulse_t_ui, y: w.pulse_v, line: { color: COL.el, width: 1.5 } }], lp);
+    });
+    const ln = PL({ height: 210, showlegend: false });
+    mergeAxis(ln, "xaxis", { title: { text: L("contributo", "contribution"), font: { size: 10 } } });
+    mergeAxis(ln, "yaxis", { title: { text: "mV @ DER₀", font: { size: 10 } } });
+    requestAnimationFrame(() => {
+      if (requestId === p.requestId) plot(p.plotN, [{ x: ["ISI", "NEXT/FEXT", "Gaussian"], y: [w.peak_isi_at_der_mv, w.peak_xtalk_at_der_mv, w.gaussian_at_der_mv], type: "bar", marker: { color: [COL.am, COL.fail, COL.dg] } }], ln);
+    });
+    p.note.innerHTML = `<b>${L("Confine del risultato", "Result boundary")}</b> · ${d.deviations.map(x => `• ${x}`).join("<br>")}<br><b>${L("Piano", "Plane")}</b>: ${d.reference_plane}.`;
+  },
+  onConfig(p) { this.refetch(p); },
+};
+
 PANEL_DEFS.optical = {
   title: "Optical TX · fiber · levels", size: "s6",
   make(p) {
@@ -1920,6 +1998,12 @@ PANEL_DEFS.standards = {
       <td>${x.medium || "—"} · ${x.reach || "—"}</td><td>${x.fec || "—"}</td>
       <td><span class="badge ${x.status === "draft" ? "warn" : "ok"}">${x.status || "—"}</span><br><span class="sub">${x.claim === "context" ? L("solo contesto", "context only") : L("contesto draft", "draft context")}</span></td></tr>`).join("");
     p.host.appendChild(CE("div", "standard-table", `<table class="mini"><tr><th>${L("interfaccia", "interface")}</th><th>${L("corsie / piano", "lanes / plane")}</th><th>${L("mezzo / reach", "medium / reach")}</th><th>FEC</th><th>${L("stato / claim", "status / claim")}</th></tr>${rows}</table>`));
+    const mrows = (d.measurement_contracts || []).map(m => `<tr>
+      <td><b>${m.measure}</b><br><span class="sub">${m.reference_plane}</span></td>
+      <td><a href="${m.source}" target="_blank" rel="noreferrer">${m.standard}</a><br><span class="sub">${m.clause}</span></td>
+      <td><span class="badge ${m.applicable ? (m.implementation === "annex-subset" || m.implementation === "clause-structured" ? "warn" : "") : ""}">${m.applicable ? m.implementation : L("non applicabile", "not applicable")}</span></td>
+      <td><span class="badge warn">${m.compliance}</span><br><span class="sub">${m.note}</span></td></tr>`).join("");
+    p.host.appendChild(CE("div", "standard-table", `<h3>${L("Contratto normativo delle misure", "Measurement standards contract")}</h3><table class="mini"><tr><th>${L("misura / piano", "measure / plane")}</th><th>IEEE 802.3 / clause</th><th>${L("implementazione", "implementation")}</th><th>${L("claim consentito", "allowed claim")}</th></tr>${mrows}</table>`));
     p.host.appendChild(CE("div", "note w", L(
       "Il preset applica l'intera LinkConfig, quindi ogni blocco riceve un valore. Il manifest separa però ciò che deriva dall'interfaccia pubblica da ciò che è una scelta architetturale rappresentativa di LabPro: IEEE/OIF normalmente non prescrivono DAC, CTLE, ADC, CDR, numero di tap o MZM contro EML. PASS indica checkpoint del modello, non conformità.",
       "The preset applies the full LinkConfig, so every block receives a value. The manifest still separates public-interface context from LabPro's representative architecture choices: IEEE/OIF normally do not mandate the DAC, CTLE, ADC, CDR, tap count, or MZM versus EML. PASS means model checkpoints, never compliance.")));
@@ -1936,9 +2020,9 @@ PANEL_DEFS.instruments = {
       ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4; mancano Jn (J2/J9), decomposizione interferenze e de-embedding", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX; missing Jn (J2/J9), interference decomposition, de-embedding"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
       ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, error analysis burst/EFI; mancano pattern editor e SSPRQ bit-esatto di clause", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, burst/EFI error analysis; missing pattern editor and bit-exact clause SSPRQ"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit sul time-base: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); la misura ai crossing include correttamente anche DDJ", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (time-base audit: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); crossing measurements correctly include DDJ too"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
-      ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM statistico, PAM3/8/16 ed export IBIS-AMI completo restano fuori dal modello attuale", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; statistical COM, PAM3/8/16, and full IBIS-AMI export remain outside the current model"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
+      ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM Annex 93A subset con PDF@DER e package dichiarato; PAM3/8/16 ed export IBIS-AMI completo restano fuori", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; Annex 93A COM subset with PDF@DER and declared package; PAM3/8/16 and full IBIS-AMI export remain outside"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
       ["Xena Ethernet Test Platform", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler/modifier per stream, impairment drop/misorder/duplicate e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduler/modifiers, drop/misorder/duplicate impairments, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
-      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4 (0.75/0.5·Bd), EH/EW@BER, SNDR con fit lineare, 17 profili verificati (link su e FEC che corregge su tutti); COM e TDECQ con procedura di clause restano non implementati", "BT4 Ref RX (0.75/0.5·Bd), EH/EW@BER, linear-fit SNDR, 17 verified profiles (link up and FEC correcting on all); clause-procedure COM and TDECQ remain unimplemented"), "warn", "https://www.ieee802.org/3/"],
+      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4, EH/EW@BER e SNDR implementati con confini dichiarati; COM segue un subset Annex 93A e TDECQ la struttura di 121.8.5.3. Il contratto per-misura impedisce limiti fuori clause: conformità sempre NOT ASSESSED senza procedura completa.", "BT4 Ref RX, EH/EW@BER, and SNDR are implemented with declared boundaries; COM follows an Annex 93A subset and TDECQ the 121.8.5.3 structure. The per-measure contract prevents out-of-clause limits: compliance stays NOT ASSESSED without the complete procedure."), "warn", "https://www.ieee802.org/3/"],
     ];
     p.body.innerHTML = `<div class="note">${L("Matrice derivata dalla documentazione ufficiale. 'Implementato' significa workflow equivalente nel modello LabPro, non emulazione del firmware o certificazione dello strumento.", "Matrix derived from official documentation. 'Implemented' means an equivalent LabPro model workflow, not firmware emulation or instrument certification.")}</div>
       <table class="mini"><tr><th>${L("riferimento", "reference")}</th><th>${L("funzione manuale", "manual workflow")}</th><th>LabPro</th></tr>
@@ -2598,6 +2682,7 @@ const PALETTE = [
   ["serpll", L("Serializer · TX PLL (jitter)", "Serializer · TX PLL (jitter)"), "digital", 1, 1],
   ["tx", "TX: FIR·DAC·driver", "electrical", 1, 2],
   ["channel", L("Canale elettrico", "Electrical channel"), "electrical", 2, 0],
+  ["com", "COM · IEEE 802.3 Annex 93A", "electrical", 2, 0.5],
   ["optical", L("Ottica: MZM·fibra", "Optics: MZM · fiber"), "optical", 2, 1],
   ["rxfe", "RX front-end: PD·TIA·AGC", "electrical", 3, 0],
   ["pd", "Photodiode · PD", "optical", 3, 1],
@@ -2627,12 +2712,12 @@ const PALETTE = [
   ["education", L("Academy · guida ai blocchi", "Academy · block guide"), null, 0, 1],
 ];
 const VIEWS = {
-  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "optical", "pd", "tia", "agc", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks", "physics"],
+  "Banco completo": ["chain", "scope", "jitter", "berlive", "feclive", "serpll", "tx", "channel", "com", "optical", "pd", "tia", "agc", "ctle", "timing", "eq", "decisions", "spectrum", "sweep", "checks", "physics"],
   "Essenziale": ["chain", "scope", "berlive", "feclive"],
   "Sorgente e TX": ["chain", "stimulus", "serpll", "tx", "scope", "jitter"],
-  "Canale e ottica": ["chain", "channel", "optical", "scope", "spectrum"],
+  "Canale e ottica": ["chain", "channel", "com", "optical", "scope", "spectrum"],
   "RX e DSP": ["chain", "pd", "tia", "agc", "ctle", "adc", "timing", "eq", "decisions", "scope"],
-  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "standards", "instruments", "checks", "physics"],
+  "Analisi live": ["scope", "jitter", "spectrum", "berlive", "feclive", "sweep", "jtol", "com", "standards", "instruments", "checks", "physics"],
   "BERT e traffico": ["chain", "stimulus", "bert", "l2", "anlt", "feclive", "berlive", "train", "cmis"],
   "Scope P/N": ["chain", "scope", "scope", "serpll", "jitter", "spectrum"],
   "Academy": ["chain", "education", "standards", "instruments", "scope", "jitter", "bert", "l2"],
@@ -2644,7 +2729,7 @@ const VIEW_EN = { "Banco completo": "Full bench", "Essenziale": "Essential",
 VIEW_EN["Scope P/N"] = "P/N scope desk";
 const PANEL_EN = {
   chain: "Signal chain", stimulus: "Stimulus · PPG", serpll: "Serializer · TX PLL · P/N output",
-  tx: "TX · FIR · DAC · driver", channel: "Electrical channel · medium · crosstalk",
+  tx: "TX · FIR · DAC · driver", channel: "Electrical channel · medium · crosstalk", com: "COM · IEEE 802.3 Annex 93A",
   optical: "Optics · MZM / EML · fiber", rxfe: "RX front-end · PD · TIA · AGC",
   pd: "Photodiode · PD", tia: "TIA / electrical AFE", agc: "AGC · gain and headroom",
   ctle: "CTLE · configurable sections", adc: "Interleaved ADC", timing: "Timing · CDR",
@@ -2658,7 +2743,7 @@ const PANEL_EN = {
   instruments: "Instrument alignment · DCA / BERT / Traffic",
   education: "Academy · block and standards guide",
 };
-const PANEL_LEARN = { anlt: "anlt", cmis: "cmis", stimulus: "stimulus", serpll: "serpll", tx: "tx", channel: "channel",
+const PANEL_LEARN = { anlt: "anlt", cmis: "cmis", stimulus: "stimulus", serpll: "serpll", tx: "tx", channel: "channel", com: "channel",
   optical: "optical", rxfe: "rxfe", pd: "rxfe", tia: "rxfe", agc: "rxfe", ctle: "ctle", adc: "adc", timing: "timing",
   eq: "eq", decisions: "eq", scope: "scope", jitter: "scope", bert: "bert",
   feclive: "fec", l2: "l2", standards: "standards" };
@@ -2796,11 +2881,11 @@ async function boot() {
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— ${L("preset didattici", "educational presets")} —</option>`;
   for (const p of st.presets) { const o = CE("option"); o.value = p.name; o.textContent = tr(p.name); o.title = tr(p.desc); ps.appendChild(o); }
-  ps.onchange = () => { if (ps.value) { POST("/api/preset", { name: ps.value }).catch(e => toast(e.message)); $("#profile-select").value = ""; } };
+  ps.onchange = () => { if (ps.value) loadNamedConfig(ps.value, $("#profile-select")); };
   const pf = $("#profile-select");
   pf.innerHTML = `<option value="">— ${L("profili standard IEEE/OIF", "IEEE/OIF standard profiles")} —</option>`;
   for (const p of (st.profiles || [])) { const o = CE("option"); o.value = p.name; o.textContent = tr(p.name); o.title = tr(p.desc); pf.appendChild(o); }
-  pf.onchange = () => { if (pf.value) { POST("/api/preset", { name: pf.value }).catch(e => toast(e.message)); ps.value = ""; } };
+  pf.onchange = () => { if (pf.value) loadNamedConfig(pf.value, ps); };
   $("#btn-run").onclick = () => POST("/api/run", { running: !S.running }).catch(e => toast(e.message));
   const anltBtn = $("#btn-anlt");
   if (anltBtn) anltBtn.onclick = async () => {

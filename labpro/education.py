@@ -175,12 +175,12 @@ TOPICS = [
         "Il canale è un filtro passa-basso con perdita ∝ √f (skin) e ∝ f (dielettrico): a Nyquist mancano decine di dB, e le riflessioni (RL) aggiungono echi.",
         "The channel is a low-pass with loss ∝ √f (skin) and ∝ f (dielectric): tens of dB are missing at Nyquist, and reflections (RL) add echoes.",
         "IL(f) ≈ a√f + b·f ;  ISI = h(t) oltre il cursore",
-        "SDD21 del modello o del Touchstone caricato, pulse response con pre/post-cursori, NEXT/FEXT.",
-        "Model or loaded-Touchstone SDD21, pulse response with pre/post-cursors, NEXT/FEXT.",
-        "Carica un S2P vero e confronta il pulse response col modello analitico; poi accendi FEXT −25 dB e guarda la BER.",
-        "Load a real S2P and compare its pulse response with the analytic model; then enable −25 dB FEXT and watch BER.",
-        "Il modello analitico è liscio: un canale vero ha ripple, risonanze e modi. L'eco è un singolo riflesso dichiarato.",
-        "The analytic model is smooth: a real channel has ripple, resonances, and modes. The echo is one declared reflection.",
+        "SDD21 del modello o del Touchstone, pulse response, NEXT/FEXT e COM Annex 93A con contributi al DER₀.",
+        "Model or Touchstone SDD21, pulse response, NEXT/FEXT, and Annex 93A COM contributions at DER₀.",
+        "Carica il profilo 100GBASE-KR1, apri COM e confronta package corto/lungo; poi accendi FEXT −25 dB e osserva A_ni.",
+        "Load the 100GBASE-KR1 profile, open COM and compare short/long packages; then enable −25 dB FEXT and watch A_ni.",
+        "Il COM è un subset dichiarato: manca il set completo di S-parameter victim/NEXT/FEXT e il package multi-riflessione, quindi nessun claim di conformità.",
+        "COM is a declared subset: the full victim/NEXT/FEXT S-parameter set and multi-reflection package are missing, so it makes no compliance claim.",
         "ECEN 720",
         deep_it=("La regola d'oro del settore: ogni raddoppio di baud rate costa ~2× dB di IL sullo stesso mezzo — "
                  "per questo 224G/lane spinge su PAM6/rame corto/ottica. A 28 GHz un backplane 'legacy' può fare "
@@ -212,8 +212,8 @@ TOPICS = [
         "Drive occupancy on the MZM curve, waterfall link budget, P0-P3 levels in dBm, OMA/ER, CD fading.",
         "A 1550 nm porta la fibra a 10 km: il CD (17 ps/nm/km) chiude l'occhio; a 1310 nm (D≈0) no. Il chirp α cambia il segno del danno.",
         "At 1550 nm set 10 km of fiber: CD (17 ps/nm/km) closes the eye; at 1310 nm (D≈0) it does not. Chirp α flips the sign of the damage.",
-        "Campo scalare, PMD a 2 modi, Kerr semplificato; niente TDECQ col reference receiver di clause.",
-        "Scalar field, 2-mode PMD, simplified Kerr; no clause reference-receiver TDECQ.",
+        "Campo scalare, PMD a 2 modi, Kerr semplificato; TDECQ ha struttura di clause ma non calibrazione/pattern completi, quindi non è certificabile.",
+        "Scalar field, 2-mode PMD, simplified Kerr; TDECQ has clause structure but lacks full calibration/patterns, so it is not certifiable.",
         "ECEN 721",
         deep_it=("Il PD misura POTENZA (|E|²): la fase ottica si perde, e la dispersione cromatica — che è un "
                  "ritardo di fase fra le bande laterali — diventa fading di ampiezza: a 56 GBd su 1550 nm bastano "
@@ -587,8 +587,8 @@ TOPICS = [
         "The 17 profiles with 4 axes (standard·reach·medium·FEC), the standard/assumption/unsupported manifest, the pre-FEC threshold margin.",
         "Carica 100GBASE-DR e verifica ogni numero contro la clause citata; poi guarda cosa il banco dichiara di NON coprire.",
         "Load 100GBASE-DR and check every number against the cited clause; then look at what the bench declares it does NOT cover.",
-        "Nessun test di conformità: mancano le procedure normative (TDECQ col reference RX, COM col package model).",
-        "No compliance testing: the normative procedures are missing (TDECQ with reference RX, COM with package models).",
+        "Nessun test di conformità: COM e TDECQ seguono subset/strutture di clause, ma senza input, calibrazione, uncertainty e golden vector completi il claim resta NOT ASSESSED.",
+        "No compliance testing: COM and TDECQ follow clause subsets/structures, but without complete inputs, calibration, uncertainty, and golden vectors the claim stays NOT ASSESSED.",
         "IEEE 802.3 / OIF-CEI",
         deep_it=("Uno standard non è una tabella di numeri ma un CONTRATTO di interoperabilità: il TX promette una "
                  "maschera (TDECQ, OMA, RLM), il canale un budget (COM, IL), il RX una tolleranza (JTOL, "

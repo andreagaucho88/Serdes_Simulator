@@ -428,9 +428,9 @@ class ApiPanel(Base):
             sim = live_sim
             if cfg_matches_live(sim, cfg):
                 source_used = "live"
-        if name == "education":
-            sim = None  # catalogo statico: nessuna simulazione costosa
-            source_used = "static"
+        if name in ("education", "com"):
+            sim = None  # cataloghi/config analysis: nessun datapath necessario
+            source_used = "static" if name == "education" else "config"
         elif not cfg_matches_live(sim, cfg):
             try:
                 sim = paneldata.ref_sim(cfg)
