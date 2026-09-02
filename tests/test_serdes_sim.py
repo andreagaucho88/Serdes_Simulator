@@ -446,6 +446,51 @@ def test_s4p_mixed_mode():
     assert np.allclose(S4[:, 0, 1], 0.0)   # S12 distinto
 
 
+def test_touchstone_2x_s2p_reaches_main_path():
+    """Il loader UI promette Touchstone, quindi i blocchi 2.0 non devono
+    fermarsi con il vecchio NotImplementedError."""
+    from serdes_sim.blocks.channel import (measured_channel_response,
+                                           parse_touchstone_text)
+
+    text = """[Version] 2.0
+# GHz S RI R 50
+[Number of Ports] 2
+[Number of Frequencies] 3
+[Matrix Format] Full
+[Network Data]
+1 0 0 0.8 0 0.8 0 0 0
+10 0 0 0.5 -0.1 0.5 -0.1 0 0
+30 0 0 0.2 -0.2 0.2 -0.2 0 0
+[End]
+"""
+    f_hz, s, z0, n_ports = parse_touchstone_text(text)
+    assert n_ports == 2 and z0 == pytest.approx(50.0)
+    assert f_hz.tolist() == pytest.approx([1e9, 10e9, 30e9])
+    assert s[:, 1, 0] == pytest.approx([0.8 + 0j, 0.5 - 0.1j,
+                                        0.2 - 0.2j])
+    cfg = LinkConfig(s2p_text=text, s2p_name="v2.s2p",
+                     use_s2p_channel=True)
+    h = measured_channel_response(np.asarray([1e9, 10e9, 30e9]), cfg)
+    assert np.abs(h) == pytest.approx(np.abs(s[:, 1, 0]))
+
+
+def test_touchstone_2x_rejects_nonuniform_reference_impedance():
+    from serdes_sim.blocks.channel import parse_touchstone_text
+
+    text = """[Version] 2.0
+# GHz S RI R 50
+[Number of Ports] 2
+[Number of Frequencies] 2
+[Reference] 50 75
+[Network Data]
+1 0 0 0.8 0 0.8 0 0 0
+2 0 0 0.5 0 0.5 0 0 0
+[End]
+"""
+    with pytest.raises(ValueError, match="reference impedance non uniforme"):
+        parse_touchstone_text(text)
+
+
 def test_ethernet_roundtrip_and_analyzer():
     from serdes_sim.blocks import ethernet
     bits, n_frames, _ = ethernet.build_stream_bits(60000, 256)

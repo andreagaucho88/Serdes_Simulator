@@ -39,6 +39,46 @@ def test_broadcast_removes_client_on_async_websocket_failure():
         server.CLIENTS.update(before)
 
 
+def test_initial_websocket_send_consumes_async_failure():
+    """Il primo hello usa lo stesso guard del broadcast: un reload immediato
+    non deve lasciare WebSocketClosedError non recuperate nel loop."""
+    future = Future()
+
+    class ClosingClient:
+        def write_message(self, message):
+            assert json.loads(message)["type"] == "hello"
+            return future
+
+    client = ClosingClient()
+    before = set(server.CLIENTS)
+    try:
+        server.CLIENTS.add(client)
+        server._ws_send(client, json.dumps({"type": "hello"}))
+        assert client in server.CLIENTS
+        future.set_exception(ConnectionError("closed during hello"))
+        assert client not in server.CLIENTS
+    finally:
+        server.CLIENTS.clear()
+        server.CLIENTS.update(before)
+
+
+def test_server_ctrl_c_stops_livebench_without_propagating_interrupt(capsys):
+    class InterruptingLoop:
+        def start(self):
+            raise KeyboardInterrupt
+
+    class Bench:
+        stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    bench = Bench()
+    server._serve_until_stopped(InterruptingLoop(), bench)
+    assert bench.stopped
+    assert "arrestato" in capsys.readouterr().out
+
+
 class ApiContractTest(AsyncHTTPTestCase):
     def get_app(self):
         return server.make_app()

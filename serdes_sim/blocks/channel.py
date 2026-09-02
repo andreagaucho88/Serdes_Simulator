@@ -1,5 +1,5 @@
 """Canale elettrico: modello analitico S21-equivalente, pulse response/cursor,
-parser Touchstone S2P con diagnostica."""
+parser Touchstone 1.x/2.x S2P/S4P con diagnostica."""
 
 from __future__ import annotations
 
@@ -130,54 +130,79 @@ def run_channel(cfg, driver_voltage_v) -> ChannelResult:
 
 
 # ---------------------------------------------------------------------------
-# Touchstone S2P (didattico, Touchstone 1.x, RI/MA/DB, Hz..GHz)
+# Touchstone S2P/S4P (1.x nativo; 2.x tramite scikit-rf)
 # ---------------------------------------------------------------------------
 
 def parse_touchstone_s2p_text(text):
-    unit_scale = {"HZ": 1.0, "KHZ": 1e3, "MHZ": 1e6, "GHZ": 1e9}
-    option = None
-    rows = []
-    for raw in text.splitlines():
-        line = raw.split("!")[0].strip()
-        if not line:
-            continue
-        if line.startswith("#"):
-            tokens = line[1:].upper().split()
-            if len(tokens) < 3 or tokens[1] != "S":
-                raise ValueError("option line attesa: # <unit> S <RI|MA|DB> R <z0>")
-            option = tokens
-            continue
-        if line.startswith("["):
-            raise NotImplementedError("Touchstone 2.x block syntax: usare scikit-rf")
-        rows.extend(float(v) for v in line.split())
-    if option is None or len(rows) % 9:
-        raise ValueError("S2P incompleto o senza option line")
-    unit, fmt = option[0], option[2]
-    if unit not in unit_scale or fmt not in {"RI", "MA", "DB"}:
-        raise ValueError("unità/formato non supportati")
-    z0 = float(option[option.index("R") + 1]) if "R" in option else 50.0
-    a = np.asarray(rows).reshape(-1, 9)
+    """Compatibilità storica S2P sopra il parser generico."""
+    f_hz, S, z0, n_ports = parse_touchstone_text(text)
+    if n_ports != 2:
+        raise ValueError(f"atteso S2P, trovato Touchstone a {n_ports} porte")
+    return f_hz, S, z0
 
-    def pair(v1, v2):
-        if fmt == "RI":
-            return v1 + 1j * v2
-        mag = v1 if fmt == "MA" else 10 ** (v1 / 20)
-        return mag * np.exp(1j * np.deg2rad(v2))
 
-    S = np.empty((len(a), 2, 2), dtype=complex)
-    S[:, 0, 0] = pair(a[:, 1], a[:, 2])
-    S[:, 1, 0] = pair(a[:, 3], a[:, 4])  # S21
-    S[:, 0, 1] = pair(a[:, 5], a[:, 6])  # S12
-    S[:, 1, 1] = pair(a[:, 7], a[:, 8])
-    return a[:, 0] * unit_scale[unit], S, z0
+def _parse_touchstone_2x(text):
+    """Legge i blocchi Touchstone 2.x usando scikit-rf.
+
+    Il formato 2.x include keyword, matrici full/lower/upper e reference per
+    porta: replicarlo con uno split numerico locale sarebbe fragile. Il banco
+    accetta 2 o 4 porte e, per mantenere onesta la trasformazione mixed-mode,
+    richiede un riferimento reale uniforme fra porte e frequenze.
+    """
+    import io
+    import re
+
+    try:
+        import skrf
+    except ImportError as exc:
+        raise ValueError(
+            "Touchstone 2.x richiede il pacchetto opzionale scikit-rf") from exc
+
+    match = re.search(r"^\s*\[Number of Ports\]\s+(\d+)\s*$", text,
+                      flags=re.IGNORECASE | re.MULTILINE)
+    if not match:
+        raise ValueError("Touchstone 2.x senza [Number of Ports]")
+    n_ports = int(match.group(1))
+    if n_ports not in (2, 4):
+        raise ValueError("il banco supporta Touchstone a 2 o 4 porte")
+
+    stream = io.StringIO(text)
+    stream.name = f"upload.s{n_ports}p"
+    try:
+        network = skrf.Network(stream)
+    except Exception as exc:
+        raise ValueError(f"Touchstone 2.x non valido: {exc}") from exc
+
+    f_hz = np.asarray(network.f, dtype=float)
+    S = np.asarray(network.s, dtype=complex)
+    if S.ndim != 3 or S.shape[1:] != (n_ports, n_ports) or len(f_hz) != len(S):
+        raise ValueError("matrice Touchstone 2.x incoerente con il numero di porte")
+    if len(f_hz) < 2 or not np.all(np.isfinite(f_hz)) or not np.all(np.diff(f_hz) > 0):
+        raise ValueError("griglia Touchstone 2.x non finita o non crescente")
+    if not np.all(np.isfinite(S)):
+        raise ValueError("Touchstone 2.x contiene S-param non finiti")
+
+    z0_values = np.asarray(network.z0, dtype=complex)
+    if (not np.allclose(z0_values.imag, 0.0, atol=1e-9)
+            or not np.allclose(z0_values.real, z0_values.real.flat[0],
+                               rtol=1e-9, atol=1e-9)):
+        raise ValueError(
+            "Touchstone 2.x con reference impedance non uniforme: "
+            "rinormalizzare tutte le porte allo stesso Z0")
+    z0 = float(z0_values.real.flat[0])
+    return f_hz, S, z0, n_ports
 
 
 def parse_touchstone_text(text):
-    """Parser Touchstone 1.x generico a n porte (2 o 4).
+    """Parser Touchstone 1.x/2.x generico a n porte (2 o 4).
 
     Ritorna (f_hz, S[punti, n, n], z0, n_ports). Per s4p il port order è
     quello Touchstone 1.x (column-major: S11 S21 ... SN1, S12 ...); il
     mapping fisico P/N è scelto altrove (s4p_pairs)."""
+    if any(raw.split("!")[0].lstrip().startswith("[")
+           for raw in text.splitlines()):
+        return _parse_touchstone_2x(text)
+
     unit_scale = {"HZ": 1.0, "KHZ": 1e3, "MHZ": 1e6, "GHZ": 1e9}
     option = None
     rows = []
@@ -191,8 +216,6 @@ def parse_touchstone_text(text):
                 raise ValueError("option line attesa: # <unit> S <RI|MA|DB> R <z0>")
             option = tokens
             continue
-        if line.startswith("["):
-            raise NotImplementedError("Touchstone 2.x: usare scikit-rf")
         rows.extend(float(v) for v in line.split())
     if option is None:
         raise ValueError("file senza option line")

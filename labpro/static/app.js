@@ -1,5 +1,5 @@
-/* SerDes Optical Lab Pro — workbench a pannelli paralleli.
-   Stato server-side (LiveBench) + WebSocket; i pannelli sono schede
+/* SerDes Optical Lab Pro — workspace a tab raggruppati.
+   Stato server-side (LiveBench) + WebSocket; i pannelli sono strumenti
    indipendenti che condividono la stessa configurazione versionata. */
 "use strict";
 
@@ -1970,13 +1970,13 @@ PANEL_DEFS.channel = {
     p.plotI = CE("div", "plot"); p.body.appendChild(p.plotI);
     p.plotC = CE("div", "plot"); p.body.appendChild(p.plotC);
     const up = CE("div", "scope-bar");
-    up.innerHTML = `<input type="file" accept=".s2p,.S2P,.txt" style="font-size:11px"> <button class="btn" style="padding:3px 9px">usa S2P nel percorso</button> <button class="btn" style="padding:3px 9px">torna al modello</button>`;
+    up.innerHTML = `<input type="file" accept=".s2p,.S2P,.s4p,.S4P,.ts,.txt" style="font-size:11px"> <button class="btn" style="padding:3px 9px">${L("usa Touchstone nel percorso", "use Touchstone in path")}</button> <button class="btn" style="padding:3px 9px">${L("torna al modello", "return to model")}</button>`;
     const [fileEl, btnUse, btnBack] = up.querySelectorAll("input,button");
     btnUse.dataset.action = "s2p_use"; btnBack.dataset.action = "s2p_model";
     btnUse.title = TT("carica S21/SDD21 dal file e lo inserisce nel datapath", "loads S21/SDD21 from file and inserts it in the datapath");
     btnBack.title = TT("bypassa il file e ripristina il modello analitico", "bypasses the file and restores the analytic model");
     btnUse.onclick = async () => {
-      const f = fileEl.files[0]; if (!f) return toast(L("scegli un file .s2p", "choose an .s2p file"));
+      const f = fileEl.files[0]; if (!f) return toast(L("scegli un file Touchstone .s2p/.s4p", "choose a Touchstone .s2p/.s4p file"));
       const text = await f.text();
       POST("/api/s2p", { text, name: f.name, apply: true }).catch(e => toast(e.message));
     };

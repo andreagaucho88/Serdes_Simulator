@@ -112,16 +112,28 @@ def _ws_write_done(client, future):
         CLIENTS.discard(client)
 
 
+def _ws_send(client, message):
+    """Invia e consuma SEMPRE l'esito asincrono di write_message.
+
+    Vale sia per i broadcast sia per l'hello iniziale: un reload rapido può
+    chiudere il socket proprio mentre ``open()`` sta ancora consegnando il
+    primo frame, producendo altrimenti ``Task exception was never retrieved``.
+    """
+    try:
+        future = client.write_message(message)
+        if future is not None:
+            future.add_done_callback(
+                lambda done, ws_client=client: _ws_write_done(ws_client, done))
+        return future
+    except Exception:
+        CLIENTS.discard(client)
+        return None
+
+
 def broadcast(payload: dict):
     msg = json.dumps(payload)
     for c in list(CLIENTS):
-        try:
-            future = c.write_message(msg)
-            if future is not None:
-                future.add_done_callback(
-                    lambda done, client=c: _ws_write_done(client, done))
-        except Exception:
-            CLIENTS.discard(c)
+        _ws_send(c, msg)
 
 
 # --- worker pool degli esperimenti -----------------------------------------
@@ -890,7 +902,7 @@ class WS(tornado.websocket.WebSocketHandler):
 
     def open(self):
         CLIENTS.add(self)
-        self.write_message(json.dumps({
+        _ws_send(self, json.dumps({
             "type": "hello",
             "cfg": BENCH.cfg.to_dict(),
             "running": BENCH.running,
@@ -956,6 +968,16 @@ def make_app():
        compress_response=True, default_handler_class=NotFound)
 
 
+def _serve_until_stopped(loop, bench):
+    """Esegue il loop e chiude il LiveBench anche su SIGINT da terminale."""
+    try:
+        loop.start()
+    except KeyboardInterrupt:
+        print("\nSerDes Optical Lab Pro arrestato.")
+    finally:
+        bench.stop()
+
+
 def main():
     global MAIN_LOOP
     parser = argparse.ArgumentParser()
@@ -975,7 +997,7 @@ def main():
     if not args.no_autostart:
         BENCH.start()
     print(f"SerDes Optical Lab Pro → http://localhost:{args.port}")
-    MAIN_LOOP.start()
+    _serve_until_stopped(MAIN_LOOP, BENCH)
 
 
 if __name__ == "__main__":
