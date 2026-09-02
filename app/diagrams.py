@@ -181,7 +181,7 @@ def domain_legend() -> str:
 
 def mzm_schematic() -> str:
     """Interferometro Mach-Zehnder: split, due bracci con phase shifter, ricombina."""
-    o, e, ink, mut = T.OPTICAL, T.ELECTRICAL, T.INK, T.MUTED
+    o, e, mut = T.OPTICAL, T.ELECTRICAL, T.MUTED
     return f"""
 <svg viewBox="0 0 560 170" width="100%" style="max-width:560px" xmlns="http://www.w3.org/2000/svg" font-family="{T.FONT_MONO}">
   <text x="10" y="90" fill="{o}" font-size="11">E in</text>
@@ -205,7 +205,7 @@ def mzm_schematic() -> str:
 
 
 def pd_tia_schematic() -> str:
-    o, e, ink, mut = T.OPTICAL, T.ELECTRICAL, T.INK, T.MUTED
+    o, e, mut = T.OPTICAL, T.ELECTRICAL, T.MUTED
     return f"""
 <svg viewBox="0 0 560 150" width="100%" style="max-width:560px" xmlns="http://www.w3.org/2000/svg" font-family="{T.FONT_MONO}">
   <text x="8" y="70" fill="{o}" font-size="11">P(t)</text>

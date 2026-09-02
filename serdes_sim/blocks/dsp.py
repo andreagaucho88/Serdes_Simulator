@@ -4,7 +4,7 @@ baseline 1 sps, FSE NLMS a 2 sps, DFE con demo di error propagation."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -117,9 +117,12 @@ def run_gardner_loop(cfg, adc_samples_v, adc_nominal_time_ui, timing: TimingResu
     k_stop = min(cfg.n_symbols - 350, 350 + max_symbols)
     for k in range(350, k_stop):
         base = k + delay + phase_estimate_ui
-        e, m, l = np.interp([base, base + 0.5, base + 1.0],
-                            adc_nominal_time_ui, adc_samples_v)
-        ted = (l - e) * m
+        early, middle, late = np.interp(
+            [base, base + 0.5, base + 1.0],
+            adc_nominal_time_ui,
+            adc_samples_v,
+        )
+        ted = (late - early) * middle
         phase_estimate_ui -= np.sign(ted_slope) * loop_mu * ted
         phase_estimate_ui = float(np.clip(phase_estimate_ui, -0.35, 0.35))
         phase_trace.append(phase_estimate_ui)

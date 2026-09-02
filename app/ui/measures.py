@@ -46,7 +46,7 @@ def page_measures():
          "Metà del baud rate: la prima frequenza a cui lo spettro dati si annulla."),
     ]), use_container_width=True, hide_index=True)
 
-    st.subheader(f"Ottica al PD  ·  piano: fiber output / PD input")
+    st.subheader("Ottica al PD  ·  piano: fiber output / PD input")
     ol = sim.optical_levels
     st.dataframe(_rows_to_df([
         ("P media", f"{w_to_dbm(ol['p_avg_w']):.2f} dBm",
@@ -105,7 +105,7 @@ def page_measures():
          "e non linearità (di fatto un SNDR del campione di decisione)."),
         ("SNR al slicer (FSE+DFE)", f"{snr_dfe['snr_slicer_db']:.2f} dB",
          "Stessa definizione dopo la cancellazione dei postcursor del DFE."),
-        (f"Q-factor per occhio (FSE)", q_str,
+        ("Q-factor per occhio (FSE)", q_str,
          "Q = (μ₊−μ₋)/(σ₊+σ₋) fra livelli adiacenti. Per rumore gaussiano "
          "BER_occhio ≈ Q(Q-factor) con Q(x) = 0.5·erfc(x/√2)."),
         ("Q-factor per occhio (FSE+DFE)", q_str_dfe,

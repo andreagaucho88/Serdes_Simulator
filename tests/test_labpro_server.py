@@ -9,6 +9,8 @@ import json
 import sys
 from concurrent.futures import Future
 from pathlib import Path
+from urllib.parse import urlparse
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -120,3 +122,50 @@ class ApiContractTest(AsyncHTTPTestCase):
         resp = self.fetch("/api/scope?nodes=nodo_finto")
         assert resp.code == 400
         assert "error" in json.loads(resp.body)
+
+    def test_cross_origin_mutation_is_rejected(self):
+        parsed = urlparse(self.get_url("/"))
+        other_loopback_origin = f"{parsed.scheme}://{parsed.hostname}:{parsed.port + 1}"
+        resp = self.fetch(
+            "/api/config",
+            method="POST",
+            headers={"Origin": other_loopback_origin},
+            body=json.dumps({"updates": {}}),
+        )
+        assert resp.code == 403
+        assert "cross-origin" in json.loads(resp.body)["error"]
+
+    def test_loopback_origin_reaches_normal_api_validation(self):
+        resp = self.fetch(
+            "/api/config",
+            method="POST",
+            headers={"Origin": self.get_url("/").rstrip("/")},
+            body=json.dumps({"updates": {"unknown_field": 1}}),
+        )
+        assert resp.code == 400
+        assert "campo sconosciuto" in json.loads(resp.body)["error"]
+
+    def test_non_loopback_host_is_rejected(self):
+        resp = self.fetch("/api/state", headers={"Host": "attacker.example"})
+        assert resp.code == 403
+        assert "non-loopback" in json.loads(resp.body)["error"]
+
+    def test_oversized_request_body_is_rejected(self):
+        with patch.object(server, "MAX_REQUEST_BODY_BYTES", 32):
+            resp = self.fetch(
+                "/api/config",
+                method="POST",
+                body=json.dumps({"updates": {"padding": "x" * 64}}),
+            )
+        assert resp.code == 413
+        assert "16 MiB" in json.loads(resp.body)["error"]
+
+    def test_oversized_touchstone_upload_is_rejected(self):
+        with patch.object(server, "MAX_TOUCHSTONE_TEXT_BYTES", 16):
+            resp = self.fetch(
+                "/api/s2p",
+                method="POST",
+                body=json.dumps({"text": "x" * 17}),
+            )
+        assert resp.code == 413
+        assert "8 MiB" in json.loads(resp.body)["error"]

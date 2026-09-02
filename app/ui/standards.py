@@ -9,9 +9,9 @@ import streamlit as st
 
 from serdes_sim.blocks import fec
 
-from .. import common, plots
+from .. import common
 from .. import theme as T
-from ..state import get_cfg, set_cfg, run_sim, apply_preset
+from ..state import get_cfg, set_cfg, run_sim
 
 # Tabella orientativa (riferimenti indicativi, non testo normativo).
 # Le corsie ELETTRICHE (AUI/C2M/KR/CR) e i PMD OTTICI sono elencati separati:

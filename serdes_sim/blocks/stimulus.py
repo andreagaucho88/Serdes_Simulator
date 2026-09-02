@@ -16,7 +16,7 @@ import zlib
 import numpy as np
 
 from .ssprq_data import (SSPRQ_PACKED_ZLIB_B85, SSPRQ_PERIOD_SYMBOLS,
-                          SSPRQ_SOURCE_URL, SSPRQ_SYMBOL_SHA256)
+                          SSPRQ_SYMBOL_SHA256)
 
 PRBS13_PERIOD = 2 ** 13 - 1
 

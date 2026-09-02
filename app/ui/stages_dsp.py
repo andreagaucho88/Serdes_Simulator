@@ -286,7 +286,6 @@ def page_ber():
         st.markdown(content.BER_THEORY)
 
     sim = run_sim()
-    cfg = get_cfg()
     if not common.require_link(sim):
         return
     eq = sim.eq

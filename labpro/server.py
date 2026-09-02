@@ -51,6 +51,31 @@ log = logging.getLogger("labpro")
 
 
 CHAMBER_KEYS = ("on", "mode", "t_min", "t_max", "period_s", "tau_s")
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+MAX_TOUCHSTONE_TEXT_BYTES = 8 * 1024 * 1024
+
+
+def _is_loopback_endpoint(value: str) -> bool:
+    """Accept localhost URLs and Host headers, never public/rebound hosts."""
+    try:
+        parsed = urlparse(value if "://" in value else f"//{value}")
+        return parsed.hostname in LOOPBACK_HOSTS
+    except ValueError:
+        return False
+
+
+def _is_same_loopback_origin(origin: str, protocol: str, host: str) -> bool:
+    """Require browser mutations and sockets to originate from this server."""
+    try:
+        parsed = urlparse(origin)
+        return (
+            parsed.scheme == protocol
+            and parsed.netloc.lower() == host.lower()
+            and parsed.hostname in LOOPBACK_HOSTS
+        )
+    except ValueError:
+        return False
 
 
 def config_from_dict(cfg_d: dict):
@@ -247,6 +272,18 @@ BENCH.on_record = on_record
 class Base(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header("Cache-Control", "no-store")
+
+    def prepare(self):
+        if not _is_loopback_endpoint(self.request.host):
+            raise tornado.web.HTTPError(403, "non-loopback Host rejected")
+        if len(self.request.body) > MAX_REQUEST_BODY_BYTES:
+            raise tornado.web.HTTPError(413, "request body exceeds 16 MiB")
+        if self.request.method not in {"GET", "HEAD", "OPTIONS"}:
+            origin = self.request.headers.get("Origin")
+            if origin and not _is_same_loopback_origin(
+                origin, self.request.protocol, self.request.host
+            ):
+                raise tornado.web.HTTPError(403, "cross-origin mutation rejected")
 
     def write_json(self, obj):
         self.set_header("Content-Type", "application/json")
@@ -464,6 +501,12 @@ class ApiS2P(Base):
     def post(self):
         body = self.body_json()
         text = body.get("text", "")
+        if not isinstance(text, str):
+            self.set_status(400)
+            return self.write_json({"error": "Touchstone text must be a string"})
+        if len(text.encode("utf-8")) > MAX_TOUCHSTONE_TEXT_BYTES:
+            self.set_status(413)
+            return self.write_json({"error": "Touchstone upload exceeds 8 MiB"})
         try:
             from serdes_sim.blocks.channel import (parse_touchstone_text,
                                                    s4p_mixed_mode_21)
@@ -898,7 +941,9 @@ class WS(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin):
         # solo pagine servite in locale: una pagina web qualunque aperta nel
         # browser non deve poter agganciare il banco via WebSocket
-        return urlparse(origin).hostname in ("localhost", "127.0.0.1", "::1")
+        return _is_same_loopback_origin(
+            origin, self.request.protocol, self.request.host
+        )
 
     def open(self):
         CLIENTS.add(self)
@@ -992,7 +1037,8 @@ def main():
     ensure_plotly()
     load_persisted()
     app = make_app()
-    app.listen(args.port, address="127.0.0.1")
+    app.listen(args.port, address="127.0.0.1",
+               max_body_size=MAX_REQUEST_BODY_BYTES)
     MAIN_LOOP = tornado.ioloop.IOLoop.current()
     if not args.no_autostart:
         BENCH.start()

@@ -102,7 +102,7 @@ with st.sidebar:
             st.markdown(f'<span class="badge-fail">✗ {n_fail} checkpoint FAIL</span>',
                         unsafe_allow_html=True)
         else:
-            st.markdown(f'<span class="badge-pass">✓ tutti i checkpoint PASS</span>',
+            st.markdown('<span class="badge-pass">✓ tutti i checkpoint PASS</span>',
                         unsafe_allow_html=True)
     except Exception as exc:
         st.error(f"Configurazione non valida: {exc}")

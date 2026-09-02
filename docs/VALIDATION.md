@@ -5,7 +5,7 @@ compliance claim.
 
 ## Current quality gate
 
-- **378 automated tests**
+- **383 automated tests**
 - **13/13 physical self-test checkpoints**
 - all 32 Lab PRO panels exercised in Italian and English
 - browser checks for singleton tabs, BERT subviews, DCA EYE/WAVE, control
@@ -46,6 +46,9 @@ Tests verify that:
 - CDR lock and BERT pattern lock gate downstream metrics;
 - KP4/KR4 FEC uses real algebraic encoders/decoders in the path;
 - public text assets do not embed a developer home path.
+- non-loopback Host headers, cross-origin mutations, and oversized request or
+  Touchstone bodies are rejected before reaching the simulation engine;
+- packaged Plotly and font assets carry their third-party license files.
 
 ## Standards and procedures
 

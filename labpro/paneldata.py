@@ -18,10 +18,9 @@ from serdes_sim import LinkConfig, simulate
 from serdes_sim.blocks import fec as fec_block
 from serdes_sim.blocks import stimulus
 from serdes_sim.blocks.channel import channel_response
-from serdes_sim.blocks.metrics import eye_density
 from serdes_sim.blocks.receiver import ctle_response, ctle_peaking_db
 from serdes_sim.utils import (apply_frequency_response, butterworth_magnitude,
-                              butterworth_response, db10, db20, rms_ac,
+                              db10, db20, rms_ac,
                               w_to_dbm, dbm_to_w, Q_E_C)
 from labpro.education import TOPICS
 
@@ -223,7 +222,6 @@ def eye_measures(sim, cfg, node="vctle", ref_filter=""):
     # AUTOCENTRAGGIO da strumento: il DCA sceglie da sé l'istante di misura
     # (massima apertura minima), indipendente dal CDR del ricevitore — il cui
     # istante è riportato a parte come marker.
-    lo_lv0, hi_lv0 = levels[0], levels[-1]
     best_off, best_metric = 0.0, -np.inf
     for off in np.linspace(-0.35, 0.35, 15):
         cc = ((k + 0.5 + delay + off) * sps).astype(int)

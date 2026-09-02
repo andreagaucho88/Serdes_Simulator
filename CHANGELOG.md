@@ -2,9 +2,18 @@
 
 All notable public changes are documented here.
 
-## Unreleased
+## 0.1.1 — 2026-09-02
 
 - GitHub Actions uses an isolated package build and Node 24-based actions.
+- Added complete Plotly.js, IBM Plex, and Space Grotesk redistribution notices
+  to both source and installable artifacts.
+- Clarified that public IEEE reference data is not relicensed by the project.
+- Rejected non-loopback Host headers, cross-origin REST mutations, request
+  bodies above 16 MiB, and Touchstone text above 8 MiB.
+- Added Dependabot, CodeQL, and Ruff CI gates.
+- Resolved all 45 existing Ruff findings without changing numerical baselines.
+- Corrected the clean-environment build command in the contribution guide.
+- Normalized public Git authorship to a GitHub `noreply` address.
 
 ## 0.1.0 — 2026-09-02
 

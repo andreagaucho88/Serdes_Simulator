@@ -970,19 +970,19 @@ def link_train(cfg: LinkConfig, seeds=(1101, 2202), progress_callback=None,
     base = score(cur)
     best_score = base
     steps = []
-    for field, label, grid in plan:
+    for field_name, label, grid in plan:
         tried = []
         best_v, best_s = None, best_score
         for v in grid:
-            cand = apply(cur, field, v)
+            cand = apply(cur, field_name, v)
             s = score(cand)
             tried.append({"value": float(v), "score": s})
             if s < best_s:
                 best_s, best_v = s, v
         if best_v is not None:
-            cur = apply(cur, field, best_v)
+            cur = apply(cur, field_name, best_v)
             best_score = best_s
-        steps.append({"param": label, "field": field, "tried": tried,
+        steps.append({"param": label, "field": field_name, "tried": tried,
                       "chosen": (float(best_v) if best_v is not None else None),
                       "score_after": best_score})
     # Holdout indipendente: non applicare un tuning che ha semplicemente

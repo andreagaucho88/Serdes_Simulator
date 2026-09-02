@@ -16,7 +16,6 @@ IEEE_COM = "https://www.ieee802.org/3/ad_hoc/COM/public/"
 
 def measurement_contracts(cfg, active_profile=None, active_meta=None):
     active_meta = active_meta or {}
-    interface = active_meta.get("interface")
     standard = active_meta.get("standard", "IEEE 802.3 profile required")
     optical_pam4 = cfg.link_medium == "optical" and cfg.modulation == "PAM4"
     electrical_pam4 = cfg.link_medium == "copper" and cfg.modulation == "PAM4"

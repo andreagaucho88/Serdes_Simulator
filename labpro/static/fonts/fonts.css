@@ -1,5 +1,5 @@
-/* Font locali (subset latin) — l'app deve funzionare senza CDN,
-   anche air-gapped; generati dai file Google Fonts ufficiali. */
+/* Local Latin subsets obtained from the official Google Fonts endpoints.
+   OFL license texts are distributed in this directory. */
 @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400;
   font-display: swap; src: url('/static/fonts/ibm-plex-mono-400.woff2') format('woff2'); }
 @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500;

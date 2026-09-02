@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import streamlit as st
 
 from serdes_sim.blocks.metrics import eye_density

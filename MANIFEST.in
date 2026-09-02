@@ -1,0 +1,3 @@
+include LICENSE
+include THIRD_PARTY_NOTICES.md
+recursive-include labpro/static *.css *.html *.js *.txt *.woff2

@@ -18,6 +18,7 @@ Run the fast loop:
 
 ~~~bash
 python -m pytest -m "not slow" -q
+python -m ruff check .
 node --check labpro/static/app.js
 ~~~
 
@@ -26,7 +27,7 @@ Before opening a pull request:
 ~~~bash
 python -m pytest tests -q
 python -m serdes_sim.selftest
-python -m build --no-isolation
+python -m build
 git diff --check
 ~~~
 

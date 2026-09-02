@@ -53,7 +53,7 @@ that same record.
 | 🧩 | **One complete datapath** | Electrical, optical, timing, DSP, and coding effects propagate end to end |
 | 🧪 | **Measured-channel support** | Touchstone 1.x/2.x S2P and mixed-mode S4P can replace the analytical channel |
 | 🎓 | **Explainable controls** | 123 bilingual controls document physics, observables, experiments, and model boundaries |
-| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 378 automated tests |
+| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 383 automated tests |
 
 ### What you can investigate
 
@@ -393,7 +393,7 @@ python -m compileall -q serdes_sim labpro
 git diff --check
 ~~~
 
-Current validated state: **378/378 tests pass**, physical self-test
+Current validated state: **383/383 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -489,7 +489,10 @@ for public bug reports, feature requests, and roadmap discussions.
 
 ## License and intended use
 
-SerDes Optical Lab PRO is released under the [MIT License](LICENSE).
+Original SerDes Optical Lab PRO code is released under the
+[MIT License](LICENSE). Plotly.js, the bundled fonts, and IEEE reference data
+retain their respective rights and licenses; see
+[Third-party notices](THIRD_PARTY_NOTICES.md).
 
 For design, procurement, or compliance decisions, always correlate the model
 with the applicable specification, component data, and traceable

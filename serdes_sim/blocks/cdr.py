@@ -12,7 +12,7 @@ esistono (gating nel motore).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -50,9 +50,11 @@ def _scan_scurve_gain(v, sps_samples, rms2, n_probe=1200, start=200):
             i2 = int(p + sps_samples)
             if i2 + 1 >= limit:
                 break
-            i0 = int(p); f0 = p - i0
+            i0 = int(p)
+            f0 = p - i0
             pm = p + sps_samples / 2
-            i1 = int(pm); f1 = pm - i1
+            i1 = int(pm)
+            f1 = pm - i1
             f2 = p + sps_samples - i2
             ye = v[i0] * (1 - f0) + v[i0 + 1] * f0
             ym = v[i1] * (1 - f1) + v[i1 + 1] * f1
@@ -104,16 +106,19 @@ def run_cdr(cfg, adc_samples, mode="gardner", levels=None) -> CdrResult:
     d_prev = 0.0
     N = len(v) - 2
     for k in range(n_sym):
-        i0 = int(p); f0 = p - i0
+        i0 = int(p)
+        f0 = p - i0
         if i0 + int(sps) + 1 >= N:
             n_sym = k
             break
         ye = v[i0] + (v[i0 + 1] - v[i0]) * f0
         pm = p + sps / 2
-        i1 = int(pm); f1 = pm - i1
+        i1 = int(pm)
+        f1 = pm - i1
         ym = v[i1] + (v[i1 + 1] - v[i1]) * f1
         pl = p + sps
-        i2 = int(pl); f2 = pl - i2
+        i2 = int(pl)
+        f2 = pl - i2
         yl = v[i2] + (v[i2 + 1] - v[i2]) * f2
 
         if mode == "mm":
@@ -132,7 +137,9 @@ def run_cdr(cfg, adc_samples, mode="gardner", levels=None) -> CdrResult:
         tau[k] = p / sps - (k + 1)
         fppm[k] = f * 1e6
 
-    tau = tau[:n_sym]; fppm = fppm[:n_sym]; pos = pos[:n_sym]
+    tau = tau[:n_sym]
+    fppm = fppm[:n_sym]
+    pos = pos[:n_sym]
 
     # lock: la fase detrended della coda deve essere stabile
     tail = tau[-max(n_sym // 4, 200):]

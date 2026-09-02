@@ -25,6 +25,9 @@ jobs:
       - name: CLI contract
         run: serdes-lab --help
 
+      - name: Python lint
+        run: python -m ruff check .
+
       - name: JS syntax check
         run: node --check labpro/static/app.js
 

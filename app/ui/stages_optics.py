@@ -6,7 +6,7 @@ import numpy as np
 import streamlit as st
 
 from serdes_sim.blocks.optical import imdd_small_signal_response
-from serdes_sim.utils import db20, w_to_dbm
+from serdes_sim.utils import db20
 
 from .. import common, content, diagrams, plots
 from .. import theme as T
@@ -56,7 +56,6 @@ def page_mzm():
             [dict(x=opt.v_static, y=opt.p_static, color=T.OPTICAL, width=2.2)],
             title="Transfer statica P/P_in vs drive", xtitle="Drive [V]",
             ytitle="P/P_in")
-        bias_v = (cfg.mzm_bias_rad - np.pi / 2) * cfg.vpi_v / np.pi
         plots.vline(fig, 0, label="bias point")
         swing = float(np.max(np.abs(opt.mzm_drive_v)))
         fig.add_vrect(x0=-swing, x1=swing, fillcolor=T.OPTICAL, opacity=0.07,

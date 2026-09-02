@@ -395,7 +395,9 @@ def test_livebench_epf_hist_accumulates():
     import time
     from serdes_sim.livebench import LiveBench
     b = LiveBench(LinkConfig(fec_mode="kp4", **GOOD_LINK))
-    b.start(); time.sleep(2.5); b.stop()
+    b.start()
+    time.sleep(2.5)
+    b.stop()
     s = b.snapshot()
     hist = s["fec"]["epf_hist"]
     assert len(hist) == 41 and sum(hist) == s["fec"]["frames_total"] > 0
@@ -405,7 +407,9 @@ def test_livebench_hist_strips_and_rate():
     import time
     from serdes_sim.livebench import LiveBench
     b = LiveBench(LinkConfig(**GOOD_LINK))
-    b.start(); time.sleep(2.0); b.stop()
+    b.start()
+    time.sleep(2.0)
+    b.stop()
     s = b.snapshot()
     h = s["hist"]
     assert s["records"] > 0
@@ -424,11 +428,12 @@ def test_s4p_mixed_mode():
     from serdes_sim.blocks.channel import parse_touchstone_text, s4p_mixed_mode_21
     rows = []
     for f in (1.0, 10.0, 20.0):
-        S = [[0.0] * 8 for _ in range(4)]
         vals = []
         M = np.zeros((4, 4))
-        M[1, 0] = 0.5; M[3, 2] = 0.5    # S21, S43
-        M[1, 2] = -0.25; M[3, 0] = -0.25  # S23, S41
+        M[1, 0] = 0.5
+        M[3, 2] = 0.5    # S21, S43
+        M[1, 2] = -0.25
+        M[3, 0] = -0.25  # S23, S41
         # Touchstone 1.x: S11,S21,...,SN1,S12,... (column-major)
         for j in range(4):
             for i in range(4):
@@ -498,7 +503,8 @@ def test_ethernet_roundtrip_and_analyzer():
     assert a.frames_ok >= n_frames - 1 and a.frames_fcs_bad == 0
     assert a.frames_lost == 0
     # corrompi un byte: un frame perde l'FCS
-    bad = bits.copy(); bad[3000] ^= 1
+    bad = bits.copy()
+    bad[3000] ^= 1
     a2 = ethernet.analyze_stream_bits(bad, 256, window_s=1e-6)
     assert a2.frames_fcs_bad >= 1
     # Un falso 55-D5 nel payload non deve creare un frame fantasma.
@@ -572,7 +578,9 @@ def test_chamber_profile_and_die_lag():
     # integrazione: il die insegue con lag e la BER si muove col profilo
     b.chamber.update(mode="soak", t_max=85.0)
     b._chamber_t0 = time.time()
-    b.start(); time.sleep(2.5); b.stop()
+    b.start()
+    time.sleep(2.5)
+    b.stop()
     snap = b.snapshot()
     temps = [t for t in snap["hist"]["temp_c"] if t is not None]
     assert len(temps) >= 2 and temps[-1] > temps[0] + 5.0
@@ -592,9 +600,11 @@ def test_service_disruption_measured():
     import time
     from serdes_sim.livebench import LiveBench
     b = LiveBench(LinkConfig(**GOOD_LINK))
-    b.start(); time.sleep(1.2)
+    b.start()
+    time.sleep(1.2)
     b.disrupt()
-    time.sleep(2.5); b.stop()
+    time.sleep(2.5)
+    b.stop()
     snap = b.snapshot()
     assert snap["sync_losses"] >= 1
     assert snap["last_disruption_ms"] is not None
@@ -792,7 +802,6 @@ def test_fec_interleave_roundtrip_and_e2e():
 def test_burst_insertion_is_contiguous_and_stresses_fec():
     """Stesso numero di bit, ma il burst deve costare di più al RS in
     simboli/frame colpiti rispetto agli errori sparsi."""
-    from serdes_sim.blocks import fec as fec_block
     iid = simulate(LinkConfig(err_insert_bits=40, fec_mode="kp4",
                               **GOOD_LINK), depth="light")
     burst = simulate(LinkConfig(err_insert_bits=40, err_insert_burst=True,
@@ -832,7 +841,8 @@ def test_scrambler_roundtrip_and_error_multiplication():
     d = rng.integers(0, 2, 4000).astype(np.uint8)
     line = ethernet.scramble(d)
     assert np.array_equal(ethernet.descramble(line), d)
-    hit = line.copy(); hit[2000] ^= 1
+    hit = line.copy()
+    hit[2000] ^= 1
     assert int((ethernet.descramble(hit) ^ d).sum()) == 3
 
 
@@ -915,7 +925,7 @@ def test_anlt_bidirectional_both_ready():
     lt = out["lt"]
     rev = lt["reverse"]
     assert rev["ready"] and rev["q_after"] > 0
-    assert lt["both_ready"] == (lt["ready"] and rev["ready"]) == True
+    assert lt["both_ready"] == (lt["ready"] and rev["ready"])
 
 
 def test_l2_frame_inspector_decodes_real_bytes():
@@ -1480,15 +1490,22 @@ def test_public_package_metadata_and_cli_contract():
     root = Path(__file__).resolve().parent.parent
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     project = metadata["project"]
+    assert project["version"] == "0.1.1"
     assert project["requires-python"] == ">=3.12"
-    assert project["license"]["file"] == "LICENSE"
+    assert project["license"] == "MIT"
+    assert "THIRD_PARTY_NOTICES.md" in project["license-files"]
     assert metadata["project"]["scripts"]["serdes-lab"] == "labpro.server:main"
     assert metadata["build-system"]["build-backend"] == "setuptools.build_meta"
+    assert "setuptools>=77" in metadata["build-system"]["requires"]
     assert "static/fonts/*" in metadata["tool"]["setuptools"]["package-data"]["labpro"]
     assert {"numpy==1.26.4", "scipy==1.13.1", "tornado==6.4.1",
             "plotly==5.24.1", "scikit-rf==2.1.0"} <= set(
                 project["dependencies"])
     assert (root / "LICENSE").read_text().startswith("MIT License")
+    assert (root / "THIRD_PARTY_NOTICES.md").is_file()
+    assert (root / "labpro/static/plotly.min.js.LICENSE.txt").is_file()
+    assert (root / "labpro/static/fonts/OFL-IBM-Plex.txt").is_file()
+    assert (root / "labpro/static/fonts/OFL-Space-Grotesk.txt").is_file()
     assert "Python 3.10" not in (root / "README.md").read_text()
 
 
