@@ -2,6 +2,32 @@
 
 All notable public changes are documented here.
 
+## Unreleased
+
+- Standards registry (`serdes_sim/standards.py`): per-interface limits with
+  clause, table, edition and a published/to-verify confidence flag; a closed
+  verdict taxonomy (PASS, FAIL, MARGINAL, PROXY, NOT_APPLICABLE, NOT_ASSESSED,
+  ERROR) shared by COM, DR4, TDECQ, checkpoints, physics and CMIS; per-profile
+  measurement contracts.
+- New Compliance panel replacing the IEEE/OIF standards panel: active profile
+  with modified knobs, one measurement row per contract (value, registry limit,
+  margin bar with uncertainty, model verdict and separate compliance chip),
+  collapsible manifest/catalog/legend, JSON and Markdown report export
+  (`/api/report/standards`).
+- COM: Equation 93A-46 Gaussian rise-time factor restored, σ_TX referred to one
+  level step, 802.3ck low-frequency CTLE stage, two-stage equalizer search,
+  profile-aware applicability (100GAUI-1 C2M is not COM-based).
+- Clause-formula RLM, linear-fit SNDR (Np=200 UI), TDECQ σ_S term and TECQ,
+  run-based optical levels, NRZ eye mask and JTOL mask served as data.
+- Corrected help/Academy errors (lane rates, KP4 threshold, PRBS13Q clause,
+  nonexistent profile), CEI-224G marked as draft.
+- UI: verdict chips everywhere, pinned instrument dock, tab-strip overflow
+  arrows and short names, background-tab startup fix, folded long notes,
+  toast queue with severity, i18n sweep, accessible BERT tabs and sliders.
+- Server: typed/ranged schema for every configuration field, 400 responses
+  for bad parameters and NaN, Touchstone text kept out of broadcasts, profile
+  tracker persisted with the session.
+
 ## 0.1.3 — 2026-09-02
 
 - Moved Lab PRO session persistence out of the Python package into a private,

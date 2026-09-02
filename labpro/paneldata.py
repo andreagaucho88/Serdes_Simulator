@@ -18,7 +18,17 @@ from serdes_sim import LinkConfig, simulate
 from serdes_sim.blocks import fec as fec_block
 from serdes_sim.blocks import stimulus
 from serdes_sim.blocks.channel import channel_response
+from serdes_sim.blocks.metrics import (eye_mask_hits, optical_levels_runs,
+                                       rlm_clause, sndr_linear_fit,
+                                       tdecq_report)
 from serdes_sim.blocks.receiver import ctle_response, ctle_peaking_db
+from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META
+from serdes_sim.standards import (EYE_MASKS, FAIL, NOT_APPLICABLE,
+                                  NOT_ASSESSED, NRZ_REFERENCE_RX_BW_FRACTION,
+                                  PASS, TDECQ_REFERENCE_RX_BW_FRACTION,
+                                  FEC_TARGET_FER, ber_verdict, evaluate_limit,
+                                  limits_for_interface, measurement_contracts,
+                                  normalize_status, registry_snapshot, verdict)
 from serdes_sim.utils import (apply_frequency_response, butterworth_magnitude,
                               db10, db20, rms_ac,
                               w_to_dbm, dbm_to_w, Q_E_C)
@@ -52,6 +62,43 @@ def _ref_sim_cached(cfg_json: str):
 
 def ref_sim(cfg: LinkConfig):
     return _ref_sim_cached(json.dumps(cfg.to_dict()))
+
+
+def _memo(sim, key, fn):
+    """Memo per record: la stessa misura (TDECQ, eye, SNDR) richiesta da più
+    pannelli sullo stesso SimResult viene calcolata una sola volta."""
+    if sim is None:
+        return fn()
+    store = sim.__dict__.setdefault("_labpro_memo", {})
+    if key not in store:
+        store[key] = fn()
+    return store[key]
+
+
+# Campi che cambiano per record (camera climatica, error insertion) e non
+# contano come modifica del profilo standard attivo.
+VOLATILE_FIELDS = ("pvt_temp_c", "err_insert_bits", "err_insert_burst",
+                   "err_insert_target")
+
+
+def profile_context(cfg, profile=None):
+    """Profilo IEEE/OIF attivo (nome, metadata, interfaccia) e campi
+    modificati rispetto al preset. Il nome arriva dal server (tracker del
+    preset caricato); senza tracker si ricade sull'uguaglianza esatta."""
+    name = profile if profile in STANDARD_PROFILES else None
+    if name is None:
+        exact = [n for n, item in STANDARD_PROFILES.items() if item[0] == cfg]
+        name = exact[0] if exact else None
+    meta = dict(STANDARD_PROFILE_META.get(name, {})) if name else {}
+    modified = []
+    if name:
+        base = STANDARD_PROFILES[name][0].to_dict()
+        cur = cfg.to_dict()
+        modified = sorted(k for k in cur
+                          if cur[k] != base[k] and k not in VOLATILE_FIELDS)
+    return {"name": name, "meta": meta, "interface": meta.get("interface"),
+            "description": (STANDARD_PROFILES[name][1] if name else None),
+            "modified_fields": modified, "modified": bool(modified)}
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +168,8 @@ def _bt4_reference(wave, cfg, ref):
     preservato), coerente con la scelta di fase del v7."""
     if not ref or ref == "off":
         return wave, ""
-    frac = 0.5 if ref == "bt4_05" else 0.75
+    frac = (TDECQ_REFERENCE_RX_BW_FRACTION if ref == "bt4_05"
+            else NRZ_REFERENCE_RX_BW_FRACTION)
     fc = frac * cfg.symbol_rate_hz
     wn = min(fc / (cfg.fs_analog_hz / 2), 0.99)
     b, a2 = sp_signal.bessel(4, wn, btype="low", norm="mag")
@@ -129,18 +177,16 @@ def _bt4_reference(wave, cfg, ref):
         f"BT4 {frac:g}·Bd"
 
 
-def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter=""):
+def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter="",
+              profile=None):
     wave = np.asarray(get_wave(sim, node), dtype=float)
     wave, ref_label = _bt4_reference(wave, cfg, ref_filter)
-    meas = eye_measures(sim, cfg, node, ref_filter=ref_filter)
+    meas = dict(_memo(sim, ("eye", node, ref_filter),
+                      lambda: eye_measures(sim, cfg, node, ref_filter=ref_filter)))
     if node == "pfiber" and sim.spec.bits_per_symbol == 2:
-        from serdes_sim.blocks.metrics import tdecq_report
-        try:
-            meas["tdecq"] = J(tdecq_report(
-                sim.optical.P_fiber_w, sim.pam4_symbols, sim.spec,
-                cfg.analog_sps, cfg.symbol_rate_hz, cfg.fs_analog_hz))
-        except Exception:
-            meas["tdecq"] = None
+        meas["tdecq"] = _tdecq_for(sim, cfg, profile)
+    if node == "pfiber" and sim.spec.bits_per_symbol == 1:
+        meas["eye_mask"] = _eye_mask_for(sim, cfg, profile)
     if meas.get("inverted"):
         # funzione "invert" da scope: tracce e misure nello stesso dominio
         wave = -wave
@@ -272,10 +318,11 @@ def eye_measures(sim, cfg, node="vctle", ref_filter=""):
             opening = np.percentile(yh, 1) - np.percentile(yl, 99)
             open_phases.append(opening > 0)
         widths.append(float(np.mean(open_phases)))  # frazione UI aperta (p1/p99)
-    spacings = np.diff([s["mean"] for s in stats])
-    spacing_den = float(np.max(spacings)) if len(spacings) else 0.0
-    rlm = (float(np.min(spacings) / spacing_den)
-           if len(spacings) > 1 and abs(spacing_den) > 1e-15 else None)
+    # RLM con la FORMULA di clause (ES1/ES2 attorno a V_mid) sui livelli
+    # medi misurati: resta un proxy dichiarato perché il pattern di
+    # linearità di clause non è applicato.
+    rlm_detail = rlm_clause([s["mean"] for s in stats]) if len(stats) == 4 else None
+    rlm = rlm_detail["rlm"] if rlm_detail else None
 
     # rise/fall 20-80% sulle transizioni outer (min→max e max→min)
     lo_lv, hi_lv = levels[0], levels[-1]
@@ -332,11 +379,26 @@ def eye_measures(sim, cfg, node="vctle", ref_filter=""):
                    if p_max > 1e-15 else None)
     except np.linalg.LinAlgError:
         sndr_db = None
+    # SNDR con la struttura di clause (fit Y=P·X su tutte le fasi, Np UI):
+    # solo sui piani TX, dove la misura ha senso. Sostituisce il fit a 8 tap
+    # ai soli centri simbolo quando disponibile.
+    sndr_fit = None
+    if NODES[node][3] == "tx" or node == "pfiber":
+        try:
+            sndr_fit = sndr_linear_fit(wave, symbols, sps,
+                                       delay_ui=delay + best_off)
+        except Exception:
+            sndr_fit = None
+    if sndr_fit is not None:
+        sndr_db = sndr_fit["sndr_db"]
     out = {"levels": stats, "eye_heights": heights,
-           "sndr_db": sndr_db,
+           "sndr_db": sndr_db, "sndr_fit": sndr_fit,
+           "sndr_method": ("clause-structured linear fit"
+                           if sndr_fit else "8-tap symbol-center fit (proxy)"),
            "eh_at_ber": eh_at_ber,
            "eye_widths_ui": widths, "q_per_eye": qs,
            "thresholds": thresholds, "rlm_proxy": rlm,
+           "rlm_clause": rlm_detail,
            "t_rise_ps": tr * ui_ps if tr else None,
            "t_fall_ps": tf * ui_ps if tf else None,
            "inverted": bool(inverted),
@@ -623,14 +685,19 @@ def channel_panel(sim, cfg):
     })
 
 
-def com_panel(sim, cfg):
+def com_panel(sim, cfg, profile=None):
     """IEEE 802.3 Annex 93A-scoped channel operating margin report.
 
     ``sim`` is intentionally unused: COM evaluates the passive channel and
     its clause reference equalizers, not the implementation RX datapath.
     """
     from serdes_sim.blocks.com import com_report
-    return J(com_report(cfg))
+    ctx = profile_context(cfg, profile)
+    out = J(com_report(cfg, interface=ctx["interface"]))
+    out["profile"] = {"name": ctx["name"], "interface": ctx["interface"],
+                      "modified_fields": ctx["modified_fields"]}
+    return out
+
 
 
 def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
@@ -666,7 +733,8 @@ def wave_panel(sim, cfg, node="vctle", start_ui=100.0, span_ui=64.0,
 def pd_panel(sim, cfg):
     if sim.optical is None:
         return {"inactive": True,
-                "reason": "link_medium=copper: PD bypassato, usa il pannello TIA/AFE"}
+                "reason": {"it": "link_medium=copper: PD bypassato, usa il pannello TIA/AFE",
+                           "en": "link_medium=copper: PD bypassed, use the TIA/AFE panel"}}
     rx = sim.receiver
     t_ui, clean = _wave_window(rx.i_pd_signal_a * 1e3, cfg)
     _, noisy = _wave_window(rx.i_pd_noisy_a * 1e3, cfg)
@@ -729,27 +797,139 @@ def agc_panel(sim, cfg):
     })
 
 
-def _tdecq_for(sim, cfg):
-    if sim.optical is None or sim.spec.bits_per_symbol != 2:
-        return None
-    from serdes_sim.blocks.metrics import tdecq_report
-    try:
-        return J(tdecq_report(sim.optical.P_fiber_w, sim.pam4_symbols,
-                              sim.spec, cfg.analog_sps, cfg.symbol_rate_hz,
-                              cfg.fs_analog_hz))
-    except Exception:
+def _tdecq_for(sim, cfg, profile=None):
+    """TDECQ del record (memo) con verdetto contro il limite del profilo."""
+    if sim is None or sim.optical is None or sim.spec.bits_per_symbol != 2:
         return None
 
+    def compute():
+        try:
+            return J(tdecq_report(sim.optical.P_fiber_w, sim.pam4_symbols,
+                                  sim.spec, cfg.analog_sps, cfg.symbol_rate_hz,
+                                  cfg.fs_analog_hz))
+        except Exception:
+            return None
 
-def optical_panel(sim, cfg):
+    rep = _memo(sim, "tdecq", compute)
+    if rep is None:
+        return None
+    ctx = profile_context(cfg, profile)
+    lim = limits_for_interface(ctx["interface"]).get("tdecq")
+    value = rep.get("tdecq_db")
+    out = dict(rep)
+    out["verdict"] = evaluate_limit(
+        lim, value,
+        fail_reason=(None if value is not None
+                     else "SER above target with no added noise"),
+        evidence=(f"TDECQ {value:.2f} dB · Ceq {rep.get('ceq_db', 0):.1f} dB"
+                  if value is not None else "no finite TDECQ"))
+    out["limit"] = lim.as_dict() if lim else None
+    out["interface"] = ctx["interface"]
+    return out
+
+
+def _eye_mask_for(sim, cfg, profile=None):
+    """Maschera NRZ di clause (dato del registro) valutata a TP2 dopo il BT4
+    0.75·Bd: hit ratio + verdetto (geometria dichiarata → non valutato)."""
+    if sim is None or sim.optical is None or sim.spec.bits_per_symbol != 1:
+        return None
+    ctx = profile_context(cfg, profile)
+    lim = limits_for_interface(ctx["interface"]).get("eye_mask")
+    mask = EYE_MASKS.get(ctx["interface"] or "")
+    if lim is None or mask is None:
+        return None
+
+    def compute():
+        wave = np.asarray(get_wave(sim, "pfiber"), dtype=float)
+        wave, _ = _bt4_reference(wave, cfg, "bt4_075")
+        m = eye_measures(sim, cfg, "pfiber", ref_filter="bt4_075")
+        if m.get("inverted"):
+            wave = -wave
+        sps = cfg.analog_sps
+        shift = int(round((_node_delay_ui(sim, "pfiber") + m["center_offset_ui"]) * sps))
+        rows = []
+        for k in range(80, min(len(wave) // sps - 3, 480)):
+            c = k * sps + sps // 2 + shift
+            if c - sps >= 0 and c + sps < len(wave):
+                rows.append(wave[c - sps:c + sps])
+        levels = [st["mean"] for st in m["levels"]]
+        return eye_mask_hits(np.asarray(rows), mask, levels[0], levels[-1])
+
+    hits = _memo(sim, "eye_mask", compute)
+    if hits is None:
+        return None
+    out = dict(hits)
+    out["verdict"] = evaluate_limit(lim, hits["hit_ratio"],
+                                    evidence=f"{hits['hits']} hits / {hits['samples']} samples")
+    out["limit"] = lim.as_dict()
+    out["mask"] = mask
+    return out
+
+
+def _optical_levels_clause(sim, cfg, profile=None):
+    """P0…P3, OMA outer, ER con il metodo dei run (struttura di clause) e
+    verdetti ER/OMA contro il registro; fallback ai cluster dell'eye."""
+    if sim is None or sim.optical is None:
+        return None
+
+    def compute():
+        try:
+            return optical_levels_runs(sim.optical.P_fiber_w, sim.pam4_symbols,
+                                       sim.spec.levels_array, cfg.analog_sps,
+                                       delay_ui=0.0)
+        except Exception:
+            return None
+
+    runs = _memo(sim, "optical_levels_runs", compute)
+    ctx = profile_context(cfg, profile)
+    lims = limits_for_interface(ctx["interface"])
+    if runs is None:
+        fallback = _optical_levels_dbm(sim, cfg)
+        if fallback is None:
+            return None
+        levels_mw = fallback["p_mw"]
+        method = "eye-cluster means (fallback)"
+        er_db = fallback["er_db"]
+        oma_mw = fallback["oma_outer_mw"]
+    else:
+        levels_mw = [1e3 * v for v in runs["p_levels_w"]]
+        method = runs["method"]
+        er_db = runs["extinction_ratio_db"]
+        oma_mw = 1e3 * runs["oma_outer_w"]
+    dbm = [10 * np.log10(max(v, 1e-9)) for v in levels_mw]
+    inner = (levels_mw[2] - levels_mw[1]) if len(levels_mw) == 4 else None
+    rlm = rlm_clause(levels_mw) if len(levels_mw) == 4 else None
+    oma_dbm = 10 * np.log10(max(oma_mw, 1e-9))
+    return {
+        "p_dbm": dbm, "p_mw": levels_mw, "oma_outer_mw": oma_mw,
+        "oma_outer_dbm": oma_dbm, "oma_inner_mw": inner, "er_db": er_db,
+        "rlm_proxy": (rlm["rlm"] if rlm else None), "rlm_clause": rlm,
+        "method": method,
+        "verdicts": {
+            "er": evaluate_limit(lims.get("er"), er_db,
+                                 evidence=f"ER {er_db:.2f} dB ({method})"
+                                 if er_db is not None else ""),
+            "oma_outer": evaluate_limit(lims.get("oma_outer"), oma_dbm,
+                                        evidence=f"OMA outer {oma_dbm:.2f} dBm"),
+            "rlm": evaluate_limit(lims.get("rlm"), rlm["rlm"] if rlm else None,
+                                  implementation="proxy",
+                                  evidence=(f"RLM {rlm['rlm']:.3f} (ES1 {rlm['es1']:.3f}, "
+                                            f"ES2 {rlm['es2']:.3f})" if rlm else "")),
+        },
+    }
+
+
+
+def optical_panel(sim, cfg, profile=None):
     if sim.optical is None:
         return {"inactive": True,
-                "reason": "link_medium=copper: la catena ottica è bypassata"}
+                "reason": {"it": "link_medium=copper: la catena ottica è bypassata",
+                           "en": "link_medium=copper: the optical chain is bypassed"}}
     from serdes_sim.blocks.optical import imdd_small_signal_response
     o = sim.optical
     f = np.linspace(0, 1.5 * cfg.nyquist_hz, 800)
     return J({
-        "tdecq": _tdecq_for(sim, cfg),
+        "tdecq": _tdecq_for(sim, cfg, profile),
         "modulator": o.modulator,
         "laser_type": cfg.laser_type,
         "fiber_type": cfg.fiber_type,
@@ -779,7 +959,8 @@ def optical_panel(sim, cfg):
         "budget_steps": _budget_steps(o.power_budget_dbm),
         "chirp_t_ps": (np.arange(10 * cfg.analog_sps) / cfg.fs_analog_hz * 1e12),
         "chirp_ghz": o.inst_freq_shift_hz[:10 * cfg.analog_sps] / 1e9,
-        "p_levels": _optical_levels_dbm(sim, cfg),
+        "p_levels": _optical_levels_clause(sim, cfg, profile),
+        "profile": profile_context(cfg, profile)["name"],
     })
 
 
@@ -1178,8 +1359,12 @@ def cmis_panel(sim, cfg):
             status = "na"
         elif value < warn_lo or value > warn_hi:
             status = "warn"
+        model = {"ok": PASS, "na": NOT_APPLICABLE, "warn": FAIL}[status]
         return {"name": name, "value": value, "unit": unit,
-                "warn_lo": warn_lo, "warn_hi": warn_hi, "status": status}
+                "warn_lo": warn_lo, "warn_hi": warn_hi, "status": status,
+                "verdict": verdict(model, basis="checkpoint", value=value,
+                                   unit=unit,
+                                   evidence=f"warn range {warn_lo}…{warn_hi} {unit}")}
 
     fa = sim.fec
     fl = sim.fec_link
@@ -1297,8 +1482,41 @@ def tx_panel(sim, cfg):
     })
 
 
-def standards_panel(sim, cfg):
-    from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META
+def _fec_model(cfg, fam):
+    """FEC realmente in path (o what-if di famiglia) e soglia iid del codec."""
+    if cfg.fec_mode != "none":
+        kind, whatif = cfg.fec_mode, False
+    elif fam and fam[3] != "none":
+        kind, whatif = fam[3], True
+    else:
+        kind, whatif = None, True
+    if kind is None:
+        return {"kind": None, "name": None, "in_path": False, "what_if": True,
+                "threshold_iid": None}
+    par = dict(n=544, t=15) if kind == "kp4" else dict(n=528, t=7)
+    thr = fec_block.prefec_ber_threshold(FEC_TARGET_FER, m=10, **par)
+    return {"kind": kind,
+            "name": "KP4 RS(544,514)" if kind == "kp4" else "KR4 RS(528,514)",
+            "in_path": not whatif, "what_if": whatif,
+            "threshold_iid": float(thr), "target_fer": FEC_TARGET_FER}
+
+
+def _bench_ber(sim):
+    """Errori e bit contati allo slicer sul record (validation)."""
+    if sim is None or not sim.link_up or len(sim.metrics_rows) < 3:
+        return None
+    row = sim.metrics_rows[2]
+    return {"errors": int(row["bit_errors"]), "bits": int(row["bits"]),
+            "ber": float(row["BER"])}
+
+
+def standards_panel(sim, cfg, profile=None):
+    """Pannello Compliance: profilo attivo, contratti con valore misurato e
+    verdetto, manifest, catalogo. Nessun limite vive fuori dal registro."""
+    ctx = profile_context(cfg, profile)
+    meta = ctx["meta"]
+    interface = ctx["interface"]
+    lims = limits_for_interface(interface)
     gbd = cfg.symbol_rate_hz / 1e9
     bps = sim.spec.bits_per_symbol
     fams = [
@@ -1310,67 +1528,222 @@ def standards_panel(sim, cfg):
     ]
     cands = [(abs(f[0] - gbd) / f[0], f) for f in fams if f[1] == cfg.modulation]
     dev, fam = min(cands, key=lambda t: t[0]) if cands else (None, None)
-    ber = sim.ber_post_dfe if sim.link_up else None
-    exact = [name for name, item in STANDARD_PROFILES.items() if item[0] == cfg]
-    active_profile = exact[0] if exact else None
-    active_meta = STANDARD_PROFILE_META.get(active_profile, {})
-    from serdes_sim.standards import measurement_contracts
-    measure_contracts = measurement_contracts(cfg, active_profile, active_meta)
+    fec = _fec_model(cfg, fam)
+    contracts = measurement_contracts(cfg, ctx["name"], meta)
+
+    # --- valori misurati sul record, uno per contratto ---------------------
+    measured = {}
+    counted = _bench_ber(sim)
+    if counted is None:
+        clause_v = verdict(NOT_ASSESSED, basis="none",
+                           evidence="LINK DOWN: no valid bits on the record")
+        model_v = None
+    else:
+        clause_v, model_v = ber_verdict(counted["errors"], counted["bits"],
+                                        lims.get("ber_prefec"),
+                                        model_threshold=fec["threshold_iid"])
+    measured["ber"] = {"value": (counted["ber"] if counted else None),
+                       "unit": "", "verdict": clause_v, "model_verdict": model_v,
+                       "bound": clause_v.get("bound"), "counted": counted}
+
+    td = _tdecq_for(sim, cfg, profile)
+    if td is not None:
+        measured["tdecq"] = {"value": td.get("tdecq_db"), "unit": "dB",
+                             "verdict": td["verdict"],
+                             "detail": {k: td.get(k) for k in
+                                        ("ceq_db", "oma_outer", "sigma_g", "taps")}}
+
+    if cfg.link_medium == "copper" and cfg.modulation == "PAM4":
+        from serdes_sim.blocks.com import com_report
+        cr = com_report(cfg, interface=interface)
+        measured["com"] = {"value": cr.get("com_db"), "unit": "dB",
+                           "verdict": cr["verdict"],
+                           "detail": {"fom_db": cr.get("fom_db"),
+                                      "threshold_db": cr.get("threshold_db"),
+                                      "model_result": cr.get("model_result")}}
+
+    tx_node = "pfiber" if sim.optical is not None else "vdiff"
+    try:
+        m = _memo(sim, ("eye", tx_node, ""),
+                  lambda: eye_measures(sim, cfg, tx_node, ref_filter=""))
+    except Exception:
+        m = None
+    if m is not None and cfg.modulation == "PAM4":
+        rlm = m.get("rlm_clause")
+        measured["rlm"] = {"value": (rlm["rlm"] if rlm else None), "unit": "",
+                           "verdict": evaluate_limit(
+                               lims.get("rlm"), rlm["rlm"] if rlm else None,
+                               implementation="proxy",
+                               evidence=(f"RLM {rlm['rlm']:.3f} · ES1 {rlm['es1']:.3f} "
+                                         f"· ES2 {rlm['es2']:.3f} @ {tx_node}"
+                                         if rlm else "")),
+                           "detail": rlm}
+        fit = m.get("sndr_fit")
+        sndr = m.get("sndr_db")
+        measured["sndr"] = {"value": sndr, "unit": "dB",
+                            "verdict": evaluate_limit(
+                                lims.get("sndr"), sndr,
+                                implementation=("clause-structured" if fit else "proxy"),
+                                evidence=(f"SNDR {sndr:.1f} dB · {m.get('sndr_method')} @ {tx_node}"
+                                          if sndr is not None else "")),
+                            "detail": fit}
+    if m is not None:
+        eh = m.get("eh_at_ber", {}).get("2.4e-4")
+        eh_min = min(eh) if eh else None
+        measured["eye_opening"] = {
+            "value": eh_min, "unit": NODES[tx_node][2],
+            "verdict": verdict(NOT_ASSESSED, basis="none",
+                               value=eh_min, unit=NODES[tx_node][2],
+                               evidence=(f"min EH@2.4e-4 {eh_min:.4f} {NODES[tx_node][2]} @ {tx_node} "
+                                         "(Gaussian tail extrapolation)"
+                                         if eh_min is not None else ""))}
+
+    if sim.optical is not None:
+        lv = _optical_levels_clause(sim, cfg, profile)
+        if lv is not None:
+            measured["optical_levels"] = {
+                "value": lv["er_db"], "unit": "dB", "verdict": lv["verdicts"]["er"],
+                "extra": {"oma_outer_dbm": lv["oma_outer_dbm"],
+                          "oma_verdict": lv["verdicts"]["oma_outer"],
+                          "p_dbm": lv["p_dbm"], "method": lv["method"]}}
+        mask = _eye_mask_for(sim, cfg, profile)
+        if mask is not None:
+            measured["eye_mask"] = {"value": mask["hit_ratio"], "unit": "",
+                                    "verdict": mask["verdict"],
+                                    "detail": {"hits": mask["hits"],
+                                               "samples": mask["samples"]}}
+
+    if cfg.fec_mode != "none":
+        fl = sim.fec_link
+        if fl is not None:
+            lost = int(getattr(fl, "frames_uncorrectable", 0))
+            post = float(getattr(fl, "post_fec_ber", 0.0))
+            measured["fec"] = {
+                "value": post, "unit": "",
+                "verdict": verdict(FAIL if lost else PASS, basis="checkpoint",
+                                   value=post,
+                                   evidence=(f"{lost} uncorrectable codewords on the "
+                                             f"record · post-FEC BER {post:.3g}"))}
+        else:
+            measured["fec"] = {"value": None, "unit": "",
+                               "verdict": verdict(NOT_ASSESSED, basis="none",
+                                                  evidence="no decoded codeword on the record")}
+
+    try:
+        jt = _memo(sim, ("jitter", "driver"),
+                   lambda: jitter_panel(sim, cfg, node="driver"))
+        tf = jt.get("tail_fit")
+        measured["jitter"] = {
+            "value": (tf["tj_2p4e4_ps"] if tf else jt.get("tie_rms_ps")),
+            "unit": "ps",
+            "verdict": verdict(NOT_ASSESSED, basis="none",
+                               value=(tf["tj_2p4e4_ps"] if tf else None), unit="ps",
+                               evidence=(f"TJ@2.4e-4 {tf['tj_2p4e4_ps']:.2f} ps · RJ {tf['rj_ps']:.3f} ps "
+                                         f"· DJ(δδ) {tf['dj_dd_ps']:.2f} ps (dual-Dirac, driver)"
+                                         if tf else f"TIE rms {jt.get('tie_rms_ps', 0):.2f} ps"))}
+    except Exception:
+        pass
+
+    for row in contracts:
+        mv = measured.get(row["id"])
+        if not row["applicable"]:
+            row["verdict"] = verdict(NOT_APPLICABLE, compliance=NOT_APPLICABLE,
+                                     basis="none", evidence="not applicable to the active configuration")
+            row["measured"] = None
+        elif mv is None:
+            row["verdict"] = verdict(NOT_ASSESSED, basis="none",
+                                     evidence="no live measurement in this contract yet")
+            row["measured"] = None
+        else:
+            row["verdict"] = mv["verdict"]
+            row["measured"] = {k: v for k, v in mv.items() if k != "verdict"}
+
+    counts = {}
+    for row in contracts:
+        counts[row["verdict"]["model"]] = counts.get(row["verdict"]["model"], 0) + 1
+
     tx_arch = (f"{len(cfg.tx_ffe_taps)}-tap FFE · {cfg.dac_bits}-bit DAC · "
                f"{cfg.electrical_drive_mode}")
     ctle_arch = (f"{len(cfg.ctle_zeros_effective_hz)}Z/"
                  f"{len(cfg.ctle_poles_effective_hz)}P · "
                  f"{cfg.ctle_dc_gain_db:+g} dB DC")
+    active = ctx["name"]
+
+    def note(it, en):
+        return {"it": it, "en": en}
+
     manifest = [
         {"block": "interface / reference plane",
-         "value": (f"{active_meta.get('interface', 'custom')} · "
-                   f"{active_meta.get('plane', 'LabPro internal')}"),
-         "basis": "standard" if active_profile else "custom",
-         "note": "nome, mezzo, reach e piano del profilo pubblico"},
+         "value": (f"{meta.get('interface', 'custom')} · "
+                   f"{meta.get('plane', 'LabPro internal')}"),
+         "basis": "standard" if active else "custom",
+         "note": note("nome, mezzo, reach e piano del profilo pubblico",
+                      "name, medium, reach and plane of the public profile")},
         {"block": "lane / modulation",
          "value": f"{gbd:.5g} GBd · {sim.spec.label}",
-         "basis": "profile-anchor" if active_profile else "custom",
-         "note": "valore di corsia usato dal banco"},
+         "basis": "profile-anchor" if active else "custom",
+         "note": note("valore di corsia usato dal banco",
+                      "per-lane value used by the bench")},
         {"block": "FEC", "value": cfg.fec_mode.upper(),
-         "basis": "standard-context" if active_profile else "custom",
-         "note": active_meta.get("fec", "configurazione utente")},
+         "basis": "standard-context" if active else "custom",
+         "note": note(meta.get("fec", "configurazione utente"),
+                      meta.get("fec", "user configuration"))},
         {"block": "TX / serializer", "value": tx_arch,
          "basis": "LabPro assumption",
-         "note": "IEEE/OIF non prescrivono l'architettura interna del SerDes"},
+         "note": note("IEEE/OIF non prescrivono l'architettura interna del SerDes",
+                      "IEEE/OIF do not prescribe the SerDes internal architecture")},
         {"block": "channel", "value": (
             f"{cfg.channel_il_nyquist_db:g} dB @Nyquist · {cfg.link_medium}"),
          "basis": "representative model",
-         "note": "non e la mask/COM di clause"},
+         "note": note("non è la maschera/COM di clause",
+                      "not the clause mask/COM")},
         {"block": "optical TX", "value": (
             "bypassed" if cfg.link_medium == "copper" else
             f"{cfg.laser_type} + {cfg.optical_modulator.upper()} · "
             f"{cfg.wavelength_nm:g} nm · {cfg.fiber_type.upper()}"),
          "basis": "LabPro assumption",
-         "note": "il PMD standard non impone MZM vs EML"},
+         "note": note("il PMD standard non impone MZM vs EML",
+                      "the standard PMD does not mandate MZM vs EML")},
         {"block": "PD / TIA / AGC", "value": (
             f"PD {cfg.pd_bw_hz/1e9:g}G · TIA/AFE {cfg.tia_bw_hz/1e9:g}G · "
             f"AGC {cfg.agc_target_rms_v:g} Vrms"),
          "basis": "LabPro assumption",
-         "note": "front-end parametrico, non circuit-level compliance"},
+         "note": note("front-end parametrico, non conformità a livello circuito",
+                      "parametric front-end, not circuit-level compliance")},
         {"block": "CTLE", "value": ctle_arch,
          "basis": "LabPro assumption",
-         "note": "tutte le sezioni entrano nel datapath"},
+         "note": note("tutte le sezioni entrano nel datapath",
+                      "every section enters the datapath")},
         {"block": "ADC / timing", "value": (
             f"{cfg.adc_bits}-bit {cfg.adc_sps} sps · CDR {cfg.cdr_mode} "
             f"BW={cfg.cdr_bw:g}·baud"),
          "basis": "LabPro assumption",
-         "note": "architettura RX scelta, non prescritta dall'interfaccia"},
+         "note": note("architettura RX scelta, non prescritta dall'interfaccia",
+                      "chosen RX architecture, not prescribed by the interface")},
         {"block": "DSP", "value": f"FSE {cfg.fse_taps} taps · DFE {cfg.dfe_taps} taps",
          "basis": "LabPro assumption",
-         "note": "reference receiver didattico"},
+         "note": note("reference receiver didattico", "educational reference receiver")},
     ]
     out = {"gbd": gbd, "lane_gbs": gbd * bps, "modulation": sim.spec.label,
-           "active_profile": active_profile, "manifest": manifest,
-           "measurement_contracts": measure_contracts,
+           "active_profile": active,
+           "profile": {"name": active, "interface": interface,
+                       "description": ctx["description"],
+                       "modified_fields": ctx["modified_fields"],
+                       "modified": ctx["modified"],
+                       "standard": meta.get("standard"), "status": meta.get("status"),
+                       "claim": meta.get("claim"), "source": meta.get("source"),
+                       "plane": meta.get("plane"), "reach": meta.get("reach"),
+                       "medium": meta.get("medium"), "lanes": meta.get("lanes")},
+           "manifest": manifest,
+           "measurement_contracts": contracts,
+           "summary": counts,
+           "limits": {k: v.as_dict() for k, v in lims.items()},
            "family": fam[2] if fam else None,
            "family_gbd": fam[0] if fam else None,
            "deviation_pct": 100 * dev if dev is not None else None,
-           "ber": ber, "link_up": bool(sim.link_up),
+           "ber": (counted["ber"] if counted else None),
+           "ber_bound": clause_v.get("bound"),
+           "link_up": bool(sim.link_up),
            "families": [{"gbd": f[0], "mod": f[1], "name": f[2]}
                         for f in fams],
            "profiles": [dict(name=name, description=item[1],
@@ -1378,36 +1751,29 @@ def standards_panel(sim, cfg):
                                          and item[0].link_medium == cfg.link_medium
                                          and abs(item[0].symbol_rate_hz
                                                  - cfg.symbol_rate_hz) < 1.0),
+                             active=(name == active),
                              **STANDARD_PROFILE_META.get(name, {}))
-                        for name, item in STANDARD_PROFILES.items()]}
-    # il modello segue il FEC realmente attivo nella simulazione; quello di
-    # famiglia è solo il default what-if quando non c'è FEC in-path
-    if cfg.fec_mode != "none":
-        kind, whatif = cfg.fec_mode, False
-    elif fam and fam[3] != "none":
-        kind, whatif = fam[3], True
-    else:
-        kind, whatif = None, True
-    if kind is not None:
-        p = dict(n=544, t=15) if kind == "kp4" else dict(n=528, t=7)
-        thr = fec_block.prefec_ber_threshold(1e-13, m=10, **p)
-        out.update({
-            "fec_name": ("KP4 RS(544,514)" if kind == "kp4"
-                         else "KR4 RS(528,514)") + (" — what-if" if whatif else " — in-path"),
-            "threshold": thr,
-            "ratio_db": (10 * np.log10(thr / max(ber, 1e-30))
-                         if ber is not None else None),
-            "below": (bool(ber <= thr) if ber is not None else None),
-        })
-    else:
-        out.update({"fec_name": "nessun FEC obbligatorio", "threshold": None,
-                    "ratio_db": None,
-                    "below": (bool(ber <= 1e-12) if ber is not None else None)})
+                        for name, item in STANDARD_PROFILES.items()],
+           "fec": fec,
+           "fec_name": ((fec["name"] or "") + (" — what-if" if fec["what_if"] else " — in-path")
+                        if fec["name"] else None),
+           "threshold": fec["threshold_iid"],
+           "below": (model_v["model"] if model_v else None)}
     return J(out)
 
 
+
 def checks_panel(sim, cfg):
-    return J({"checks": sim.checks, "ledger": sim.ledger})
+    rows = []
+    for c in sim.checks:
+        status = normalize_status(c.get("status"))
+        rows.append(dict(c, status=status,
+                         verdict=verdict(status, basis="checkpoint",
+                                         evidence=c.get("detail", ""))))
+    return J({"checks": rows, "ledger": sim.ledger,
+              "passed": sum(r["status"] == PASS for r in rows),
+              "failed": sum(r["status"] == FAIL for r in rows)})
+
 
 
 def physics_audit_panel(sim, cfg):
@@ -1523,9 +1889,136 @@ def physics_audit_panel(sim, cfg):
             f"{gaussian:.4e}", rel, "10% if ≥30 errors", status,
             f"Confronto per-livello con soglie e Hamming Gray; errori contati={bit_errors}. Sotto 30 errori il record non sostiene il claim al 10%.",
             f"Per-level comparison with thresholds and Gray Hamming weights; counted errors={bit_errors}. Below 30 errors the record cannot support a 10% claim.")
-    return J({"rows": rows, "passed": sum(r["status"] == "PASS" for r in rows),
-              "failed": sum(r["status"] == "FAIL" for r in rows),
-              "warnings": sum(r["status"] == "WARN" for r in rows)})
+    for r in rows:
+        r["status"] = normalize_status(r["status"])
+        r["verdict"] = verdict(r["status"], basis="checkpoint",
+                               value=r.get("value"), evidence=r["en"])
+    return J({"rows": rows, "passed": sum(r["status"] == PASS for r in rows),
+              "failed": sum(r["status"] == FAIL for r in rows),
+              "warnings": sum(r["status"] == NOT_ASSESSED for r in rows)})
+
+
+# ---------------------------------------------------------------------------
+# Report di conformità esportabile (JSON + Markdown)
+# ---------------------------------------------------------------------------
+
+def _versions():
+    import platform
+    import scipy
+    try:
+        from importlib.metadata import version as _v
+        lab = _v("serdes-optical-lab")
+    except Exception:
+        lab = "development"
+    return {"labpro": lab, "python": platform.python_version(),
+            "numpy": np.__version__, "scipy": scipy.__version__}
+
+
+def standards_report(sim, cfg, profile=None, extras=None):
+    """Bundle tracciabile: hash config, seed, profilo, contratti con verdetti,
+    invarianti fisici, checkpoint, procedure e versioni."""
+    import hashlib
+    import time as _time
+    extras = extras or {}
+    comp = standards_panel(sim, cfg, profile)
+    phys = physics_audit_panel(sim, cfg)
+    chk = checks_panel(sim, cfg)
+    cfg_json = json.dumps(cfg.to_dict(), sort_keys=True, default=str)
+    from serdes_sim.procedures import DR4_TDECQ_V1
+    from dataclasses import asdict as _asdict
+    return J({
+        "schema": "labpro-standards-report/1",
+        "generated_at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "config_sha256": hashlib.sha256(cfg_json.encode()).hexdigest(),
+        "acquisition": {"seed": (int(sim.seed) if sim is not None else None),
+                        "depth": (sim.depth if sim is not None else None),
+                        "records": extras.get("records")},
+        "profile": comp["profile"],
+        "lane": {"gbd": comp["gbd"], "gbs": comp["lane_gbs"],
+                 "modulation": comp["modulation"], "medium": cfg.link_medium,
+                 "fec": comp["fec"]},
+        "summary": comp["summary"],
+        "contracts": comp["measurement_contracts"],
+        "manifest": comp["manifest"],
+        "ber": {"value": comp["ber"], "bound": comp["ber_bound"]},
+        "physics": phys, "checkpoints": chk["checks"],
+        "com": extras.get("com"),
+        "procedures": {"dr4_last_run": extras.get("dr4"),
+                       "dr4_spec": _asdict(DR4_TDECQ_V1)},
+        "registry": registry_snapshot(),
+        "versions": _versions(),
+        "config": cfg.to_dict(),
+        "allowed_claim": ("LabPro model verdicts only; no IEEE/OIF compliance "
+                          "claim (compliance = NOT_ASSESSED for every measure)"),
+    })
+
+
+def standards_report_markdown(rep):
+    """Rendering Markdown del report (per commit di laboratorio e review)."""
+    lines = []
+    prof = rep.get("profile") or {}
+    lane = rep.get("lane") or {}
+    acq = rep.get("acquisition") or {}
+    lines.append(f"# LabPro standards report · {prof.get('interface') or 'custom configuration'}")
+    lines.append("")
+    lines.append(f"- generated: {rep.get('generated_at')}")
+    lines.append(f"- config sha256: `{rep.get('config_sha256')}`")
+    lines.append(f"- acquisition: seed {acq.get('seed')} · depth {acq.get('depth')} · records {acq.get('records')}")
+    lines.append(f"- profile: {prof.get('name') or '—'}"
+                 + (f" · modified: {', '.join(prof.get('modified_fields') or [])}"
+                    if prof.get('modified') else ""))
+    lines.append(f"- lane: {lane.get('gbd')} GBd · {lane.get('modulation')} · {lane.get('medium')} · "
+                 f"FEC {((lane.get('fec') or {}).get('name')) or 'none'}")
+    v = rep.get("versions") or {}
+    lines.append(f"- versions: labpro {v.get('labpro')} · numpy {v.get('numpy')} · scipy {v.get('scipy')} · python {v.get('python')}")
+    lines.append(f"- allowed claim: {rep.get('allowed_claim')}")
+    lines.append("")
+    lines.append("## Measurement contracts")
+    lines.append("")
+    lines.append("| measure | clause | value | limit | model | compliance | basis | evidence |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for row in rep.get("contracts", []):
+        vd = row.get("verdict") or {}
+        lim = row.get("limit") or {}
+        val = vd.get("value")
+        unit = vd.get("unit") or lim.get("unit") or ""
+        val_s = ("—" if val is None else (f"{val:.4g} {unit}".strip()))
+        lim_s = ("—" if lim.get("limit") is None
+                 else f"{lim.get('cmp')} {lim.get('limit'):g} {lim.get('unit') or ''}".strip()
+                 + (f" ({lim.get('confidence')})" if lim.get("confidence") != "published" else ""))
+        lines.append(f"| {row.get('measure')} | {row.get('standard')} · {row.get('clause')} | {val_s} | {lim_s} | "
+                     f"{vd.get('model')} | {vd.get('compliance')} | {vd.get('basis')} | {vd.get('evidence') or ''} |")
+    lines.append("")
+    lines.append("## Physics invariants")
+    lines.append("")
+    for r in (rep.get("physics") or {}).get("rows", []):
+        lines.append(f"- {r.get('status')} · {r.get('name')}: {r.get('value')} (expected {r.get('expected')}, {r.get('tolerance')})")
+    lines.append("")
+    lines.append("## Checkpoints")
+    lines.append("")
+    for c in rep.get("checkpoints", []):
+        lines.append(f"- {c.get('status')} · {c.get('check')}: {c.get('detail') or ''}")
+    dr4 = (rep.get("procedures") or {}).get("dr4_last_run")
+    if dr4:
+        lines.append("")
+        lines.append("## DR4 procedure (last run)")
+        lines.append("")
+        lines.append(f"- {dr4.get('procedure', {}).get('procedure_id')} v{dr4.get('procedure', {}).get('version')} · "
+                     f"seed {dr4.get('seed')} · worst TDECQ {dr4.get('worst_tdecq_db')} dB ± {dr4.get('numerical_uncertainty_db')} dB · "
+                     f"model {dr4.get('model_status')} · compliance {dr4.get('compliance_status')}")
+        for s_ in dr4.get("steps", []):
+            lab = s_.get("label")
+            lab = lab.get("en") if isinstance(lab, dict) else lab
+            lines.append(f"  - {s_.get('status')} · {lab}: {s_.get('evidence')}")
+    lines.append("")
+    lines.append("## Manifest")
+    lines.append("")
+    for m in rep.get("manifest", []):
+        note = m.get("note")
+        note = note.get("en") if isinstance(note, dict) else note
+        lines.append(f"- {m.get('block')}: {m.get('value')} — {m.get('basis')} ({note})")
+    lines.append("")
+    return "\n".join(lines)
 
 
 PANEL_BUILDERS = {

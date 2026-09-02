@@ -12,6 +12,7 @@ import argparse
 import dataclasses
 import inspect
 import json
+import math
 import logging
 import os
 import signal
@@ -30,7 +31,9 @@ import tornado.websocket
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from serdes_sim import LinkConfig, PRESETS, SWEEPABLE_FIELDS, sweep  # noqa: E402
-from serdes_sim.config import STANDARD_PROFILES, STANDARD_PROFILE_META  # noqa: E402
+from serdes_sim.config import (STANDARD_PROFILES, STANDARD_PROFILE_META,  # noqa: E402
+                               field_schema)
+from serdes_sim.standards import jtol_context_mask_ui  # noqa: E402
 from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                jitter_tolerance, jitter_transfer,
                                l2_ont_report, link_train,
@@ -67,6 +70,11 @@ DEFAULT_PERSIST = _default_state_path()
 PERSIST: Path | None = DEFAULT_PERSIST
 
 BENCH = LiveBench()
+# Profilo IEEE/OIF caricato per ultimo: le manopole non lo azzerano, il
+# pannello Compliance mostra "profilo · modificato: campi" invece di "custom".
+PROFILE = {"name": None}
+# Ultimo report della procedura DR4 (entra nel report di conformità).
+LAST_DR4 = {"report": None}
 CLIENTS: set = set()
 MAIN_LOOP = None
 _persist_lock = threading.Lock()
@@ -133,6 +141,59 @@ def config_from_dict(cfg_d: dict):
     return LinkConfig(**cfg_d), dropped
 
 
+def public_cfg(cfg) -> dict:
+    """Config per il client: il testo Touchstone (fino a 8 MiB) non viaggia
+    in ogni broadcast; resta nell'export e nella sessione persistita."""
+    d = cfg.to_dict()
+    text = d.get("s2p_text") or ""
+    d["s2p_text"] = ""
+    d["s2p_bytes"] = len(text.encode("utf-8")) if text else 0
+    return d
+
+
+def profile_state() -> dict:
+    """Profilo attivo e campi modificati (per topbar e pannello Compliance)."""
+    ctx = paneldata.profile_context(BENCH.cfg, PROFILE["name"])
+    return {"name": ctx["name"], "interface": ctx["interface"],
+            "modified_fields": ctx["modified_fields"],
+            "modified": ctx["modified"]}
+
+
+def _reject_json_constant(name):
+    raise ValueError(f"JSON constant {name} is not allowed")
+
+
+class BadParam(ValueError):
+    """Parametro di richiesta non valido: risposta 400 bilingue."""
+
+    def __init__(self, it, en):
+        super().__init__(en)
+        self.it, self.en = it, en
+
+
+def as_number(value, name, lo=None, hi=None, integer=False, default=None):
+    """Coercizione con range → BadParam (400) invece di TypeError (500)."""
+    if value is None:
+        if default is None:
+            raise BadParam(f"{name} mancante", f"{name} missing")
+        return default
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        v = int(value) if integer else float(value)
+        if integer and float(value) != v:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise BadParam(f"{name} non è un numero valido",
+                       f"{name} is not a valid number") from None
+    if not math.isfinite(v):
+        raise BadParam(f"{name} deve essere finito", f"{name} must be finite")
+    if (lo is not None and v < lo) or (hi is not None and v > hi):
+        raise BadParam(f"{name} fuori range [{lo}, {hi}]",
+                       f"{name} out of range [{lo}, {hi}]")
+    return v
+
+
 def persistence_status() -> dict:
     """Public persistence state without exposing the user's filesystem path."""
     if PERSIST is None:
@@ -163,7 +224,12 @@ def load_persisted():
         if int(d.get("version", SESSION_VERSION)) != SESSION_VERSION:
             raise ValueError("unsupported session version")
         cfg, dropped = config_from_dict(d.get("cfg", {}))
+        problems = cfg.validate()
+        if problems:
+            raise ValueError("persisted config invalid: " + "; ".join(problems))
         BENCH.set_config(cfg)
+        PROFILE["name"] = (d.get("profile")
+                           if d.get("profile") in STANDARD_PROFILES else None)
         chamber = d.get("chamber")
         if isinstance(chamber, dict):
             BENCH.set_chamber(**{k: v for k, v in chamber.items()
@@ -194,7 +260,8 @@ def persist():
             tmp.write_text(
                 json.dumps({"version": SESSION_VERSION,
                             "cfg": BENCH.cfg.to_dict(),
-                            "chamber": BENCH.chamber_settings()}),
+                            "chamber": BENCH.chamber_settings(),
+                            "profile": PROFILE["name"]}),
                 encoding="utf-8")
             tmp.chmod(0o600)
             tmp.replace(PERSIST)
@@ -386,12 +453,32 @@ class Base(tornado.web.RequestHandler):
 
     def body_json(self):
         try:
-            body = json.loads(self.request.body or b"{}")
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = json.loads(self.request.body or b"{}",
+                              parse_constant=_reject_json_constant)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             raise tornado.web.HTTPError(400, "malformed JSON body") from None
         if not isinstance(body, dict):
             raise tornado.web.HTTPError(400, "JSON body must be an object")
         return body
+
+    def int_arg(self, name, default, lo=None, hi=None):
+        return as_number(self.get_argument(name, None), name, lo, hi,
+                         integer=True, default=default)
+
+    def float_arg(self, name, default, lo=None, hi=None):
+        return as_number(self.get_argument(name, None), name, lo, hi,
+                         default=default)
+
+    def write_bad(self, it, en):
+        self.set_status(400)
+        self.write_json({"error": it, "error_it": it, "error_en": en})
+
+    def _handle_request_exception(self, e):
+        if isinstance(e, BadParam):
+            if not self._finished:
+                self.write_bad(e.it, e.en)
+            return
+        super()._handle_request_exception(e)
 
     def write_error(self, status_code, **kwargs):
         # contratto d'errore UNIFORME: sempre {"error": ...} — la pagina HTML
@@ -443,9 +530,11 @@ class ApiState(Base):
     def get(self):
         cfg = BENCH.cfg
         self.write_json({
-            "cfg": cfg.to_dict(),
+            "cfg": public_cfg(cfg),
             "defaults": LinkConfig().to_dict(),
             "problems": cfg.validate(),
+            "profile": profile_state(),
+            "field_schema": field_schema(),
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
             "presets": [{"name": k, "desc": v[1]} for k, v in PRESETS.items()],
@@ -468,9 +557,11 @@ class ApiSweep(Base):
         if field not in SWEEPABLE_FIELDS:
             self.set_status(400)
             return self.write_json({"error": f"campo non sweepable: {field}"})
-        lo = float(body.get("lo", SWEEPABLE_FIELDS[field][1]))
-        hi = float(body.get("hi", SWEEPABLE_FIELDS[field][2]))
-        n = max(3, min(int(body.get("n", 9)), 15))
+        lo = as_number(body.get("lo"), "lo", default=SWEEPABLE_FIELDS[field][1])
+        hi = as_number(body.get("hi"), "hi", default=SWEEPABLE_FIELDS[field][2])
+        n = as_number(body.get("n"), "n", 3, 15, integer=True, default=9)
+        if hi <= lo:
+            raise BadParam("hi deve essere > lo", "hi must be > lo")
         import numpy as np
         cfg = BENCH.cfg
         try:
@@ -492,12 +583,21 @@ class ApiJtol(Base):
     async def post(self):
         body = self.body_json()
         freqs = body.get("freqs_mhz") or [50, 200, 800, 2000]
+        if not isinstance(freqs, list):
+            raise BadParam("freqs_mhz deve essere una lista", "freqs_mhz must be a list")
         # sotto ~3 cicli per record la "tolleranza" misurerebbe solo un offset
         # quasi statico: il record è troppo corto (limite dichiarato)
         record_s = BENCH.cfg.n_symbols / BENCH.cfg.symbol_rate_hz
         f_min_mhz = 3.0 / record_s / 1e6
-        freqs = [max(float(f), f_min_mhz) for f in freqs][:6]
-        target = float(body.get("target_ber", 4e-2))
+        freqs = [max(as_number(f, "freqs_mhz", 0.001, 1e5), f_min_mhz)
+                 for f in freqs][:6]
+        target = as_number(body.get("target_ber"), "target_ber", 1e-9, 0.49,
+                           default=4e-2)
+        mask_floor = as_number(body.get("mask_floor_ui"), "mask_floor_ui",
+                               0.001, 5.0, default=None) if body.get("mask_floor_ui") is not None else None
+        mask_corner = (as_number(body.get("mask_corner_mhz"), "mask_corner_mhz",
+                                 0.001, 1e5)
+                       if body.get("mask_corner_mhz") is not None else None)
         cfg = BENCH.cfg
         points, ok = await run_experiment(
             self, "JTOL",
@@ -506,11 +606,20 @@ class ApiJtol(Base):
         if not ok:
             return
         ui_ps = 1e12 / BENCH.cfg.symbol_rate_hz
+        corner = mask_corner or (BENCH.cfg.cdr_bw * BENCH.cfg.symbol_rate_hz / 1e6)
         for pt in points:
             pt["amp_ps"] = (pt["amp_ui"] * ui_ps
                             if pt.get("amp_ui") is not None else None)
+            pt["mask_ui"] = jtol_context_mask_ui(pt["freq_mhz"], corner, mask_floor)
+            pt["above_mask"] = (pt["amp_ui"] is not None
+                                and pt["amp_ui"] >= pt["mask_ui"])
         self.write_json({"ok": True, "target_ber": target,
-                         "ui_ps": ui_ps, "points": paneldata.J(points)})
+                         "ui_ps": ui_ps, "points": paneldata.J(points),
+                         "mask": {"kind": "context", "normative": False,
+                                  "floor_ui": (mask_floor if mask_floor is not None
+                                               else jtol_context_mask_ui(1e9, corner)),
+                                  "corner_mhz": corner,
+                                  "slope_db_per_decade": -20.0}})
 
 
 class ApiConfig(Base):
@@ -525,17 +634,21 @@ class ApiConfig(Base):
                     updates[name] = tuple(float(v) for v in updates[name])
             new = cfg.with_updates(**updates)
         except TypeError:
-            self.set_status(400)
-            return self.write_json({"error": "campo sconosciuto o valore non valido"})
-        problems = new.validate()
+            return self.write_bad("campo sconosciuto o valore non valido",
+                                  "unknown field or invalid value")
+        try:
+            problems = new.validate()
+        except (TypeError, ValueError):
+            problems = ["valore di tipo non valido"]
         if problems:
-            self.set_status(400)
-            return self.write_json({"error": "; ".join(problems)})
+            return self.write_bad("; ".join(problems), "; ".join(problems))
         BENCH.set_config(new)
         persist()
-        broadcast({"type": "config", "cfg": new.to_dict()})
+        broadcast({"type": "config", "cfg": public_cfg(new),
+                   "profile": profile_state()})
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
-        self.write_json({"ok": True, "cfg": new.to_dict()})
+        self.write_json({"ok": True, "cfg": public_cfg(new),
+                         "profile": profile_state()})
 
 
 class ApiConfigExport(Base):
@@ -544,7 +657,8 @@ class ApiConfigExport(Base):
         payload = {"version": SESSION_VERSION,
                    "exported_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
                    "cfg": BENCH.cfg.to_dict(),
-                   "chamber": BENCH.chamber_settings()}
+                   "chamber": BENCH.chamber_settings(),
+                   "profile": PROFILE["name"]}
         self.set_header("Content-Type", "application/json")
         self.set_header(
             "Content-Disposition",
@@ -562,26 +676,40 @@ class ApiConfigImport(Base):
             return self.write_json(
                 {"error": "payload senza 'cfg': usare un file esportato "
                           "dal banco (⤓ CFG)"})
+        file_version = body.get("version")
+        if file_version is not None:
+            try:
+                if int(file_version) > SESSION_VERSION:
+                    return self.write_bad(
+                        f"file di versione {file_version}: più recente di questo LabPro ({SESSION_VERSION})",
+                        f"file version {file_version}: newer than this LabPro ({SESSION_VERSION})")
+            except (TypeError, ValueError):
+                return self.write_bad("campo version non valido", "invalid version field")
         try:
             new, dropped = config_from_dict(cfg_d)
         except (TypeError, ValueError):
-            self.set_status(400)
-            return self.write_json({"error": "config non valida"})
-        problems = new.validate()
+            return self.write_bad("config non valida", "invalid config")
+        try:
+            problems = new.validate()
+        except (TypeError, ValueError):
+            problems = ["valore di tipo non valido"]
         if problems:
-            self.set_status(400)
-            return self.write_json({"error": "; ".join(problems)})
+            return self.write_bad("; ".join(problems), "; ".join(problems))
         BENCH.set_config(new)
+        PROFILE["name"] = (body.get("profile")
+                           if body.get("profile") in STANDARD_PROFILES else None)
         chamber = body.get("chamber")
         if isinstance(chamber, dict):
             BENCH.set_chamber(**{k: v for k, v in chamber.items()
                                  if k in CHAMBER_KEYS})
         persist()
-        broadcast({"type": "config", "cfg": new.to_dict()})
+        broadcast({"type": "config", "cfg": public_cfg(new),
+                   "profile": profile_state()})
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
-        self.write_json({"ok": True, "cfg": new.to_dict(),
+        self.write_json({"ok": True, "cfg": public_cfg(new),
+                         "profile": profile_state(),
                          "dropped_fields": dropped,
-                         "file_version": body.get("version")})
+                         "file_version": file_version})
 
 
 class ApiPreset(Base):
@@ -592,18 +720,23 @@ class ApiPreset(Base):
             self.set_status(400)
             return self.write_json({"error": "preset/profilo sconosciuto"})
         BENCH.set_config(source[name][0])
+        PROFILE["name"] = name if source is STANDARD_PROFILES else None
         persist()
-        broadcast({"type": "config", "cfg": BENCH.cfg.to_dict()})
+        broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg),
+                   "profile": profile_state()})
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
-        self.write_json({"ok": True, "cfg": BENCH.cfg.to_dict()})
+        self.write_json({"ok": True, "cfg": public_cfg(BENCH.cfg),
+                         "profile": profile_state()})
 
 
 class ApiRun(Base):
-    def post(self):
+    async def post(self):
         if self.body_json().get("running"):
             BENCH.start()
         else:
-            BENCH.stop()
+            # stop() attende il record in volo (fino a 3 s): fuori dall'IOLoop
+            await tornado.ioloop.IOLoop.current().run_in_executor(
+                None, BENCH.stop)
         broadcast({"type": "run", "running": BENCH.running})
         self.write_json({"ok": True, "running": BENCH.running})
 
@@ -657,7 +790,8 @@ class ApiS2P(Base):
                 updates["s4p_pairs"] = body["pairs"]
             BENCH.set_config(BENCH.cfg.with_updates(**updates))
             persist()
-            broadcast({"type": "config", "cfg": BENCH.cfg.to_dict()})
+            broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg),
+                       "profile": profile_state()})
         self.write_json({"ok": True, "points": len(f), "z0": z0,
                          "n_ports": n_ports, "diag": paneldata.J(diag)})
 
@@ -710,7 +844,7 @@ class ApiAnlt(Base):
         if body.get("apply") and out["lt"]["link_up_after"]:
             BENCH.set_config(cfg_after)
             persist()
-            broadcast({"type": "config", "cfg": cfg_after.to_dict()})
+            broadcast({"type": "config", "cfg": public_cfg(cfg_after), "profile": profile_state()})
             broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
             out["applied"] = True
         else:
@@ -805,7 +939,7 @@ class ApiTrain(Base):
         new_cfg, steps, base, final = res
         BENCH.set_config(new_cfg)
         persist()
-        broadcast({"type": "config", "cfg": new_cfg.to_dict()})
+        broadcast({"type": "config", "cfg": public_cfg(new_cfg), "profile": profile_state()})
         if was_running:
             BENCH.start()
         self.write_json({"ok": True, "steps": paneldata.J(steps),
@@ -813,7 +947,7 @@ class ApiTrain(Base):
                          "verification_before": steps[-1].get("verification_before"),
                          "verification_after": steps[-1].get("verification_after"),
                          "accepted": steps[-1].get("accepted", True),
-                         "cfg": new_cfg.to_dict()})
+                         "cfg": public_cfg(new_cfg)})
 
 
 class ApiTraffic(Base):
@@ -858,7 +992,8 @@ class ApiDr4Procedure(Base):
             lambda evt: run_dr4_tdecq_e2e(seed=seed, cancel=evt))
         if not ok:
             return
-        self.write_json({"ok": True, "report": paneldata.J(report)})
+        LAST_DR4["report"] = paneldata.J(report)
+        self.write_json({"ok": True, "report": LAST_DR4["report"]})
 
 
 class ApiSensitivity(Base):
@@ -930,11 +1065,16 @@ class ApiPanel(Base):
         kwargs = {}
         params = inspect.signature(builder).parameters
         if "node" in params:
-            kwargs["node"] = self.get_argument("node", "vctle")
+            node = self.get_argument("node", "vctle")
+            if node not in paneldata.NODES:
+                raise BadParam("nodo sconosciuto", "unknown node")
+            kwargs["node"] = node
         if "n_traces" in params:
-            kwargs["n_traces"] = int(self.get_argument("n", "500"))
+            kwargs["n_traces"] = self.int_arg("n", 500, 1, 5000)
         if "nperseg" in params:
-            kwargs["nperseg"] = int(self.get_argument("nperseg", "4096"))
+            kwargs["nperseg"] = self.int_arg("nperseg", 4096, 64, 65536)
+        if "profile" in params:
+            kwargs["profile"] = PROFILE["name"]
 
         def work():
             # live: ultimo record del bench (nuovo rumore); ref: sim full
@@ -982,6 +1122,47 @@ class ApiPanel(Base):
         self.write_json(payload)
 
 
+class ApiReport(Base):
+    """Report di conformità tracciabile (JSON o Markdown) dello stesso
+    record servito ai pannelli: hash config, seed, profilo, contratti con
+    verdetti, invarianti fisici, checkpoint, ultima procedura DR4."""
+
+    async def get(self):
+        fmt = self.get_argument("format", "json")
+        if fmt not in ("json", "md"):
+            raise BadParam("format deve essere json o md", "format must be json or md")
+        cfg, live_sim, records, _ = BENCH.capture()
+        profile = PROFILE["name"]
+        dr4 = LAST_DR4["report"]
+
+        def work():
+            sim = live_sim if cfg_matches_live(live_sim, cfg) else paneldata.ref_sim(cfg)
+            extras = {"records": records, "dr4": dr4}
+            if cfg.link_medium == "copper" and cfg.modulation == "PAM4":
+                from serdes_sim.blocks.com import com_report
+                ctx = paneldata.profile_context(cfg, profile)
+                extras["com"] = paneldata.J(com_report(cfg, interface=ctx["interface"]))
+            return paneldata.standards_report(sim, cfg, profile, extras)
+
+        try:
+            rep = await tornado.ioloop.IOLoop.current().run_in_executor(
+                REF_POOL, work)
+        except Exception:
+            log.exception("Standards report failed")
+            self.set_status(500)
+            return self.write_json({"error": "errore interno del report"})
+        import time as _time
+        stamp = _time.strftime("%Y%m%d_%H%M%S")
+        if fmt == "md":
+            self.set_header("Content-Type", "text/markdown; charset=UTF-8")
+            self.set_header("Content-Disposition",
+                            f'attachment; filename="labpro_compliance_{stamp}.md"')
+            return self.finish(paneldata.standards_report_markdown(rep))
+        self.set_header("Content-Disposition",
+                        f'attachment; filename="labpro_compliance_{stamp}.json"')
+        self.write_json(rep)
+
+
 class ApiScope(Base):
     """Acquisizione DCA coerente: fino a quattro nodi dallo stesso record."""
     async def get(self):
@@ -994,7 +1175,7 @@ class ApiScope(Base):
         cfg, live_sim, records, running = BENCH.capture()
         source = self.get_argument("source", "auto")
         rf = self.get_argument("rf", "")
-        n_traces = min(int(self.get_argument("n", "600")), 800)
+        n_traces = min(self.int_arg("n", 600, 1, 5000), 800)
         # vista FlexDCA: eye (default) oppure wave = Oscilloscope mode,
         # finestra continua del record navigabile con start/span [UI]
         view = self.get_argument("view", "eye")
@@ -1073,7 +1254,7 @@ class WS(tornado.websocket.WebSocketHandler):
         CLIENTS.add(self)
         _ws_send(self, json.dumps({
             "type": "hello",
-            "cfg": BENCH.cfg.to_dict(),
+            "cfg": public_cfg(BENCH.cfg), "profile": profile_state(),
             "running": BENCH.running,
             "acc": paneldata.J(BENCH.snapshot()),
             "experiment": EXPERIMENT.current,
@@ -1131,6 +1312,7 @@ def make_app():
         (r"/api/inject", ApiInject),
         (r"/api/scope", ApiScope),
         (r"/api/panel/(\w+)", ApiPanel),
+        (r"/api/report/standards", ApiReport),
         (r"/ws", WS),
         (r"/static/(.*)", tornado.web.StaticFileHandler,
          {"path": str(STATIC_DIR)}),

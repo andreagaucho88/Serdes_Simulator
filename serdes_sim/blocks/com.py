@@ -26,21 +26,31 @@ from functools import lru_cache
 import numpy as np
 from scipy import signal, stats
 
+from ..standards import (COM_DER0, COM_KR1_THRESHOLD_DB, ERROR, FAIL,
+                         NOT_APPLICABLE, NOT_ASSESSED, PASS, RLM_MIN_8023CK,
+                         evaluate_limit, limits_for_interface, verdict)
 from .channel import channel_response
 
 
 @dataclass(frozen=True)
 class Clause93aKr1Parameters:
-    """Public 802.3ck D3.1 100GBASE-KR1 COM configuration anchors."""
+    """100GBASE-KR1 COM parameter set (IEEE 802.3ck Clause 162).
+
+    Values are those of the public COM 3.70 configuration published with
+    the 802.3ck D3.1 KR draft; table numbers of the ratified text are not
+    re-verified here (see ``parameter_provenance`` in the report).
+    """
 
     standard: str = "IEEE 802.3ck"
-    clause: str = "Annex 93A (100GBASE-KR1 parameter set)"
-    source_version: str = "IEEE 802.3 COM 3.70 · 3ck D3.1 KR · 2022-03-23"
+    clause: str = "Annex 93A (100GBASE-KR1 parameter set, Clause 162)"
+    source_version: str = ("IEEE Std 802.3ck-2022 Clause 162 parameter set as "
+                           "published in COM 3.70 / D3.1 KR (2022-03-23); "
+                           "table numbers to verify")
     symbol_rate_hz: float = 53.125e9
     levels: int = 4
     samples_per_ui: int = 32
-    der0: float = 1e-4
-    pass_threshold_db: float = 3.0
+    der0: float = COM_DER0
+    pass_threshold_db: float = COM_KR1_THRESHOLD_DB
     victim_amplitude_v: float = 0.413
     fext_amplitude_v: float = 0.413
     next_amplitude_v: float = 0.608
@@ -50,11 +60,23 @@ class Clause93aKr1Parameters:
     tx_sndr_db: float = 33.0
     sigma_rj_ui: float = 0.01
     a_dd_ui: float = 0.02
-    r_lm: float = 0.95
+    r_lm: float = RLM_MIN_8023CK
     dfe_taps: int = 12
     ctle_zero_hz: float = 21.25e9
     ctle_pole1_hz: float = 21.25e9
     ctle_pole2_hz: float = 53.125e9
+    # Low-frequency CTLE stage of the 802.3ck reference receiver
+    # (Equation 93A-22 as amended): (g_DC2 + j f/f_LF)/(1 + j f/f_LF).
+    ctle_gdc2_db_min: float = -6.0
+    ctle_gdc2_db_max: float = 0.0
+    ctle_gdc2_step_db: float = 1.0
+    ctle_f_lf_hz: float = 53.125e9 / 40.0
+    ctle_gdc_db_min: float = -20.0
+    ctle_gdc_db_max: float = 0.0
+    ctle_gdc_step_db: float = 1.0
+    # Two-stage equalizer search: every (g_DC, g_DC2) point is ranked with
+    # the vectorized nominal-phase FOM; only the leaders get the fine search.
+    search_keep_combos: int = 4
     package_gamma0_per_mm: float = 0.0
     package_a1_ns_half_per_mm: float = 0.0009909
     package_a2_ns_per_mm: float = 0.0002772
@@ -89,11 +111,17 @@ def package_s21(f_hz, length_mm, zc_ohm=87.5, z0_ohm=50.0,
 
 
 def _reference_tx_filter(f_hz, p=KR1_93A):
-    # COM 3.70 implementation of Equation 93A-46.  f is expressed in GHz
-    # and transition time in ns in the public MATLAB code.
+    """Gaussian transmitter filter, Equation 93A-46.
+
+    A Gaussian impulse response with 20–80 % rise time T_r has
+    sigma_t = T_r/1.6832, hence |H(f)| = exp(-2·(pi·f·T_r/1.6832)^2).  The
+    factor 2 was missing in earlier LabPro releases (which made the filter
+    the response of a rise time T_r/sqrt(2)); it is restored here and the
+    equation form is what the registry test guards.
+    """
     f_ghz = np.abs(np.asarray(f_hz)) / 1e9
     tr_ns = p.tx_transition_time_s * 1e9
-    return np.exp(-(np.pi * f_ghz * tr_ns / 1.6832) ** 2)
+    return np.exp(-2.0 * (np.pi * f_ghz * tr_ns / 1.6832) ** 2)
 
 
 def _reference_rx_filter(f_hz, p=KR1_93A):
@@ -104,11 +132,15 @@ def _reference_rx_filter(f_hz, p=KR1_93A):
     return np.polyval(b, s) / np.polyval(a, s)
 
 
-def _ctle(f_hz, gdc_db, p=KR1_93A):
+def _ctle(f_hz, gdc_db, p=KR1_93A, gdc2_db=0.0):
+    """Reference CTLE (Equation 93A-22 with the 802.3ck low-frequency stage)."""
     f = np.asarray(f_hz)
-    return ((10 ** (gdc_db / 20) + 1j * f / p.ctle_zero_hz)
-            / ((1 + 1j * f / p.ctle_pole1_hz)
-               * (1 + 1j * f / p.ctle_pole2_hz)))
+    hf = ((10 ** (gdc_db / 20) + 1j * f / p.ctle_zero_hz)
+          / ((1 + 1j * f / p.ctle_pole1_hz)
+             * (1 + 1j * f / p.ctle_pole2_hz)))
+    lf = ((10 ** (gdc2_db / 20) + 1j * f / p.ctle_f_lf_hz)
+          / (1 + 1j * f / p.ctle_f_lf_hz))
+    return hf * lf
 
 
 def _tx_ffe_candidates():
@@ -185,7 +217,9 @@ def _candidate_metrics(pulse, taps, p=KR1_93A):
         idx = main + ks * sps
         h_j = (eq[idx + 1] - eq[idx - 1]) * sps / 2.0
         sigma_rjit = p.sigma_rj_ui * sigma_x * float(np.linalg.norm(h_j))
-        sigma_tx = cursor * 10 ** (-p.tx_sndr_db / 20)
+        # Equation 93A-30 form: transmitter noise referred to one level
+        # step h(0)/(L-1), not to the full cursor amplitude.
+        sigma_tx = cursor / (p.levels - 1) * 10 ** (-p.tx_sndr_db / 20)
         score = a_s / max(np.linalg.norm([sigma_isi, sigma_rjit, sigma_tx]), 1e-30)
         row = dict(main=main, a_s=a_s, cursor=cursor, residual=residual,
                    h_j=h_j, sigma_isi=sigma_isi,
@@ -197,22 +231,37 @@ def _candidate_metrics(pulse, taps, p=KR1_93A):
 
 
 def _rank_ffe_candidates(pulse, p=KR1_93A, keep=18):
+    """Vectorized full-grid FOM preselection at the nominal cursor phase."""
+    return _rank_ffe_candidates_scored(pulse, p, keep)[0]
+
+
+# Coarse sub-grid (every 9th prescribed point, ~480 rows) used only to rank
+# the CTLE (g_DC, g_DC2) combinations; the full grid is re-run on the leaders.
+_FFE_GRID_COARSE = np.ascontiguousarray(_FFE_GRID[::9])
+
+
+def _rank_ffe_candidates_scored(pulse, p=KR1_93A, keep=18, grid=None):
     """Vectorized full-grid FOM preselection at the nominal cursor phase.
 
     Annex 93A uses FOM to choose equalizer candidates before the final PDF.
     All prescribed tap-grid points are evaluated here.  The best candidates
     then receive the fine 1/32-UI sampling-phase search in
-    :func:`_candidate_metrics`.
+    :func:`_candidate_metrics`.  Returns ``(leaders, best_score)`` so the
+    same ranking can order the CTLE (g_DC, g_DC2) grid.
     """
+    grid = _FFE_GRID if grid is None else grid
     sps = p.samples_per_ui
     peak = int(np.argmax(np.abs(pulse)))
     ks = np.arange(-28, 81)
     rels = np.asarray([-3, -2, -1, 0, 1])
     idx = peak + ks[None, :] * sps - rels[:, None] * sps
     if np.any(idx < 1) or np.any(idx >= len(pulse) - 1):
-        return _FFE_GRID[:keep]
-    basis = pulse[idx]
-    curs = _FFE_GRID @ basis
+        return grid[:keep], -np.inf
+    # Fresh contiguous copies + np.dot: numpy's matmul dispatch (and dot on
+    # fancy-indexed operands) is ~100x slower for these K=5 shapes on
+    # OpenBLAS (10 ms vs 0.07 ms) and used to dominate the COM search.
+    basis = np.array(pulse[idx], order="C")
+    curs = np.dot(grid, basis)
     main_col = int(np.flatnonzero(ks == 0)[0])
     cursor = curs[:, main_col]
     sign = np.where(cursor < 0, -1.0, 1.0)
@@ -228,17 +277,17 @@ def _rank_ffe_candidates(pulse, p=KR1_93A, keep=18):
                       / (3 * (p.levels - 1) ** 2))
     sigma_isi = sigma_x * np.linalg.norm(residual, axis=1)
 
-    early = _FFE_GRID @ pulse[idx - 1]
-    late = _FFE_GRID @ pulse[idx + 1]
+    early = np.dot(grid, np.array(pulse[idx - 1], order="C"))
+    late = np.dot(grid, np.array(pulse[idx + 1], order="C"))
     h_j = (late - early) * (sps / 2.0) * sign[:, None]
     sigma_rjit = p.sigma_rj_ui * sigma_x * np.linalg.norm(h_j, axis=1)
     a_s = p.r_lm * cursor / (p.levels - 1)
-    sigma_tx = cursor * 10 ** (-p.tx_sndr_db / 20)
+    sigma_tx = cursor / (p.levels - 1) * 10 ** (-p.tx_sndr_db / 20)
     denom = np.sqrt(sigma_isi ** 2 + sigma_rjit ** 2 + sigma_tx ** 2)
     score = np.where(cursor > 0, a_s / np.maximum(denom, 1e-30), -np.inf)
     take = np.argpartition(score, -min(keep, len(score)))[-keep:]
     take = take[np.argsort(score[take])[::-1]]
-    return _FFE_GRID[take]
+    return grid[take], float(score[take[0]])
 
 
 def _quantized_pmf(cursors, levels=4, bin_size=1e-5):
@@ -320,25 +369,68 @@ def _xtalk_cursors(cfg, f_pos, rx, ctle, tx, tx_ffe, n, p=KR1_93A):
     return np.asarray(out)
 
 
+def _default_com_limit(interface):
+    """Registry limit governing the COM verdict.
+
+    Without an active profile the 100GBASE-KR1 entry applies, because that
+    is the only parameter set implemented; the report says so explicitly.
+    """
+    lims = limits_for_interface(interface)
+    if "com" in lims:
+        return lims["com"], bool(interface)
+    return limits_for_interface("100GBASE-KR1")["com"], False
+
+
 @lru_cache(maxsize=24)
-def com_report(cfg, p: Clause93aKr1Parameters = KR1_93A):
-    """Return a standards-scoped COM report for a :class:`LinkConfig`."""
-    applicable = (cfg.link_medium == "copper" and cfg.modulation == "PAM4"
-                  and abs(cfg.symbol_rate_hz / p.symbol_rate_hz - 1) < 1e-6)
+def com_report(cfg, p: Clause93aKr1Parameters = KR1_93A, interface=None):
+    """Return a standards-scoped COM report for a :class:`LinkConfig`.
+
+    ``interface`` is the active profile interface name (``"100GBASE-KR1"``,
+    ``"100GAUI-1 C2M"``, ...).  It selects the registry limit and blocks the
+    computation where the clause does not use COM at all.
+    """
+    lim, from_profile = _default_com_limit(interface)
+    rate_ok = abs(cfg.symbol_rate_hz / p.symbol_rate_hz - 1) < 1e-6
+    medium_ok = cfg.link_medium == "copper" and cfg.modulation == "PAM4"
+    clause_blocks = lim.implementation == "not-applicable"
+    applicable = bool(medium_ok and rate_ok and not clause_blocks)
     base = {
         "standard": p.standard, "clause": p.clause,
         "source_version": p.source_version,
-        "applicable": bool(applicable), "normative": False,
-        "compliance_result": "NOT ASSESSED",
+        "applicable": applicable, "normative": False,
+        "compliance_result": NOT_ASSESSED if applicable else NOT_APPLICABLE,
         "parameters": asdict(p),
+        "parameter_provenance": [
+            {"name": "der0 / threshold / R_LM", "source": "registry (standards.py)",
+             "confidence": "published"},
+            {"name": "A_v, A_fe, A_ne, T_r, eta0, SNR_TX, sigma_RJ, A_DD, N_b, "
+                     "package a1/a2/tau, f_z/f_p1/f_p2, g_DC range",
+             "source": "COM 3.70 configuration published with 802.3ck D3.1 KR",
+             "confidence": "to-verify"},
+            {"name": "g_DC2 range, f_LF", "source": "802.3ck reference receiver "
+             "low-frequency stage (public presentations)", "confidence": "to-verify"},
+        ],
         "reference_plane": "passive electrical channel, package TX to package RX",
+        "limit": lim.as_dict(), "limit_from_profile": from_profile,
+        "interface": interface,
     }
     if not applicable:
-        base.update({
-            "reason": ("Annex 93A KR1 is enabled only for 53.125 GBd PAM4 "
-                       "copper; load the IEEE 802.3ck 100GBASE-KR1 profile."),
-            "model_result": "NOT APPLICABLE",
-        })
+        if clause_blocks:
+            reason = {"it": lim.note_it, "en": lim.note_en}
+        elif not medium_ok:
+            reason = {"it": "COM Annex 93A vale per canali elettrici PAM4: carica "
+                            "un profilo 802.3ck 100GBASE-KR1 o un banco copper.",
+                      "en": "Annex 93A COM applies to PAM4 electrical channels: load "
+                            "the IEEE 802.3ck 100GBASE-KR1 profile or a copper bench."}
+        else:
+            reason = {"it": "Il set di parametri implementato è quello 100GBASE-KR1 "
+                            "a 53.125 GBd; a questo rate il calcolo non è applicabile.",
+                      "en": "The implemented parameter set is the 53.125 GBd "
+                            "100GBASE-KR1 one; at this rate the computation is not "
+                            "applicable."}
+        base.update({"reason": reason, "model_result": NOT_APPLICABLE,
+                     "verdict": evaluate_limit(lim, None, applicable=False,
+                                               evidence=reason["en"])})
         return base
 
     sps = p.samples_per_ui
@@ -352,22 +444,35 @@ def com_report(cfg, p: Clause93aKr1Parameters = KR1_93A):
         {"name": "short", "tx_mm": 12.0, "rx_mm": 12.0, "zc_ohm": 87.5},
         {"name": "long", "tx_mm": 31.0, "rx_mm": 29.0, "zc_ohm": 92.5},
     ]
+    gdc_grid = np.arange(p.ctle_gdc_db_min, p.ctle_gdc_db_max + 1e-9,
+                         p.ctle_gdc_step_db)
+    gdc2_grid = np.arange(p.ctle_gdc2_db_min, p.ctle_gdc2_db_max + 1e-9,
+                          p.ctle_gdc2_step_db)
     reports = []
     for case in package_cases:
         h_pkg = (package_s21(f_pos, case["tx_mm"], case["zc_ohm"], params=p)
                  * package_s21(f_pos, case["rx_mm"], case["zc_ohm"], params=p))
+        base_resp = h_tx * h_pkg * h_ch * h_rx * p.victim_amplitude_v
+        # Stage 1: rank the whole (g_DC, g_DC2) grid with the vectorized
+        # nominal-phase FOM (all prescribed TX-FFE points evaluated).
+        combos = []
+        for gdc in gdc_grid:
+            for gdc2 in gdc2_grid:
+                h_ct = _ctle(f_pos, float(gdc), p, float(gdc2))
+                pulse0 = _pulse_from_response(base_resp * h_ct, n, sps)
+                _, score = _rank_ffe_candidates_scored(
+                    pulse0, p, keep=1, grid=_FFE_GRID_COARSE)
+                combos.append((score, float(gdc), float(gdc2), h_ct, pulse0))
+        combos.sort(key=lambda c: -c[0])
+        # Stage 2: full prescribed TX-FFE grid on the leading CTLE settings,
+        # then the fine 1/32-UI phase search for their FOM leaders.
         best = None
-        for gdc in np.arange(-20.0, 0.1, 1.0):
-            h_ct = _ctle(f_pos, gdc, p)
-            pulse0 = _pulse_from_response(
-                h_tx * h_pkg * h_ch * h_rx * h_ct * p.victim_amplitude_v,
-                n, sps)
-            # Vectorized FOM preselection evaluates the complete prescribed
-            # grid; only its leaders need the fine 1/32-UI phase search.
-            for taps in _rank_ffe_candidates(pulse0, p):
+        for _score, gdc, gdc2, h_ct, pulse0 in combos[:p.search_keep_combos]:
+            leaders, _ = _rank_ffe_candidates_scored(pulse0, p)
+            for taps in leaders:
                 row = _candidate_metrics(pulse0, taps, p)
                 if row is not None and (best is None or row["score"] > best["score"]):
-                    best = dict(row, taps=taps, gdc_db=float(gdc), h_ct=h_ct)
+                    best = dict(row, taps=taps, gdc_db=gdc, gdc2_db=gdc2, h_ct=h_ct)
         if best is None:
             reports.append(dict(case=case, error="no valid equalizer setting"))
             continue
@@ -405,7 +510,7 @@ def com_report(cfg, p: Clause93aKr1Parameters = KR1_93A):
             "sigma_receiver_mv": 1e3 * sigma_n,
             "sigma_tx_mv": 1e3 * best["sigma_tx"],
             "sigma_rj_mv": 1e3 * best["sigma_rjit"],
-            "ctle_gdc_db": best["gdc_db"],
+            "ctle_gdc_db": best["gdc_db"], "ctle_gdc2_db": best["gdc2_db"],
             "tx_ffe": [float(v) for v in best["taps"]],
             "dfe_taps": [float(v) for v in best["dfe_taps"]],
             "pulse_t_ui": ((np.arange(-10 * sps, 18 * sps) / sps)).tolist(),
@@ -415,25 +520,38 @@ def com_report(cfg, p: Clause93aKr1Parameters = KR1_93A):
 
     valid = [r for r in reports if "com_db" in r]
     if not valid:
-        base.update({"model_result": "ERROR", "package_cases": reports,
-                     "reason": "equalizer search produced no valid case"})
+        base.update({"model_result": ERROR, "package_cases": reports,
+                     "reason": {"it": "la ricerca dell'equalizzatore non ha prodotto casi validi",
+                                "en": "equalizer search produced no valid case"},
+                     "verdict": verdict(ERROR, basis="model-limit",
+                                        evidence="equalizer search produced no valid case")})
         return base
     worst = min(valid, key=lambda r: r["com_db"])
+    threshold = (float(lim.limit) if lim.limit is not None
+                 and lim.confidence == "published" else p.pass_threshold_db)
+    v = evaluate_limit(
+        lim, float(worst["com_db"]),
+        evidence=(f"worst package case '{worst['case']['name']}': "
+                  f"COM {worst['com_db']:.2f} dB vs ≥ {threshold:g} dB "
+                  f"(DER₀ {p.der0:g})"))
     base.update({
         "com_db": worst["com_db"], "fom_db": worst["fom_db"],
-        "threshold_db": p.pass_threshold_db,
-        "margin_to_threshold_db": worst["com_db"] - p.pass_threshold_db,
-        "model_result": ("MODEL PASS" if worst["com_db"] >= p.pass_threshold_db
-                         else "MODEL FAIL"),
+        "threshold_db": threshold,
+        "margin_to_threshold_db": worst["com_db"] - threshold,
+        "model_result": PASS if worst["com_db"] >= threshold else FAIL,
+        "verdict": v,
         "worst_case": worst, "package_cases": reports,
         "input_kind": ("measured Touchstone victim" if cfg.use_s2p_channel
                        and cfg.s2p_text.strip() else "analytic victim channel"),
         "deviations": [
             "single victim response; no independent NEXT/FEXT S-parameter files",
             "package pad/ball capacitances and full multi-reflection cascade omitted",
-            "all TX-FFE grid points are ranked at nominal phase; only FOM leaders receive the fine phase search",
+            "two-stage search: every (g_DC, g_DC2, TX-FFE) grid point is ranked at "
+            "nominal phase; only the FOM leaders receive the fine phase search",
             "asymmetric/floating DFE groups from the reference program are reduced to the prescribed magnitude caps",
             "LabPro analytic aggressors are used only when NEXT/FEXT knobs are enabled",
+            "g_DC2/f_LF stage values and the 802.3ck table numbers are quoted from public material (to verify)",
+            "no external golden channel with a published COM value has been correlated",
             "therefore the 3 dB comparison is a model diagnostic, never compliance",
         ],
     })

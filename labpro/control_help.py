@@ -35,8 +35,9 @@ _add("symbol_rate_hz", "Stimulus / acquisition", "PPG → analog grid",
      "segnale, la perdita del canale a Nyquist si sposta di frequenza. È la "
      "manopola col raggio d'azione più ampio del banco. Sul banco: raddoppia "
      "il rate a parità di banda TIA/driver e guarda gli edge afflosciarsi "
-     "nello Scope WAVE e l'occhio chiudersi; i profili IEEE usano 26.5625 "
-     "GBd (100G/lane KP4) e 53.125 GBd (200G/lane).",
+     "nello Scope WAVE e l'occhio chiudersi; i profili IEEE PAM4 usano "
+     "26.5625 GBd (50G/lane, 802.3cd/bs), 53.125 GBd (100G/lane, "
+     "802.3ck/cu/df) e 106.25 GBd (200G/lane, P802.3dj).",
      "lane symbol rate: it fixes the UI duration (at 56 GBd one UI lasts "
      "17.86 ps) and therefore rescales EVERYTHING defined in UI or relative "
      "to Nyquist: jitter in fs becomes a different UI fraction, the same "
@@ -44,7 +45,8 @@ _add("symbol_rate_hz", "Stimulus / acquisition", "PPG → analog grid",
      "Nyquist moves in frequency. It is the widest-reaching knob on the "
      "bench. On the bench: double the rate at fixed TIA/driver bandwidth "
      "and watch edges slump in the WAVE Scope and the eye close; IEEE "
-     "profiles use 26.5625 GBd (100G/lane KP4) and 53.125 GBd (200G/lane).",
+     "PAM4 profiles use 26.5625 GBd (50G/lane, 802.3cd/bs), 53.125 GBd "
+     "(100G/lane, 802.3ck/cu/df) and 106.25 GBd (200G/lane, P802.3dj).",
      "UI=1/Rs; f_Nyq=Rs/2")
 _add("analog_sps", "Stimulus / acquisition", "PPG → analog grid",
      "campioni della griglia analogica per UI: è la risoluzione con cui il "
@@ -174,19 +176,21 @@ _add("fec_mode", "FEC", "PCS before mapper / after DEMUX",
      "inserisce DAVVERO encoder e decoder Reed-Solomon nel datapath (non un "
      "modello a formula): KP4 RS(544,514) su GF(2¹⁰) corregge fino a t=15 "
      "simboli per codeword ed è il FEC obbligatorio di tutte le interfacce "
-     "PAM4 100G+/lane; KR4 RS(528,514), t=7, è la generazione 25G NRZ. La "
-     "soglia pratica pre-FEC del KP4 è ~2.4e-3-2e-2 secondo il criterio: "
-     "sotto, il post-FEC crolla a zero; sopra, i frame persi esplodono — è "
-     "il cliff del FEC. Sul banco: FEC live mostra l'istogramma "
+     "PAM4 100G+/lane; KR4 RS(528,514), t=7, è la generazione 25G NRZ. Il "
+     "requisito BER pre-FEC di clause dei PMD KP4 è 2.4e-4 (il modello iid "
+     "del banco dà ≈2.1e-4 a FER 1e-13): sotto, il post-FEC crolla a zero; "
+     "sopra, i frame persi esplodono — è il cliff del FEC. Sul banco: FEC "
+     "live mostra l'istogramma "
      "errori-per-codeword; avvicinati alla soglia col canale e guarda la "
      "transizione clean→corrected→lost.",
      "TRULY inserts the Reed-Solomon encoder and decoder in the datapath "
      "(not a formula model): KP4 RS(544,514) over GF(2¹⁰) corrects up to "
      "t=15 symbols per codeword and is the mandatory FEC of every "
      "100G+/lane PAM4 interface; KR4 RS(528,514), t=7, is the 25G NRZ "
-     "generation. KP4's practical pre-FEC threshold is ~2.4e-3-2e-2 "
-     "depending on the criterion: below it post-FEC collapses to zero, "
-     "above it lost frames explode — the FEC cliff. On the bench: FEC live "
+     "generation. The clause pre-FEC BER requirement of KP4 PMDs is 2.4e-4 "
+     "(the bench iid model gives ≈2.1e-4 at FER 1e-13): below it post-FEC "
+     "collapses to zero, above it lost frames explode — the FEC cliff. On "
+     "the bench: FEC live "
      "shows the errors-per-codeword histogram; walk the channel toward the "
      "threshold and watch the clean→corrected→lost transition.",
      "KP4 RS(544,514) t=15; KR4 RS(528,514) t=7; overhead 544/514≈5.8%")

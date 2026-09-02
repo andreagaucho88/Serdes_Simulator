@@ -10,6 +10,9 @@ import numpy as np
 from scipy import stats
 from scipy.special import logsumexp
 
+from ..standards import (SNDR_FIT_NP, TDECQ_HISTOGRAM_CENTERS_UI,
+                         TDECQ_HISTOGRAM_WIDTH_UI, TDECQ_Q_T,
+                         TDECQ_REFERENCE_RX_BW_FRACTION, TDECQ_TARGET_SER)
 from ..utils import affine_fit, qfunc, zero_error_upper_bound
 from .dsp import sample_adc_at_ui
 from .stimulus import (PAM4_GRAY, hard_slice, nearest_level_index,
@@ -334,9 +337,17 @@ def _tdecq_noise_enhancement(taps, b_ref, a_ref, sps, n_freq=8192):
 
 
 def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
-                 target_ser=4.8e-4, q_t=3.414,
-                 histogram_width_ui=0.04):
+                 target_ser=TDECQ_TARGET_SER, q_t=TDECQ_Q_T,
+                 histogram_width_ui=TDECQ_HISTOGRAM_WIDTH_UI,
+                 sigma_s_w=0.0, measure="TDECQ"):
     """TDECQ con la struttura di clause 121.8.5.3 — DICHIARATO non certificato.
+
+    ``sigma_s_w`` è il rumore RMS del ricevitore di misura (O/E + scope,
+    121.8.5.3): il rapporto usa sqrt(σ_G² + σ_S²) nella forma dell'equazione
+    121-11 come implementata qui. Nel banco numerico σ_S = 0 (dichiarato
+    ideale), quindi il valore coincide con 10·log10(σ_ideal/σ_G).
+    ``measure`` etichetta il risultato (TDECQ a TP2 dopo il canale di
+    dispersione; TECQ per la stessa procedura senza canale ottico).
 
     Procedura implementata (ogni passo come da clause, con le deviazioni
     dichiarate): filtro di ricezione Bessel-Thomson 4° ordine a 0.5·baud
@@ -360,7 +371,8 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
     m = len(levels)
 
     # 1. filtro di ricezione BT4 0.5·baud (zero-fase, dichiarato)
-    wn = min(0.5 * symbol_rate_hz / (fs_hz / 2), 0.99)
+    wn = min(TDECQ_REFERENCE_RX_BW_FRACTION * symbol_rate_hz / (fs_hz / 2),
+             0.99)
     b, a = _sig.bessel(4, wn, btype="low", norm="mag")
     Pf = _sig.filtfilt(b, a, P)
 
@@ -425,8 +437,9 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
             ts.append(tt)
         return np.concatenate(ys), np.concatenate(ts)
 
-    y_m, t_m = sample_window(-0.05)
-    y_p, t_p = sample_window(+0.05)
+    centers = tuple(float(c) - 0.5 for c in TDECQ_HISTOGRAM_CENTERS_UI)
+    y_m, t_m = sample_window(centers[0])
+    y_p, t_p = sample_window(centers[1])
 
     def clusters_for(taps, y, t):
         Xp = np.stack([np.roll(y, sh) for sh in (-2, -1, 0, 1, 2)], axis=1)
@@ -489,20 +502,195 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
             else:
                 hi = mid
         sigma_g = 0.5 * (lo + hi)
-        tdecq = float(10 * np.log10(sigma_ideal / max(sigma_g, 1e-30)))
+        sigma_total = float(np.sqrt(sigma_g ** 2 + float(sigma_s_w) ** 2))
+        tdecq = float(10 * np.log10(sigma_ideal / max(sigma_total, 1e-30)))
         if best_out is None or tdecq < best_out["tdecq_db"]:
             best_out = {"tdecq_db": tdecq, "sigma_ideal": sigma_ideal,
-                        "sigma_g": sigma_g, "oma_outer": oma_outer,
+                        "sigma_g": sigma_g, "sigma_s": float(sigma_s_w),
+                        "oma_outer": oma_outer,
                         "ceq_db": float(20 * np.log10(ceq)),
                         "taps": [float(v) for v in taps],
                         "tap_sum": float(np.sum(taps)),
                         "ridge_lambda": lam,
                         "target_ser": target_ser, "q_t": q_t,
-                        "histogram_centers_ui": [0.45, 0.55],
+                        "histogram_centers_ui": list(TDECQ_HISTOGRAM_CENTERS_UI),
                         "histogram_width_ui": histogram_width_ui,
-                        "reference_receiver_bw_hz": 0.5 * symbol_rate_hz,
-                        "ceq_method": "BT4-shaped noise integral (121-9)"}
+                        "reference_receiver_bw_hz": (
+                            TDECQ_REFERENCE_RX_BW_FRACTION * symbol_rate_hz),
+                        "ceq_method": "BT4-shaped noise integral (121-9)",
+                        "measure": measure}
     if best_out is None:
-        return {"tdecq_db": None,
-                "reason": "SER oltre il target per ogni equalizzatore provato"}
+        return {"tdecq_db": None, "measure": measure,
+                "reason": {"it": "SER oltre il target per ogni equalizzatore provato",
+                           "en": "SER above target for every equalizer tried"}}
     return best_out
+
+
+def tecq_report(P_tp2_w, symbols, spec, sps, symbol_rate_hz, fs_hz, **kw):
+    """TECQ: la stessa procedura del TDECQ applicata alla waveform a TP2
+    senza il canale ottico di dispersione (struttura 802.3db, dichiarata)."""
+    return tdecq_report(P_tp2_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
+                        measure="TECQ", **kw)
+
+
+# ---------------------------------------------------------------------------
+# Trasmettitore PAM4: RLM (formula di clause) e SNDR (fit lineare Y = P·X)
+# ---------------------------------------------------------------------------
+
+def rlm_clause(level_means):
+    """Level separation mismatch ratio con la formula di IEEE 802.3
+    (120D.3.1.2 / 162.9.3.1): V_mid=(V0+V3)/2, ES1=(V1−V_mid)/(V0−V_mid),
+    ES2=(V2−V_mid)/(V3−V_mid), RLM=min(3·ES1, 3·ES2, 2−3·ES1, 2−3·ES2).
+
+    DICHIARATO: i livelli medi arrivano dal pattern attivo del banco, non dal
+    pattern di linearità di clause, quindi il risultato è un proxy."""
+    v = sorted(float(x) for x in level_means)
+    if len(v) != 4:
+        return None
+    v0, v1, v2, v3 = v
+    v_mid = 0.5 * (v0 + v3)
+    d0, d3 = v0 - v_mid, v3 - v_mid
+    if abs(d0) < 1e-30 or abs(d3) < 1e-30:
+        return None
+    es1 = (v1 - v_mid) / d0
+    es2 = (v2 - v_mid) / d3
+    rlm = min(3 * es1, 3 * es2, 2 - 3 * es1, 2 - 3 * es2)
+    return {"rlm": float(rlm), "es1": float(es1), "es2": float(es2),
+            "v_mid": float(v_mid), "levels": v,
+            "method": "clause formula on measured level means (pattern proxy)"}
+
+
+def sndr_linear_fit(wave, symbols, sps, delay_ui=0.0, np_taps=SNDR_FIT_NP,
+                    pre_taps=None):
+    """SNDR con la struttura di 120D.3.1.5/.6: fit lineare Y = P·X del
+    pulse response su tutte le M fasi per UI, Np tap in UI, residuo e.
+
+    SNDR = 10·log10(p_max² / σ_e²). DICHIARATO: σ_n (rumore misurato con
+    pattern statico) non è separato dal residuo; il pattern è quello attivo.
+    Una colonna costante assorbe l'offset DC."""
+    w = np.asarray(wave, dtype=float)
+    x = np.asarray(symbols, dtype=float)
+    x = x - float(np.mean(x))
+    sps = int(sps)
+    n_sym = len(w) // sps
+    if n_sym < np_taps + 64:
+        return None
+    pre = int(pre_taps if pre_taps is not None else max(2, np_taps // 8))
+    post = np_taps - pre
+    n0 = pre + 200
+    n1 = min(n_sym - post - 2, len(x) - post - 2)
+    if n1 - n0 < 256:
+        return None
+    n = np.arange(n0, n1)
+    # matrice X (N × Np): x[n − j + pre], più colonna costante
+    cols = [x[n - j + pre] for j in range(np_taps)]
+    X = np.stack(cols + [np.ones(len(n))], axis=1)
+    shift = int(round(float(delay_ui) * sps))
+    Y = np.stack([w[n * sps + m + shift] for m in range(sps)], axis=1)   # N × M
+    try:
+        P, *_ = np.linalg.lstsq(X, Y, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    E = Y - X @ P
+    sigma_e = float(np.sqrt(np.mean(E ** 2)))
+    pulse = P[:-1]                                # Np × M
+    p_max = float(np.max(np.abs(pulse)))
+    if p_max < 1e-15 or sigma_e < 1e-30:
+        return None
+    j_max, m_max = np.unravel_index(int(np.argmax(np.abs(pulse))), pulse.shape)
+    return {"sndr_db": float(10 * np.log10(p_max ** 2 / sigma_e ** 2)),
+            "p_max": p_max, "sigma_e": sigma_e, "np_taps": int(np_taps),
+            "m_phases": sps, "pre_taps": pre,
+            "peak_tap_ui": int(j_max) - pre, "peak_phase": int(m_max),
+            "method": "linear-fit pulse response Y=P·X (σn folded into σe)"}
+
+
+def optical_levels_runs(P_w, symbols, levels, sps, delay_ui=0.0, min_run=4,
+                        window=0.2):
+    """Livelli ottici P0…P3 sui run di simboli identici (struttura del metodo
+    di clause per OMA_outer/ER: media sulla finestra centrale del run).
+
+    DICHIARATO: run ≥ ``min_run`` simboli e finestra centrale ``window``
+    sono parametri dichiarati, non ancora verificati sul testo di clause."""
+    P = np.asarray(P_w, dtype=float)
+    sym = np.asarray(symbols)
+    lv = np.asarray(levels, dtype=float)
+    sps = int(sps)
+    shift = int(round(float(delay_ui) * sps))
+    means, counts = [], []
+    # confini dei run
+    change = np.flatnonzero(np.diff(sym) != 0) + 1
+    starts = np.r_[0, change]
+    ends = np.r_[change, len(sym)]
+    for level in lv:
+        acc, n_acc = 0.0, 0
+        for s, e in zip(starts, ends):
+            if e - s < min_run or not np.isclose(sym[s], level):
+                continue
+            a = s * sps + shift
+            b = e * sps + shift
+            span = b - a
+            lo = a + int(round(span * (0.5 - window / 2)))
+            hi = a + int(round(span * (0.5 + window / 2)))
+            if lo < 0 or hi > len(P) or hi <= lo:
+                continue
+            seg = P[lo:hi]
+            acc += float(np.sum(seg))
+            n_acc += len(seg)
+        means.append(acc / n_acc if n_acc else None)
+        counts.append(n_acc)
+    if any(m is None for m in means):
+        return None
+    p0, p3 = means[0], means[-1]
+    return {"p_levels_w": [float(m) for m in means], "samples": counts,
+            "oma_outer_w": float(p3 - p0), "p_avg_w": float(np.mean(P)),
+            "extinction_ratio_db": (float(10 * np.log10(p3 / p0))
+                                    if p0 > 0 and p3 > 0 else None),
+            "min_run": int(min_run), "window": float(window),
+            "method": "run-based level means, central window (declared)"}
+
+
+def _point_in_polygon(px, py, poly):
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > py) != (y2 > py):
+            xint = x1 + (py - y1) * (x2 - x1) / (y2 - y1)
+            if px < xint:
+                inside = not inside
+    return inside
+
+
+def eye_mask_hits(traces, mask, p0, p1):
+    """Conteggio dei campioni dentro la maschera NRZ (geometria dichiarata:
+    esagono X1/X2/Y1 + bande y ≥ 1+Y3 e y ≤ −Y3), su tracce di 2 UI
+    centrate sul simbolo (colonna centrale = centro UI).
+
+    ``p0``/``p1`` normalizzano l'ampiezza ai livelli 0/1 misurati."""
+    tr = np.asarray(traces, dtype=float)
+    if tr.ndim != 2 or tr.shape[1] < 8 or p1 <= p0:
+        return None
+    n_tr, n_col = tr.shape
+    sps = (n_col - 1) / 2.0
+    x = (np.arange(n_col) - sps) / sps + 0.5          # UI, 0.5 = centro
+    y = (tr - p0) / (p1 - p0)
+    x1, x2, y1, y3 = mask["x1"], mask["x2"], mask["y1"], mask["y3"]
+    hexagon = [(x1, 0.5), (x2, y1), (1 - x2, y1), (1 - x1, 0.5),
+               (1 - x2, 1 - y1), (x2, 1 - y1)]
+    in_ui = (x >= 0.0) & (x <= 1.0)
+    cols = np.flatnonzero(in_ui)
+    hits = 0
+    total = n_tr * len(cols)
+    for c in cols:
+        yc = y[:, c]
+        band = np.count_nonzero((yc >= 1 + y3) | (yc <= -y3))
+        # hexagon test only for points within its vertical extent
+        cand = np.flatnonzero((yc > y1) & (yc < 1 - y1))
+        hexhits = sum(1 for k in cand if _point_in_polygon(float(x[c]), float(yc[k]), hexagon))
+        hits += band + hexhits
+    ratio = hits / total if total else None
+    return {"hits": int(hits), "samples": int(total), "hit_ratio": ratio,
+            "hexagon": hexagon, "bands": [1 + y3, -y3],
+            "geometry": mask.get("geometry", "declared")}

@@ -341,3 +341,54 @@ _a("jtol", "Misura JTOL-lite", "Measure JTOL-lite", "CDR", "TX PJ → link BER",
    "Pattern, durata e maschera non sono quelli di una procedura normativa.",
    "Pattern, duration, and mask are not a normative procedure.",
    "/api/experiment/jtol", "report only")
+
+# ---- workspace e report di conformità (iterazione 45) --------------------
+_a("panel_pin", "Fissa nel dock", "Pin to dock", "Workspace", "layout only",
+   "Tiene questo strumento visibile in un dock sotto il pannello attivo mentre "
+   "si naviga nelle altre tab (uno solo alla volta): Scope + BER live come "
+   "su un banco reale, senza tornare alla griglia di 20 grafici.",
+   "Keeps this instrument visible in a dock below the active panel while you "
+   "browse the other tabs (one at a time): Scope + live BER like on a real "
+   "bench, without going back to the 20-plot grid.",
+   "Il pannello fissato continua ad aggiornarsi con la stessa cadenza del "
+   "pannello attivo; la tab mostra un quadratino ambra.",
+   "The pinned panel keeps refreshing at the active panel's cadence; its tab "
+   "shows an amber square.",
+   "Solo layout: nessuna modifica alla LinkConfig né all'acquisizione.",
+   "Layout only: no change to LinkConfig or to the acquisition.",
+   "", "workspace layout (localStorage)")
+_a("report_json", "Report di conformità (JSON)", "Compliance report (JSON)",
+   "Compliance", "same record as the panels",
+   "Scarica il report tracciabile: hash della config, seed e profondità del "
+   "record, profilo attivo con i campi modificati, ogni contratto di misura "
+   "con valore, limite del registro, verdetto del modello e conformità, "
+   "invarianti fisici, checkpoint, ultima procedura DR4, versioni di "
+   "LabPro/numpy/scipy.",
+   "Downloads the traceable report: config hash, record seed and depth, "
+   "active profile with modified fields, every measurement contract with "
+   "value, registry limit, model verdict and compliance, physics invariants, "
+   "checkpoints, last DR4 run, LabPro/numpy/scipy versions.",
+   "Apri il file: la sezione contracts deve coincidere con le righe del "
+   "pannello; compliance è sempre NOT_ASSESSED.",
+   "Open the file: the contracts section must match the panel rows; "
+   "compliance is always NOT_ASSESSED.",
+   "Il report documenta verdetti del MODELLO contro limiti del registro; non "
+   "è un certificato di conformità IEEE/OIF.",
+   "The report documents MODEL verdicts against registry limits; it is not an "
+   "IEEE/OIF compliance certificate.",
+   "/api/report/standards?format=json", "")
+_a("report_md", "Report di conformità (Markdown)", "Compliance report (Markdown)",
+   "Compliance", "same record as the panels",
+   "Stesso contenuto del report JSON reso in Markdown, pronto per una review "
+   "o per essere allegato a un commit di laboratorio.",
+   "Same content as the JSON report rendered as Markdown, ready for a review "
+   "or a lab commit.",
+   "Tabella dei contratti con valore, limite, verdetto e conformità; sezioni "
+   "invarianti, checkpoint e DR4.",
+   "Contracts table with value, limit, verdict and compliance; invariants, "
+   "checkpoints and DR4 sections.",
+   "Il report documenta verdetti del MODELLO contro limiti del registro; non "
+   "è un certificato di conformità IEEE/OIF.",
+   "The report documents MODEL verdicts against registry limits; it is not an "
+   "IEEE/OIF compliance certificate.",
+   "/api/report/standards?format=md", "")

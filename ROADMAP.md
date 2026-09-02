@@ -12,7 +12,7 @@
 ## 0.2 — comparison and reporting
 
 - Side-by-side A/B configurations with a shared seed
-- Exportable HTML/PDF experiment report
+- Exportable HTML/PDF experiment report (JSON/Markdown compliance report shipped)
 - Shareable configuration files with schema migration
 - Saved experiment recipes and batch execution
 

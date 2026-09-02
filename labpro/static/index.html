@@ -6,7 +6,7 @@
 <title>SerDes Optical Lab Pro</title>
 <!-- Local fonts keep the application offline-ready, just like plotly.min.js. -->
 <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=27">
+<link rel="stylesheet" href="/static/style.css?v=28">
 <script src="/static/plotly.min.js"></script>
 </head>
 <body>
@@ -30,12 +30,13 @@
     <div class="tb-cell"><label>bit</label><b id="tb-bits">0</b></div>
     <div class="tb-cell"><label>BER cum.</label><b id="tb-ber">—</b></div>
     <div class="tb-cell"><label>frame FEC</label><b id="tb-frames">—</b></div>
-    <div class="tb-cell"><label>stato</label><b id="tb-checks">—</b></div>
+    <div class="tb-cell"><label>checkpoint</label><b id="tb-checks">—</b></div>
   </div>
   <div class="tb-group">
     <span class="chip" id="chip-rate">—</span>
     <span class="chip" id="chip-mod">—</span>
     <span class="chip chip-fec" id="chip-fec">—</span>
+    <span class="chip" id="chip-profile" title="profilo IEEE/OIF attivo">—</span>
     <button id="btn-export" class="btn" data-action="config_export">⤓ CFG</button>
     <button id="btn-import" class="btn" data-action="config_import">⤒ CFG</button>
     <select id="view-select" title="Viste predefinite (layout ordinato per flusso del segnale)"></select>
@@ -47,11 +48,14 @@
   </div>
 </header>
 
-<div id="conn-banner" class="hidden" role="alert">connessione al server persa — riconnessione…</div>
+<div id="conn-banner" class="hidden" role="alert" data-it="connessione al server persa — riconnessione…" data-en="connection to the server lost — reconnecting…">connessione al server persa — riconnessione…</div>
 <nav id="workspace-tabs" class="workspace-tabs" aria-label="Pannelli strumenti aperti">
+  <button id="tabs-prev" class="tabs-nav" type="button" aria-label="tab precedenti">‹</button>
   <div id="workspace-tab-list" class="workspace-tab-list" role="tablist"></div>
+  <button id="tabs-next" class="tabs-nav" type="button" aria-label="tab successive">›</button>
 </nav>
 <main id="workbench" class="workspace-stage">
+  <div id="workspace-building" hidden>Preparazione del banco…</div>
   <div id="workspace-empty" class="workspace-empty" hidden>
     Nessun pannello aperto — usa ＋ Pannello per aggiungere uno strumento.
   </div>
@@ -63,6 +67,6 @@
   <span id="sb-cfg-hash"></span>
 </footer>
 
-<script src="/static/app.js?v=55"></script>
+<script src="/static/app.js?v=56"></script>
 </body>
 </html>

@@ -8,6 +8,12 @@ Nessuna scheda promette conformità normativa.
 
 from __future__ import annotations
 
+from serdes_sim.standards import (COM_KR1_THRESHOLD_DB, KP4_PMD_BER,
+                                  RLM_MIN_8023CK, fmt_number,
+                                  limits_for_interface)
+
+_DR4_TDECQ_DB = limits_for_interface("400GBASE-DR4")["tdecq"].limit
+
 
 def _topic(title_it, title_en, block, idea_it, idea_en, formula,
            observe_it, observe_en, experiment_it, experiment_en, limits_it,
@@ -54,9 +60,9 @@ TOPICS = [
                  "BER ≈ SER/2 in Gray PAM4. PRBS exists so a BERT ED can regenerate it and compare bit-by-bit "
                  "with no reference channel."),
         numbers=[("PAM4 vs NRZ SNR", "−9.5 dB (stessi livelli di picco)"),
-                 ("PRBS13Q period", "8191 simboli (clause 120D)"),
+                 ("PRBS13Q period", "8191 simboli (clause 120.5.11.2.1)"),
                  ("PRBS31 period", "2³¹−1 ≈ 2.1e9 bit"),
-                 ("RLM minimo tipico", "≥ 0.95 (802.3 TX specs)"),
+                 ("RLM minimo tipico", f"≥ {RLM_MIN_8023CK:g} (802.3ck TX specs)"),
                  ("Gray: bit/errore simbolo", "1 (adiacente)")],
         actions=[("Imposta modulation = NRZ", "Set modulation = NRZ",
                   "BER crolla: occhio unico alto 2, +9.5 dB di SNR", "BER collapses: one eye of height 2, +9.5 dB SNR"),
@@ -89,7 +95,7 @@ TOPICS = [
                  "decoder may BELIEVE it corrected and deliver wrong data with probability ~1/t! — which is why "
                  "you monitor FERC, not just BER."),
         numbers=[("KP4 overhead", "544/514 = 5.84%"),
-                 ("soglia pre-FEC KP4", "≈ 2.4e-4 (per 1e-13 post)"),
+                 ("soglia pre-FEC KP4", f"{fmt_number(KP4_PMD_BER)} (requisito PMD di clause)"),
                  ("KR4 t / soglia", "t=7 · ≈ 2e-5"),
                  ("latency FEC (store)", "≈ 51 ns/lato @ 106 Gb/s"),
                  ("simbolo RS", "10 bit = 5 simboli PAM4")],
@@ -194,7 +200,7 @@ TOPICS = [
                  "ICN adds to noise. Connectors dominate return loss."),
         numbers=[("CR cable 2 m", "~10-15 dB @ 26.6 GHz"),
                  ("backplane KR", "20-30 dB @ Nyquist"),
-                 ("budget 802.3ck", "~28 dB con COM ≥ 3 dB"),
+                 ("budget 802.3ck", f"~28 dB con COM ≥ {COM_KR1_THRESHOLD_DB:g} dB"),
                  ("NEXT tipico conn.", "−35..−45 dB"),
                  ("skin effect", "IL ∝ √f (rame)")],
         actions=[("IL 6 → 20 dB, guarda 'chan'", "IL 6 → 20 dB, watch 'chan'",
@@ -229,7 +235,7 @@ TOPICS = [
         numbers=[("D @ 1550/1310 nm", "17 / ~0 ps/(nm·km)"),
                  ("loss SMF", "0.20 (1550) · 0.35 (1310) dB/km"),
                  ("ER tipico DR/FR", "3.5–6 dB"),
-                 ("TDECQ limite", "≤ 3.4 dB (DR4)"),
+                 ("TDECQ limite", f"≤ {_DR4_TDECQ_DB:g} dB (DR4)"),
                  ("Vπ MZM LiNbO₃/SiP", "2–5 V")],
         actions=[("bias MZM 1.57 → 2.2 rad", "MZM bias 1.57 → 2.2 rad",
                   "compressione asimmetrica: RLM peggiora, occhi diseguali", "asymmetric compression: RLM degrades, unequal eyes"),
@@ -583,10 +589,10 @@ TOPICS = [
         "Ogni PHY è una clause: PMD (elettrico/ottico), PCS, FEC, AN. I profili del banco dichiarano per ogni valore se è di clause, un'assunzione o non supportato.",
         "Every PHY is a clause: PMD (electrical/optical), PCS, FEC, AN. The bench profiles declare, for each value, whether it is clause, an assumption, or unsupported.",
         "es: 100GBASE-DR = C140 PMD + C82 PCS + C91 RS(544)",
-        "I 17 profili con i 4 assi (standard·reach·mezzo·FEC), il manifest standard/assunzione/unsupported, il margine sulla soglia pre-FEC.",
-        "The 17 profiles with 4 axes (standard·reach·medium·FEC), the standard/assumption/unsupported manifest, the pre-FEC threshold margin.",
-        "Carica 100GBASE-DR e verifica ogni numero contro la clause citata; poi guarda cosa il banco dichiara di NON coprire.",
-        "Load 100GBASE-DR and check every number against the cited clause; then look at what the bench declares it does NOT cover.",
+        "I profili con i 4 assi (standard·reach·mezzo·FEC), il manifest standard/assunzione/unsupported, il limite del registro accanto a ogni misura.",
+        "The profiles with 4 axes (standard·reach·medium·FEC), the standard/assumption/unsupported manifest, the registry limit next to every measurement.",
+        "Carica 400GBASE-DR4 e verifica ogni numero contro la clause citata; poi guarda cosa il banco dichiara di NON coprire.",
+        "Load 400GBASE-DR4 and check every number against the cited clause; then look at what the bench declares it does NOT cover.",
         "Nessun test di conformità: COM e TDECQ seguono subset/strutture di clause, ma senza input, calibrazione, uncertainty e golden vector completi il claim resta NOT ASSESSED.",
         "No compliance testing: COM and TDECQ follow clause subsets/structures, but without complete inputs, calibration, uncertainty, and golden vectors the claim stays NOT ASSESSED.",
         "IEEE 802.3 / OIF-CEI",
@@ -604,10 +610,10 @@ TOPICS = [
                  "contract each block signs."),
         numbers=[("100G/lane ottico", "C140 (DR), 53.125 GBd"),
                  ("100G/lane elettrico", "C162/C163 (ck)"),
-                 ("TDECQ DR4", "≤ 3.4 dB"),
-                 ("COM minimo", "≥ 3 dB"),
+                 ("TDECQ DR4", f"≤ {_DR4_TDECQ_DB:g} dB (Table 124-6)"),
+                 ("COM minimo", f"≥ {COM_KR1_THRESHOLD_DB:g} dB (Annex 93A)"),
                  ("OIF-CEI", "112G-VSR/MR/LR")],
-        actions=[("Profilo 100GBASE-DR", "100GBASE-DR profile",
+        actions=[("Profilo 400GBASE-DR4", "400GBASE-DR4 profile",
                   "manifest: cosa è clause e cosa è assunzione", "manifest: what is clause and what is assumption"),
                  ("Margine pre-FEC nel pannello", "Pre-FEC margin in the panel",
                   "la distanza dal cliff KP4 del TUO banco", "your bench's distance from the KP4 cliff")],

@@ -247,7 +247,11 @@ class LinkConfig:
                 (float(self.ctle_pole_hz), float(self.ctle_hf_pole_hz)))
 
     def validate(self):
-        problems = []
+        problems = _validate_types_and_ranges(self)
+        if problems:
+            # Con un tipo sbagliato le regole semantiche sotto lancerebbero
+            # TypeError: si riporta prima il problema di schema.
+            return problems
         if self.analog_sps % self.adc_sps:
             problems.append("analog_sps deve essere multiplo di adc_sps")
         if self.prbs_order not in (7, 9, 11, 13, 15, 23, 31):
@@ -435,6 +439,136 @@ class LinkConfig:
 
 def field_names():
     return [f.name for f in fields(LinkConfig)]
+
+
+# ---------------------------------------------------------------------------
+# Schema dichiarativo: tipo e range di OGNI campo. Le regole semantiche in
+# validate() presuppongono tipi corretti; prima di questo schema 41 campi
+# accettavano None, stringhe, NaN o valori assurdi (fiber_km=-5, adc_bits=0)
+# che uccidevano in silenzio il thread di acquisizione.
+# ---------------------------------------------------------------------------
+_STRING_FIELDS = {
+    "pattern", "custom_pattern_hex", "modulation", "pam4_mapping", "fec_mode",
+    "electrical_drive_mode", "link_medium", "err_insert_target",
+    "optical_modulator", "laser_type", "fiber_type", "pvt_process",
+    "adc_cal_mode", "cdr_mode", "s2p_text", "s2p_name", "s4p_pairs",
+}
+_BOOL_FIELDS = {"tx_output_on", "err_insert_burst", "use_s2p_channel",
+                "causal_filters"}
+_TUPLE_FIELDS = {"tx_ffe_taps", "ctle_zeros_hz", "ctle_poles_hz"}
+_INT_FIELDS = {
+    "analog_sps", "n_symbols", "prbs_order", "l2_frame_bytes", "l2_ipg_bytes",
+    "l2_streams", "fec_interleave", "dac_bits", "err_insert_bits", "adc_sps",
+    "adc_bits", "adc_interleaves", "adc_ranks", "fse_taps", "dfe_taps",
+    "training_start", "training_stop",
+}
+# (lo, hi) inclusivi. Range generosi: devono contenere preset, profili e
+# valori di stress dei test, ma escludere l'assurdo.
+_NUMERIC_RANGES = {
+    "symbol_rate_hz": (1e9, 400e9), "analog_sps": (4, 64),
+    "n_symbols": (2000, 400_000), "l2_frame_bytes": (64, 1024),
+    "l2_ipg_bytes": (8, 2000), "l2_streams": (1, 4), "fec_interleave": (1, 4),
+    "tx_rj_rms_fs": (0, 2000), "tx_pj_amp_ui": (0, 0.4),
+    "tx_pj_freq_mhz": (1, 5000), "tx_dcd_pct": (0, 30),
+    "tx_buj_amp_ui": (0, 0.5), "tx_ssc_ppm": (0, 20000), "tx_ssc_khz": (1, 1000),
+    "dac_bits": (3, 16), "dac_full_scale_vpp": (0.01, 20), "dac_bw_hz": (1e8, 1e12),
+    "driver_gain_v_per_unit": (0.001, 20), "driver_bw_hz": (1e8, 1e12),
+    "driver_clip_v": (0.01, 20), "pn_skew_ps": (0, 10),
+    "pn_gain_mismatch_pct": (0, 30), "vcm_offset_v": (-5, 5),
+    "vcm_noise_mv": (0, 200), "tx_diff_noise_mv": (0, 200),
+    "xtalk_next_db": (-120, 120), "xtalk_fext_db": (-120, 120),
+    "err_insert_bits": (0, 200), "channel_il_nyquist_db": (0, 80),
+    "channel_delay_ps": (0, 1e5), "group_delay_ripple_ps": (0, 500),
+    "return_loss_db": (0, 200), "echo_delay_ui": (0, 100),
+    "laser_dbm": (-60, 30), "laser_linewidth_mhz": (0, 1000),
+    "vpi_v": (0.01, 100), "mzm_bias_rad": (-7, 7), "mzm_bw_hz": (1e8, 1e12),
+    "mzm_il_db": (0, 40), "chirp_alpha": (-20, 20), "eml_bw_hz": (1e8, 1e12),
+    "optical_drive_vpp_v": (0.001, 20), "eml_er_db": (0.5, 20),
+    "eml_il_db": (0, 15), "eml_chirp_alpha": (-5, 8),
+    "direct_laser_bw_hz": (1e8, 1e12), "direct_laser_er_db": (0.5, 20),
+    "direct_laser_chirp_alpha": (-5, 10), "coupling_il_db": (0, 40),
+    "wavelength_nm": (600, 2100), "fiber_km": (0, 500),
+    "dispersion_ps_nm_km": (-200, 200), "dispersion_slope_ps_nm2_km": (-5, 5),
+    "pmd_ps_sqrt_km": (0, 10), "pmd_power_split": (0, 1),
+    "fiber_gamma_w_inv_km": (0, 100), "fiber_loss_db_km": (0, 20),
+    "mmf_modal_bw_mhz_km": (1, 1e6), "pd_responsivity_a_w": (0.001, 2),
+    "pd_dark_current_a": (0, 1e-2), "pd_bw_hz": (1e8, 1e12),
+    "pd_saturation_a": (1e-7, 1), "rin_db_hz": (-220, -60),
+    "tia_noise_a_rt_hz": (0, 1e-8), "tia_transimpedance_ohm": (1, 1e6),
+    "tia_vga_range_db": (0, 30), "tia_headroom_ratio": (0.2, 0.95),
+    "tia_bw_hz": (1e8, 1e12), "tia_clip_v": (0.001, 50),
+    "agc_target_rms_v": (1e-4, 10), "pvt_vdd_pct": (-10, 10),
+    "pvt_temp_c": (-40, 125), "agc_min_gain_db": (-40, 60),
+    "agc_max_gain_db": (-40, 60), "ctle_zero_hz": (1e6, 1e12),
+    "ctle_pole_hz": (1e6, 1e12), "ctle_hf_pole_hz": (1e6, 1e12),
+    "ctle_dc_gain_db": (-40, 40), "adc_sps": (1, 8), "adc_bits": (2, 16),
+    "adc_full_scale_vpp": (0.01, 20), "adc_phase_ui": (-1, 1),
+    "adc_jitter_rms_fs": (0, 10000), "adc_interleaves": (1, 128),
+    "adc_gain_mismatch_rms": (0, 0.5), "adc_offset_mismatch_rms_v": (0, 1),
+    "adc_skew_mismatch_rms_fs": (0, 10000), "adc_ranks": (1, 64),
+    "adc_frontend_bw_hz": (0, 1e12), "adc_bw_mismatch_pct": (0, 30),
+    "adc_noise_rms_mv": (0, 20), "cdr_bw": (1e-4, 0.05),
+    "cdr_damping": (0.3, 3.0), "rx_ppm_offset": (-500, 500),
+    "fse_taps": (1, 255), "dfe_taps": (1, 64), "training_start": (0, 400_000),
+    "training_stop": (0, 400_000), "prbs_order": (7, 31),
+}
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _validate_types_and_ranges(cfg):
+    import math as _math
+    problems = []
+    for f in fields(LinkConfig):
+        name = f.name
+        v = getattr(cfg, name)
+        if name in _STRING_FIELDS:
+            if not isinstance(v, str):
+                problems.append(f"{name} deve essere una stringa")
+            elif name == "s2p_name" and len(v) > 200:
+                problems.append("s2p_name troppo lungo (max 200 caratteri)")
+            continue
+        if name in _BOOL_FIELDS:
+            if not isinstance(v, bool):
+                problems.append(f"{name} deve essere true/false")
+            continue
+        if name in _TUPLE_FIELDS:
+            if not isinstance(v, (tuple, list)) or not all(
+                    _is_number(x) and _math.isfinite(x) for x in v):
+                problems.append(f"{name} deve essere una tupla di numeri finiti")
+            elif name == "tx_ffe_taps" and any(abs(x) > 4 for x in v):
+                problems.append("tx_ffe_taps: tap fuori range ±4")
+            continue
+        if not _is_number(v) or not _math.isfinite(v):
+            problems.append(f"{name} deve essere un numero finito")
+            continue
+        if name in _INT_FIELDS and int(v) != v:
+            problems.append(f"{name} deve essere intero")
+            continue
+        rng = _NUMERIC_RANGES.get(name)
+        if rng is not None and not (rng[0] <= v <= rng[1]):
+            problems.append(f"{name} fuori range [{rng[0]:g}, {rng[1]:g}]")
+    return problems
+
+
+def field_schema():
+    """Schema pubblico (tipo + range) condiviso con UI e sweep."""
+    out = {}
+    for f in fields(LinkConfig):
+        name = f.name
+        if name in _STRING_FIELDS:
+            out[name] = {"type": "str"}
+        elif name in _BOOL_FIELDS:
+            out[name] = {"type": "bool"}
+        elif name in _TUPLE_FIELDS:
+            out[name] = {"type": "tuple"}
+        else:
+            lo, hi = _NUMERIC_RANGES.get(name, (None, None))
+            out[name] = {"type": "int" if name in _INT_FIELDS else "float",
+                         "lo": lo, "hi": hi}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -704,9 +838,9 @@ STANDARD_PROFILE_META = {
              medium="copper", lanes="1×112G", status="published", fec="outside CEI",
              plane="CEI electrical", source=_OIF, claim="context"),
     "OIF CEI-224G-LR · interfaccia elettrica":
-        dict(standard="OIF CEI-5.3", interface="CEI-224G-LR", reach="LR",
-             medium="copper", lanes="1×224G", status="published", fec="outside CEI",
-             plane="CEI electrical", source=_OIF, claim="context"),
+        dict(standard="OIF CEI-224G (draft)", interface="CEI-224G-LR", reach="LR",
+             medium="copper", lanes="1×224G", status="draft", fec="outside CEI",
+             plane="CEI electrical", source=_OIF, claim="draft-context"),
     "P802.3dj (draft) — 200G/lane · elettrico C2C":
         dict(standard="IEEE P802.3dj", interface="200G/lane C2C", reach="C2C",
              medium="copper", lanes="1×200G", status="draft", fec="draft, not modeled",

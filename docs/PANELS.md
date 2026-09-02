@@ -288,18 +288,31 @@ The workflow includes presets, increment/decrement requests for
 <code>at_limit</code>, and <code>receiver_ready</code>. Its training metric
 comes from the active bench.
 
-#### 28. IEEE/OIF standards
+#### 28. Compliance · IEEE/OIF
 
-A catalog of 17 profiles specifying standard or clause, reference
-plane/reach, medium, modulation, and FEC. Every profile states:
+The active profile (name, interface, standard, status) with the list of
+knobs modified since it was loaded, followed by one measurement row per
+contract: measure and reference plane, value measured on the current record,
+registry limit with clause/table/edition, margin bar with the declared
+uncertainty, and two separate chips — the **model** verdict
+(<code>PASS</code>, <code>FAIL</code>, <code>MARGINAL</code>,
+<code>PROXY</code>, <code>NOT_APPLICABLE</code>, <code>NOT_ASSESSED</code>,
+<code>ERROR</code>) and the **compliance** claim, which is always
+<code>NOT_ASSESSED</code> because LabPro runs no certified procedure with
+traceable instruments.
 
-- what is published;
-- which numbers are representative;
-- which claim is supported;
-- what remains unsupported or <code>NOT ASSESSED</code>.
+Every limit comes from the single registry in
+<code>serdes_sim/standards.py</code> (per-interface limits with a
+<code>published</code> / <code>to-verify</code> confidence flag); a limit
+that has not been checked against the licensed text never produces a
+pass/fail. The manifest (what is clause and what is a LabPro assumption), the
+17-profile catalog and the verdict legend live in collapsible sections; the
+JSON/Markdown buttons download a traceable report built from the same record
+(config hash, seed, profile, contracts, physics invariants, checkpoints, last
+DR4 run, library versions).
 
 Loading a profile configures the complete bench rather than changing only a
-label.
+label; touching a knob keeps the profile and marks it as modified.
 
 #### 29. DR4 physical procedure
 

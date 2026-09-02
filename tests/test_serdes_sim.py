@@ -740,7 +740,11 @@ def test_dr4_versioned_procedure_closes_full_physical_chain():
     assert dmax == pytest.approx(+0.80, abs=1e-12)
     report = run_dr4_tdecq_e2e(seed=500283)
     assert report["procedure"]["version"] == DR4_TDECQ_V1.version
-    assert report["compliance_status"] == "NOT ASSESSED"
+    assert report["compliance_status"] == "NOT_ASSESSED"
+    assert report["verdict"]["compliance"] == "NOT_ASSESSED"
+    assert report["verdict"]["basis"] == "clause-limit"
+    assert report["limit"]["confidence"] == "published"
+    assert report["tdecq_limit_db"] == report["limit"]["limit"]
     assert not report["uncertainty_complete"]
     assert len(report["cases"]) == 2
     assert all(c["pattern_exact"] and c["link_up"]
@@ -752,12 +756,22 @@ def test_dr4_versioned_procedure_closes_full_physical_chain():
     assert report["numerical_uncertainty_db"] == pytest.approx(0.10, abs=0.02)
     assert report["guarded_tdecq_db"] == pytest.approx(4.43795, abs=0.04)
     assert report["model_status"] == "FAIL"
+    assert report["verdict"]["model"] == "FAIL"
     status = {s["id"]: s["status"] for s in report["steps"]}
+    basis = {s["id"]: s["basis"] for s in report["steps"]}
     assert (status["pattern"] == status["channel"]
             == status["channel_loss"] == status["e2e"] == "PASS")
-    assert status["calibration"] == status["numeric_uncertainty"] == "PASS"
-    assert status["tdecq_limit"] == "FAIL"
-    assert status["reflection"] == status["uncertainty"] == "WARN"
+    # Un'idealizzazione dichiarata (σS=0) non è un PASS: è un PROXY.
+    assert status["calibration"] == "PROXY" and basis["calibration"] == "proxy"
+    assert status["numeric_uncertainty"] == "PASS" and basis["numeric_uncertainty"] == "model"
+    assert status["tdecq_limit"] == "FAIL" and basis["tdecq_limit"] == "clause"
+    assert (status["reflection"] == status["uncertainty"]
+            == status["correlation"] == "NOT_ASSESSED")
+    assert all(basis[k] == "blocker" for k in ("reflection", "uncertainty", "correlation"))
+    from serdes_sim.standards import VERDICTS
+    assert all(s["status"] in VERDICTS for s in report["steps"])
+    assert all(isinstance(s["label"], dict) and s["label"]["it"] and s["label"]["en"]
+               for s in report["steps"])
 
 
 def test_fec_codeword_interleaving_splits_bursts():
@@ -1154,6 +1168,11 @@ def test_standard_catalog_is_consistent_and_honest():
     assert dj.adc_full_scale_vpp == pytest.approx(1.8)
     assert STANDARD_PROFILE_META[
         "P802.3dj (draft) — 200G/lane · elettrico C2C"]["status"] == "draft"
+    # Coerenza descrizione ↔ metadata: "draft" nel testo ⇒ status draft.
+    for name, (_cfg, desc) in STANDARD_PROFILES.items():
+        if "draft" in desc.lower() or "progetto in corso" in desc.lower():
+            assert STANDARD_PROFILE_META[name]["status"] == "draft", name
+            assert STANDARD_PROFILE_META[name]["claim"] == "draft-context", name
     assert all(not cfg.validate() for cfg, _ in STANDARD_PROFILES.values())
 
 
@@ -1181,18 +1200,32 @@ def test_clause93a_com_is_profile_scoped_and_never_claims_compliance():
 
     optical = com_report(LinkConfig())
     assert not optical["applicable"]
-    assert optical["model_result"] == "NOT APPLICABLE"
+    assert optical["model_result"] == "NOT_APPLICABLE"
+    assert optical["verdict"]["model"] == "NOT_APPLICABLE"
 
     kr1 = STANDARD_PROFILES[
         "IEEE 802.3ck — 100GBASE-KR1 · backplane elettrico"][0]
-    out = com_report(kr1)
+    out = com_report(kr1, interface="100GBASE-KR1")
     assert out["applicable"] and out["normative"] is False
-    assert out["compliance_result"] == "NOT ASSESSED"
+    assert out["compliance_result"] == "NOT_ASSESSED"
     assert out["threshold_db"] == 3.0 and out["parameters"]["der0"] == 1e-4
+    assert out["limit"]["confidence"] == "published" and out["limit_from_profile"]
+    assert out["model_result"] in ("PASS", "FAIL")
+    assert out["verdict"]["model"] == out["model_result"]
+    assert out["verdict"]["basis"] == "clause-limit"
     assert len(out["package_cases"]) == 2
     assert all(np.isfinite(r["com_db"]) for r in out["package_cases"])
     assert out["com_db"] == min(r["com_db"] for r in out["package_cases"])
     assert out["worst_case"]["peak_isi_at_der_mv"] >= 0
+    assert "ctle_gdc2_db" in out["worst_case"]
+
+    # 100GAUI-1 C2M is eye-mask based (Annex 120G): COM must not apply.
+    c2m = STANDARD_PROFILES[
+        "IEEE 802.3ck — 100G/lane C2M (AUI) · elettrico corto"][0]
+    blocked = com_report(c2m, interface="100GAUI-1 C2M")
+    assert not blocked["applicable"]
+    assert blocked["model_result"] == "NOT_APPLICABLE"
+    assert blocked["compliance_result"] == "NOT_APPLICABLE"
 
 
 def test_every_measure_has_an_explicit_standards_contract():
@@ -1200,12 +1233,13 @@ def test_every_measure_has_an_explicit_standards_contract():
 
     rows = measurement_contracts(LinkConfig())
     ids = {r["id"] for r in rows}
-    assert {"com", "tdecq", "sndr", "rlm", "optical_levels",
+    assert {"com", "tdecq", "sndr", "rlm", "optical_levels", "eye_mask",
             "eye_opening", "jitter", "ber", "fec", "jtol", "traffic"} <= ids
     assert all(r["standard"] and r["clause"] and r["reference_plane"]
                for r in rows)
+    assert all(r["note"]["it"] and r["note"]["en"] for r in rows)
     # No partial/proxy measurement may emit a normative verdict.
-    assert all(r["compliance"] == "not-assessed" for r in rows)
+    assert all(r["compliance"] in ("NOT_ASSESSED", "NOT_APPLICABLE") for r in rows)
 
 
 def test_education_catalog_is_bilingual_and_covers_chain():
@@ -1438,11 +1472,11 @@ def test_workspace_has_accessible_reorderable_lazy_tab_groups():
     assert 'if (e.shiftKey) { movePanelToIndex' in source
     assert 'const WORKSPACE_KEY = "labpro_workspace4"' in source
     assert 'version: 4, activeIndex, groups, panels' in source
-    assert 'const [t, sz, group]' in source
+    assert 'const [t, sz, group, pinned]' in source   # quarta colonna: dock (iter. 45)
     assert 'const wasMounted = p._mounted;' in source and 'mountPanel(p);' in source
     assert 'if (!_buildingLayout) activatePanel(p, true);' in source
-    assert 'if (_activePanelId != null && p.id !== _activePanelId) return false;' in source
-    assert 'const p = S.panels.find(x => x.id === _activePanelId);' in source
+    assert 'if (_activePanelId != null && !isVisiblePanel(p)) return false;' in source   # attivo o fissato nel dock
+    assert 'if (!isVisiblePanel(p) || !p._mounted) continue;' in source   # tick: attivo + dock
     assert '.workspace-tab-list { display: flex' in css
     assert '.workspace-tab-group { --group-color:' in css
     assert '.workspace-tab-group.collapsed .tab-group-tabs { display: none; }' in css
