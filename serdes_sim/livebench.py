@@ -122,6 +122,15 @@ class LiveBench:
         self.l2_lost = 0
         self.l2_thr_sum = 0.0
         self.l2_records = 0
+        self.l2_dup = 0
+        self.l2_ooo = 0
+        self.l2_lost_emu = 0
+        self.l2_corrupt_emu = 0
+        self.l1_records = 0
+        self.l1_locked = 0
+        self.l1_header_errors = 0
+        self.l1_blocks = 0
+        self.l1_hi_ber = 0
         # BERT error insertion: transazione single-flight sul prossimo record.
         # Il risultato resta latched: il record live successivo non deve far
         # sparire l'unica evidenza che l'errore ha attraversato il RX fisico.
@@ -451,6 +460,16 @@ class LiveBench:
                     self.l2_lost += r.l2.frames_lost
                     self.l2_thr_sum += r.l2.throughput_gbps
                     self.l2_records += 1
+                    self.l2_dup += r.l2.frames_duplicated
+                    self.l2_ooo += r.l2.frames_out_of_order
+                    self.l2_lost_emu += r.l2.lost_emulated
+                    self.l2_corrupt_emu += r.l2.corrupt_emulated
+                if r.l1 is not None:
+                    self.l1_records += 1
+                    self.l1_locked += int(bool(r.l1.lock))
+                    self.l1_header_errors += int(r.l1.sync_header_errors)
+                    self.l1_blocks += int(r.l1.blocks)
+                    self.l1_hi_ber += int(bool(r.l1.hi_ber))
                 self.ber_history.append(self.ber_cum)
                 del self.ber_history[:-600]
                 self._hist_push(r, row)
@@ -527,6 +546,14 @@ class LiveBench:
                 "last": (dict(self.last_injection)
                          if self.last_injection is not None else None),
             },
+            "l1": {
+                "coding": self._cfg.l2_pcs_coding,
+                "records": self.l1_records,
+                "locked_records": self.l1_locked,
+                "sync_header_errors": self.l1_header_errors,
+                "blocks": self.l1_blocks,
+                "hi_ber_records": self.l1_hi_ber,
+            },
             "l2": {
                 "active": bool(self._cfg.pattern == "eth"),
                 "frames_expected": self.l2_expected,
@@ -534,6 +561,12 @@ class LiveBench:
                 "frames_ok": self.l2_ok,
                 "frames_fcs_bad": self.l2_fcs_bad,
                 "frames_lost": self.l2_lost,
+                "frames_duplicated": self.l2_dup,
+                "frames_out_of_order": self.l2_ooo,
+                "lost_emulated": self.l2_lost_emu,
+                "corrupt_emulated": self.l2_corrupt_emu,
+                "workload": self._cfg.l2_workload,
+                "scheduler": self._cfg.l2_scheduler,
                 "loss_pct": (100.0 * self.l2_lost / self.l2_expected
                              if self.l2_expected else float("nan")),
                 "throughput_gbps": (self.l2_thr_sum / self.l2_records

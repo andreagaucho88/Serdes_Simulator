@@ -614,6 +614,16 @@ const PARAMS = {
   l2_frame_bytes: { l: "Frame size", u: "B", min: 64, max: 1024, step: 32 },
   l2_ipg_bytes: { l: "IPG (rate control)", u: "B", min: 8, max: 2000, step: 4 },
   l2_streams: { l: "Stream (Xena)", type: "select", opts: [1, 2, 3, 4] },
+  l2_scheduler: { l: "Scheduler MAC", type: "select", opts: ["round_robin", "weighted", "imix"] },
+  l2_workload: { l: "Workload", type: "select", opts: ["custom", "ai_training", "llm_inference", "storage", "web", "video"],
+    names: { custom: "custom (scheduler)", ai_training: "AI training · all-reduce", llm_inference: "LLM inference", storage: "storage / RDMA-like", web: "web · microservizi", video: "video streaming" } },
+  l2_drop_pct: { l: "Drop (emulato)", u: "%", min: 0, max: 30, step: 0.5 },
+  l2_dup_pct: { l: "Duplicati (emulati)", u: "%", min: 0, max: 30, step: 0.5 },
+  l2_misorder_pct: { l: "Fuori ordine (emulati)", u: "%", min: 0, max: 30, step: 0.5 },
+  l2_corrupt_pct: { l: "Corrotti (emulati)", u: "%", min: 0, max: 30, step: 0.5 },
+  l2_pcs_coding: { l: "PCS (L1)", type: "select", opts: ["scrambler", "64b66b"], names: { scrambler: "scrambler Clause 49", "64b66b": "64b/66b + block lock" } },
+  optical_return_loss_db: { l: "Return loss ottico", u: "dB", min: 0, max: 40, step: 0.5 },
+  optical_reflection_delay_ns: { l: "Ritardo eco", u: "ns", min: 0.5, max: 20, step: 0.5 },
   link_medium: { l: "Mezzo del link", type: "select", opts: ["optical", "copper"],
     names: { optical: L("ottico (MZM+fibra+PD)", "optical (MZM+fiber+PD)"), copper: L("rame (KR/CR/C2M)", "copper (KR/CR/C2M)") } },
   pn_skew_ps: { l: "Skew P/N", u: "ps", min: 0, max: 10, step: 0.25 },
@@ -672,6 +682,8 @@ const PARAMS = {
   fse_taps: { l: "Tap FSE", min: 5, max: 31, step: 2 },
   dfe_taps: { l: "Tap DFE", min: 1, max: 12, step: 1 },
   training_stop: { l: "Fine training", u: "simboli", min: 600, max: 6000, step: 50 },
+  rin_at_source: { l: L("RIN alla sorgente", "RIN at source"), type: "select", opts: [false, true],
+    names: { false: L("al fotodiodo (baseline)", "at the photodiode (baseline)"), true: L("nel campo ottico", "in the optical field") } },
   causal_filters: { l: "Filtri causali", type: "select", opts: [false, true],
     names: { false: L("fase zero (v7)", "zero phase (v7)"), true: L("Butterworth causale", "causal Butterworth") } },
 };
@@ -701,6 +713,10 @@ const PARAM_EN = {
   fiber_loss_db_km: "Fiber loss", fiber_type: "Fiber type",
   mmf_modal_bw_mhz_km: "MMF bandwidth-distance product", n_symbols: "Symbols/record", pattern: "PPG pattern",
   l2_frame_bytes: "Frame size", link_medium: "Link medium", pn_skew_ps: "P/N skew",
+  l2_scheduler: "MAC scheduler", l2_workload: "Workload", l2_drop_pct: "Drop (emulated)",
+  l2_dup_pct: "Duplicates (emulated)", l2_misorder_pct: "Out-of-order (emulated)",
+  l2_corrupt_pct: "Corrupted (emulated)", l2_pcs_coding: "PCS (L1)",
+  optical_return_loss_db: "Optical return loss", optical_reflection_delay_ns: "Echo delay",
   pn_gain_mismatch_pct: "P/N mismatch", vcm_offset_v: "Common-mode offset",
   electrical_drive_mode: "Electrical drive plane",
   vcm_noise_mv: "Common-mode noise", xtalk_next_db: "NEXT @ Nyquist",
@@ -725,6 +741,10 @@ const PARAM_EN = {
   fse_taps: "FSE taps", dfe_taps: "DFE taps", causal_filters: "Causal filters",
 };
 const OPTION_EN = {
+  "custom (scheduler)": "custom (scheduler)", "AI training · all-reduce": "AI training · all-reduce",
+  "storage / RDMA-like": "storage / RDMA-like", "web · microservizi": "web · microservices",
+  "video streaming": "video streaming", "scrambler Clause 49": "Clause 49 scrambler",
+  "64b/66b + block lock": "64b/66b + block lock",
   nessuno: "none", "ottico (MZM+fibra+PD)": "optical (MZM+fiber+PD)",
   "rame (KR/CR/C2M)": "copper (KR/CR/C2M)", "fase zero (v7)": "zero phase (v7)",
   "Butterworth causale": "causal Butterworth", "Gardner (2 sps)": "Gardner (2 sps)",
@@ -741,7 +761,7 @@ const OPTION_EN = {
   "HEX utente (MSB-first)": "user HEX (MSB first)",
   "SSPRQ-like legacy (proxy)": "legacy SSPRQ-like (proxy)",
 };
-const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "custom_pattern_hex": "User HEX pattern", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
+const PARAMS_EN = {"symbol_rate_hz": "Baud rate", "prbs_order": "PRBS", "modulation": "Modulation", "pam4_mapping": "PAM4 mapping", "fec_mode": "In-path FEC", "pattern": "Pattern (PPG)", "custom_pattern_hex": "User HEX pattern", "l2_frame_bytes": "Frame size", "n_symbols": "Symbols/record", "training_start": "Training start", "training_stop": "Training end", "link_medium": "Link medium", "pn_skew_ps": "P/N skew", "pn_gain_mismatch_pct": "P/N mismatch", "vcm_offset_v": "V_cm offset", "vcm_noise_mv": "CM noise", "xtalk_next_db": "NEXT @Nyq", "xtalk_fext_db": "FEXT @Nyq", "s4p_pairs": "s4p ports", "tx_rj_rms_fs": "TX clock RJ", "tx_pj_amp_ui": "PJ amplitude", "tx_pj_freq_mhz": "PJ frequency", "tx_dcd_pct": "DCD", "tx_buj_amp_ui": "BUJ amplitude", "tx_ssc_ppm": "SSC down-spread", "tx_ssc_khz": "SSC frequency", "dac_bits": "DAC bits", "dac_bw_hz": "DAC bandwidth", "dac_full_scale_vpp": "DAC full scale", "driver_gain_v_per_unit": "Driver gain", "driver_bw_hz": "Driver bandwidth", "driver_clip_v": "Driver rails", "channel_il_nyquist_db": "IL @ Nyquist", "return_loss_db": "Return loss", "echo_delay_ui": "Echo delay", "group_delay_ripple_ps": "GD ripple", "laser_dbm": "Laser power", "vpi_v": "Vπ", "mzm_bias_rad": "MZM bias", "mzm_bw_hz": "Modulator bandwidth", "mzm_il_db": "Modulator IL", "chirp_alpha": "Chirp α", "coupling_il_db": "Coupling IL", "fiber_km": "Fiber length", "dispersion_ps_nm_km": "D", "wavelength_nm": "λ", "fiber_loss_db_km": "Fiber loss", "pd_responsivity_a_w": "Responsivity", "pd_dark_current_a": "Dark current", "pd_bw_hz": "PD bandwidth", "pd_saturation_a": "PD saturation", "rin_db_hz": "RIN", "rin_at_source": "RIN at source", "tia_noise_a_rt_hz": "TIA noise", "tia_transimpedance_ohm": "Z_T", "tia_bw_hz": "TIA bandwidth", "tia_clip_v": "TIA clip", "agc_target_rms_v": "AGC target", "pvt_process": "Process corner", "pvt_vdd_pct": "RX supply", "pvt_temp_c": "Die temperature", "ctle_zero_hz": "Zero", "ctle_pole_hz": "Pole", "ctle_hf_pole_hz": "High pole", "ctle_dc_gain_db": "DC gain", "adc_bits": "ADC bits", "adc_full_scale_vpp": "ADC full scale", "adc_jitter_rms_fs": "Aperture jitter", "adc_phase_ui": "Sampling phase", "adc_gain_mismatch_rms": "Gain mismatch", "adc_offset_mismatch_rms_v": "Offset mismatch", "adc_skew_mismatch_rms_fs": "Skew mismatch", "cdr_mode": "CDR mode", "cdr_bw": "Loop bandwidth", "cdr_damping": "Damping ζ", "rx_ppm_offset": "RX clock offset", "fse_taps": "FSE taps", "dfe_taps": "DFE taps", "causal_filters": "Causal filters", "l2_ipg_bytes": "IPG (rate control)", "l2_streams": "Streams (Xena)"};
 Object.assign(PARAM_EN, PARAMS_EN);   // un solo dizionario effettivo per le label EN
 let _pendingCfg = {};
 let _cfgWaiters = [];
@@ -1249,6 +1269,8 @@ PANEL_DEFS.scope = {
       <label><input type="checkbox" data-k="cursor"> cursore</label>
       <input type="range" min="-90" max="90" value="0" data-k="curpos" style="width:90px" disabled>
       <select data-k="rf" title="Filtro di misura Bessel-Thomson 4° ordine (ricevitore di riferimento 802.3; TDECQ usa 0.5·Bd)"><option value="">Ref RX off</option><option value="bt4_075">BT4 0.75·Bd</option><option value="bt4_05">BT4 0.5·Bd</option></select>
+      <select data-k="fix"><option value="0">fixture off</option><option value="3">fixture 3 dB</option><option value="6">fixture 6 dB</option><option value="10">fixture 10 dB</option></select>
+      <label><input type="checkbox" data-k="deembed"> de-embed</label>
       <label><input type="checkbox" data-k="mask"> mask</label>
       <input type="range" min="5" max="70" value="30" data-k="maskw" style="width:60px" title="larghezza mask %UI" disabled>
       <input type="range" min="5" max="80" value="40" data-k="maskh" style="width:60px" title="altezza mask %eye" disabled>
@@ -1294,6 +1316,13 @@ PANEL_DEFS.scope = {
     q("maskw").oninput = e => { p.maskW = +e.target.value; this.maskCount(p); };
     q("maskh").oninput = e => { p.maskH = +e.target.value; this.maskCount(p); };
     q("rf").onchange = e => { p.refFilter = e.target.value; p.acc.fill(0); this.refetch(p); };
+    // fixture di misura (cavo/connettore fra DUT e DCA) e de-embedding: strumenti
+    // del DCA, valutati dal server sullo stesso record — non toccano il datapath
+    p.fixtureDb = 0; p.deembed = false;
+    q("fix").title = TT("fixture dichiarata fra DUT e DCA: perdita ∝ √f con N dB a Nyquist; l'occhio 'embedded' è quello che il DCA vedrebbe senza correzione", "declared fixture between DUT and DCA: √f loss with N dB at Nyquist; the 'embedded' eye is what the DCA would see without correction");
+    q("deembed").title = TT("filtro inverso regolarizzato H*/(|H|²+ε): rimuove la fixture fino al floor di regolarizzazione (30 dB)", "regularized inverse filter H*/(|H|²+ε): removes the fixture down to the regularization floor (30 dB)");
+    q("fix").onchange = e => { p.fixtureDb = Number(e.target.value) || 0; p.acc.fill(0); this.refetch(p); };
+    q("deembed").onchange = e => { p.deembed = !!e.target.checked; p.acc.fill(0); this.refetch(p); };
     p.readoutEl = q("readout");
     p.body.appendChild(bar);
     const multi = CE("div", "scope-bar scope-channels");
@@ -1601,7 +1630,7 @@ PANEL_DEFS.scope = {
       const nodes = [p.node, ...(p.auxNodes || []).filter(Boolean)];
       if (p.view === "wave") {
         // Oscilloscope mode: finestra continua coerente, stessi canali
-        const pack = await GET(`/api/scope?view=wave&nodes=${encodeURIComponent(nodes.join(","))}&start=${p.waveStart}&span=${p.waveSpan}&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}`);
+        const pack = await GET(`/api/scope?view=wave&nodes=${encodeURIComponent(nodes.join(","))}&start=${p.waveStart}&span=${p.waveSpan}&fix=${p.fixtureDb || 0}&deembed=${p.deembed ? 1 : 0}&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}`);
         if (requestSeq !== p.fetchSeq || !p.el.isConnected || p.view !== "wave") return;
         const aq2 = pack._acquisition || {};
         p.acqText = `${aq2.source || "—"} #${aq2.records ?? "—"} seed ${aq2.seed ?? "—"}`;
@@ -1610,7 +1639,7 @@ PANEL_DEFS.scope = {
         p._waveDirty = true;
         return;
       }
-      const pack = await GET(`/api/scope?nodes=${encodeURIComponent(nodes.join(","))}&n=600&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}&_=${Date.now()}`);
+      const pack = await GET(`/api/scope?nodes=${encodeURIComponent(nodes.join(","))}&n=600&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}&fix=${p.fixtureDb || 0}&deembed=${p.deembed ? 1 : 0}&_=${Date.now()}`);
       if (requestSeq !== p.fetchSeq || !p.el.isConnected) return;
       const d = pack.channels[0], aq = pack._acquisition || {};
       p.acqText = `${aq.source || "—"} #${aq.records ?? "—"} seed ${aq.seed ?? "—"} · ${pack.coherent ? "COHERENT" : ""}`;
@@ -1895,6 +1924,7 @@ PANEL_DEFS.jitter = {
           { l: "DJ(δδ)", v: fix(d.tail_fit.dj_dd_ps, 2) + " ps", sub: "dual-Dirac", title: L("distanza fra le intercette a Q=0 (Derickson eq. 2-41); per costruzione DJ(δδ) ≤ DJ(pp)", "distance between the Q=0 intercepts (Derickson eq. 2-41); by construction DJ(δδ) ≤ DJ(pp)") },
           { l: "TJ@1e-12", v: fix(d.tail_fit.tj_1e12_ps, 2) + " ps", sub: `TJ@2.4e-4 ${fix(d.tail_fit.tj_2p4e4_ps, 2)} ps`, title: "TJ(p) = 2·Q_p·σ + DJ(δδ) — Derickson & Müller eq. 2-41" },
           { l: "EW@2.4e-4", v: fix(d.tail_fit.ew_2p4e4_ui, 3) + " UI", cls: d.tail_fit.ew_2p4e4_ui > 0 ? "" : "fail", sub: L("apertura orizzontale alla soglia FEC", "horizontal opening at the FEC threshold") },
+          { l: "J2 / J9", v: `${fix(d.tail_fit.j2_ps, 2)} / ${fix(d.tail_fit.j9_ps, 2)} ps`, sub: (d.tail_fit.j2_measured_ps != null ? `J2 ${L("misurato", "measured")} ${fix(d.tail_fit.j2_measured_ps, 2)} ps · ` : "") + L("J9 estrapolato (dual-Dirac)", "J9 extrapolated (dual-Dirac)"), title: L("J2 = jitter totale a BER 2.5e-3 (misurato dai percentili del TIE quando ci sono ≥2000 crossing), J9 = jitter totale a BER 2.5e-10 estrapolato con il modello dual-Dirac: la coppia di metriche del jitter mode dei DCA", "J2 = total jitter at BER 2.5e-3 (measured from TIE percentiles when ≥2000 crossings exist), J9 = total jitter at BER 2.5e-10 extrapolated with the dual-Dirac model: the DCA jitter-mode pair of metrics") },
         ] : []),
       ]));
       const lw = PL({ height: 145, showlegend: false });
@@ -2157,7 +2187,7 @@ PANEL_DEFS.optical = {
   title: "Optical TX · fiber · levels", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "optical_drive_vpp_v", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
+    p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "optical_drive_vpp_v", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "optical_return_loss_db", "optical_reflection_delay_ns", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
     const grid = CE("div", "grid2");
     p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
@@ -2553,17 +2583,56 @@ PANEL_DEFS.dr4proc = {
   make(p) {
     p.body.innerHTML = "";
     const bar = CE("div", "scope-bar");
-    p.run = CE("button", "btn btn-accent", L("ESEGUI DR4 COMPLETA (~7 s)", "RUN FULL DR4 (~7 s)"));
+    p.run = CE("button", "btn btn-accent", L("ESEGUI DR4 COMPLETA (~30 s)", "RUN FULL DR4 (~30 s)"));
     p.run.dataset.action = "dr4";
-    p.run.title = TT("usa tutti i 65.535 simboli SSPRQ e i due estremi di dispersione; non modifica il banco", "uses all 65,535 SSPRQ symbols and both dispersion endpoints; does not modify the bench");
+    p.run.title = TT("usa tutti i 65.535 simboli SSPRQ su 8 casi: due estremi di dispersione × tre split di polarizzazione, riflessione alla tolleranza TX e RIN di stress; non modifica il banco", "uses all 65,535 SSPRQ symbols over 8 cases: two dispersion endpoints × three polarization splits, reflection at the TX tolerance and stress RIN; does not modify the bench");
     p.seed = CE("input"); p.seed.type = "number"; p.seed.min = "0"; p.seed.max = "4294967295"; p.seed.value = "500283"; p.seed.style.width = "110px";
     bar.append(p.run, CE("span", "", "seed"), p.seed);
     p.body.appendChild(bar);
+    // --- golden correlation: dataset JSON (waveform + riferimenti strumento) --
+    const gbar = CE("div", "scope-bar");
+    gbar.appendChild(CE("b", "sec-tag", L("GOLDEN", "GOLDEN")));
+    p.goldFile = CE("input"); p.goldFile.type = "file"; p.goldFile.accept = "application/json,.json"; p.goldFile.hidden = true;
+    const goldLoad = CE("button", "btn", L("Carica dataset golden (JSON)", "Load golden dataset (JSON)"));
+    goldLoad.dataset.action = "golden_load";
+    goldLoad.onclick = () => p.goldFile.click();
+    p.goldFile.onchange = async () => {
+      const f = p.goldFile.files[0]; p.goldFile.value = ""; if (!f) return;
+      try {
+        const dataset = JSON.parse(await f.text());
+        const d = await POST("/api/golden", { dataset });
+        this.renderGolden(p, d.result, d.dataset);
+        toast(L("dataset golden correlato", "golden dataset correlated"), "success");
+      } catch (e) { toast(e instanceof SyntaxError ? L("file non valido: non è un JSON", "invalid file: not JSON") : e.message, "error"); }
+    };
+    const goldEx = CE("button", "btn", L("Esempio sintetico", "Synthetic example"));
+    goldEx.dataset.action = "golden_example";
+    goldEx.onclick = async () => {
+      goldEx.disabled = true;
+      try { const d = await POST("/api/golden", { example: true }); this.renderGolden(p, d.result, d.dataset); }
+      catch (e) { toast(e.message, "error"); }
+      goldEx.disabled = false;
+    };
+    gbar.append(goldLoad, goldEx, p.goldFile);
+    p.body.appendChild(gbar);
+    p.goldOut = CE("div"); p.body.appendChild(p.goldOut);
+    GET("/api/golden").then(d => { if (d && d.result) this.renderGolden(p, d.result, d.dataset); }).catch(() => { });
     p.host = CE("div"); p.body.appendChild(p.host);
     p.host.innerHTML = `<div class="note">${L(
       "Procedura LabPro versionata sul target DR4 per-lane: SSPRQ pubblico completo → TX → due canali di dispersione → reference RX TDECQ → PD/TIA/ADC/CDR/DSP. Il verdetto del modello resta separato dalla conformità IEEE.",
       "Versioned LabPro procedure for the per-lane DR4 target: full public SSPRQ → TX → two dispersion channels → TDECQ reference RX → PD/TIA/ADC/CDR/DSP. The model verdict remains separate from IEEE compliance.")}</div>`;
     p.run.onclick = () => this.runProcedure(p);
+  },
+  renderGolden(p, r, meta) {
+    p.goldOut.innerHTML = "";
+    if (!r || !r.ok) { p.goldOut.innerHTML = `<div class="note w">${esc((r && r.problems || []).join("; ") || L("nessun dataset golden", "no golden dataset"))}</div>`; return; }
+    const m = r.measured || {}, ref = r.reference || {}, dl = r.deltas || {};
+    const row = (k, unit) => `<tr><td>${k}</td><td>${m[k] == null ? "—" : fix(m[k], 3)} ${unit}</td><td>${ref[k] == null ? "—" : fix(ref[k], 3)} ${unit}</td><td class="${dl[k] == null ? "" : (Math.abs(dl[k]) <= r.tolerance_db ? "ok" : "fail")}">${dl[k] == null ? "—" : (dl[k] >= 0 ? "+" : "") + fix(dl[k], 3)} ${unit}</td></tr>`;
+    p.goldOut.innerHTML = `<div class="readout">
+      <div class="ro"><label>${L("correlazione golden", "golden correlation")}</label><b>${verdictPair(r.verdict)}</b><span class="sub">${esc(r.source)} · ${esc(r.instrument || "")} · ${r.n_symbols} sym @ ${r.samples_per_ui} sps</span></div>
+      <div class="ro"><label>${L("delta peggiore", "worst delta")}</label><b class="${verdictCls((r.verdict || {}).model)}">${fix(r.worst_delta_db, 3)} dB</b><span class="sub">${L("tolleranza", "tolerance")} ±${fix(r.tolerance_db, 2)} dB · ${r.compared} ${L("grandezze", "quantities")}</span></div>
+    </div><table class="mini"><tr><th>${L("misura", "measure")}</th><th>LabPro</th><th>${L("strumento", "instrument")}</th><th>Δ</th></tr>${row("tdecq_db", "dB")}${row("oma_outer_dbm", "dBm")}${row("er_db", "dB")}</table>
+    <div class="sub">${esc((meta && meta.note) || "")} ${r.source !== "instrument" ? L("— dataset sintetico: verdetto PROXY; carica un export DCA (source=instrument) per chiudere lo step di correlazione della DR4.", "— synthetic dataset: PROXY verdict; load a DCA export (source=instrument) to close the DR4 correlation step.") : ""}</div>`;
   },
   async runProcedure(p) {
     p.run.disabled = true;
@@ -2573,7 +2642,7 @@ PANEL_DEFS.dr4proc = {
       this.render(p, out.report);
     } catch (e) { toast(e.message, "error"); }
     p.run.disabled = false;
-    p.run.textContent = L("ESEGUI DR4 COMPLETA (~7 s)", "RUN FULL DR4 (~7 s)");
+    p.run.textContent = L("ESEGUI DR4 COMPLETA (~30 s)", "RUN FULL DR4 (~30 s)");
   },
   render(p, d) {
     p.host.innerHTML = "";
@@ -2586,12 +2655,13 @@ PANEL_DEFS.dr4proc = {
       { l: L("durata", "elapsed"), v: fix(d.elapsed_s, 2) + " s", sub: `${d.procedure.pattern_symbols.toLocaleString()} sym` },
     ]));
     p.host.appendChild(CE("div", "mbar-host", marginBar(Object.assign({}, vd, { value: d.worst_tdecq_db, uncertainty: d.numerical_uncertainty_db })) + `<div class="sub">${L("barra: TDECQ worst con banda ±u_grid contro il limite del registro", "bar: worst TDECQ with ±u_grid band against the registry limit")}</div>`));
+    const stressLabel = { polarization: L("polarizzazione", "polarization"), reflection: L("riflessione", "reflection"), rin: "RIN" };
     const cases = d.cases.map(c => `<tr>
-      <td><b>${esc(c.name)}</b></td><td>${c.total_dispersion_ps_nm >= 0 ? "+" : ""}${fix(c.total_dispersion_ps_nm, 4)} ps/nm<br><span class="sub">DGD ${fix(c.dgd_ps, 3)} ps</span></td>
+      <td><b>${esc(c.name)}</b><br><span class="sub">${esc(stressLabel[c.stress] || c.stress || "")}${c.polarization_split != null ? ` · split ${fix(c.polarization_split, 1)}` : ""}${c.return_loss_db ? ` · RL ${fix(c.return_loss_db, 1)} dB` : ""}${c.stress === "rin" ? ` · ${fix(c.rin_db_hz, 0)} dB/Hz` : ""}</span></td><td>${c.total_dispersion_ps_nm >= 0 ? "+" : ""}${fix(c.total_dispersion_ps_nm, 4)} ps/nm<br><span class="sub">DGD ${fix(c.dgd_ps, 3)} ps</span></td>
       <td>${verdictChip((c.tdecq_verdict || {}).model || (c.tdecq_model_pass ? "PASS" : "FAIL"))} ${c.tdecq.tdecq_db == null ? L("nessun valore finito", "no finite value") : fix(c.tdecq.tdecq_db, 3) + " dB"}<br><span class="sub">Ceq ${fix(c.tdecq.ceq_db, 2)} dB · Σc ${fix(c.tdecq.tap_sum, 6)} · Δgrid ${fix(c.numeric_grid_delta_db, 3)} dB</span></td>
       <td>${verdictChip(c.link_up ? "PASS" : "FAIL", { label: c.link_up ? "UP" : "DOWN" })}<br><span class="sub">BER ${c.ber_post_dfe == null ? "—" : sci(c.ber_post_dfe)}</span></td>
       <td>${verdictChip(c.pattern_exact && c.physical_checks_pass ? "PASS" : "FAIL", { label: c.pattern_exact ? "SSPRQ exact" : "pattern FAIL" })}</td></tr>`).join("");
-    p.host.appendChild(CE("div", "standard-table", `<h3>${L("Casi fisici end-to-end", "End-to-end physical cases")}</h3><table class="mini"><tr><th>${L("estremo", "endpoint")}</th><th>${L("canale", "channel")}</th><th>TDECQ</th><th>RX/DSP</th><th>PPG</th></tr>${cases}</table></div>`));
+    p.host.appendChild(CE("div", "standard-table", `<h3>${L("Spazio di stress end-to-end", "End-to-end stress space")} · ${d.cases.length} ${L("casi", "cases")}${d.worst_case ? ` · ${L("peggiore", "worst")}: ${esc(d.worst_case)}` : ""}${d.baseline_tdecq_db != null ? ` · 50/50 ${fix(d.baseline_tdecq_db, 3)} dB` : ""}</h3><table class="mini"><tr><th>${L("caso", "case")}</th><th>${L("canale", "channel")}</th><th>TDECQ</th><th>RX/DSP</th><th>PPG</th></tr>${cases}</table></div>`));
     const BASIS = { clause: L("clausola", "clause"), model: L("criterio del modello", "model criterion"), proxy: L("idealizzazione dichiarata", "declared idealization"), blocker: L("requisito non coperto", "uncovered requirement") };
     const steps = d.steps.map(s => `<tr><td>${verdictChip(s.status)}</td><td><b>${esc(bi(s.label))}</b><br><span class="sub">${esc(bi(s.requirement))}</span></td><td>${esc(tr(s.evidence))}<br><span class="sub">${esc(BASIS[s.basis] || s.basis || "")}${s.source ? ` · <a href="${esc(s.source)}" target="_blank" rel="noreferrer">${L("fonte", "source")}</a>` : ""}</span></td></tr>`).join("");
     p.host.appendChild(CE("div", "standard-table", `<h3>${L("Checklist procedurale", "Procedure checklist")}</h3><table class="mini"><tr><th>status</th><th>${L("passo / requisito", "step / requirement")}</th><th>${L("evidenza · base", "evidence · basis")}</th></tr>${steps}</table></div>`));
@@ -2607,12 +2677,12 @@ PANEL_DEFS.instruments = {
     const rows = [
       ["Keysight FlexDCA", "SE P/N + differential/common-mode, simultaneous waveforms", L("implementato: CH A-D coerenti; quick-set P/N/Diff/CM; marker DCA dinamici sui reference plane della catena", "implemented: coherent CH A-D; P/N/Diff/CM quick-set; dynamic DCA markers on chain reference planes"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Channels/channel-elect-diff-setup.htm"],
       ["Keysight FlexDCA", "color-grade eye, mask, levels, rise/fall", L("implementato come misura/proxy LabPro", "implemented as a LabPro measurement/proxy"), "ok", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Eye-Mask-Mode/Advanced-Eye/a_adv_eye_toolbar.htm"],
-      ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4; mancano Jn (J2/J9), decomposizione interferenze e de-embedding", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX; missing Jn (J2/J9), interference decomposition, de-embedding"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
-      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, editor HEX MSB-first, SSPRQ ufficiale verificato ed error analysis burst/EFI; manca la calibrazione completa dello stressed eye", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, MSB-first HEX editor, verified official SSPRQ, and burst/EFI error analysis; complete stressed-eye calibration is missing"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
+      ["Keysight FlexDCA", "RJ/DJ/TJ, Jn, interference, BER contours, de-embedding", L("tail-fit dual-Dirac RJ/DJ(δδ)/TJ@BER, J2 misurato e J9 estrapolato, EH@BER Q-scale, contour BER 2D, statistiche per acquisizione, scale/offset/deskew per canale, Ref RX BT4, fixture dichiarata con de-embedding regolarizzato; manca la decomposizione delle interferenze", "dual-Dirac tail-fit RJ/DJ(δδ)/TJ@BER, measured J2 and extrapolated J9, Q-scale EH@BER, 2D BER contours, per-acquisition statistics, per-channel scale/offset/deskew, BT4 Ref RX, declared fixture with regularized de-embedding; interference decomposition still missing"), "warn", "https://helpfiles.keysight.com/scopes/FlexDCA-UG/Content/Topics/Jitter-Mode/a_jitter_mode.htm"],
+      ["Anritsu MP1900A", "PPG/ED, PAM4 MSB/LSB/symbol, error insertion, stressed RX", L("PPG/ED nel path con MSB/LSB, inserzione singola/burst, gating Start/Stop con CL95, auto-search della fase, editor HEX MSB-first, SSPRQ ufficiale verificato, error analysis burst/EFI e calibrazione stressed-RX sul SECQ (SJ + rumore al target del registro, BER del RX con verdetto); manca l'interferenza sinusoidale", "in-path PPG/ED with MSB/LSB, single/burst insertion, Start/Stop gating with CL95, phase auto-search, MSB-first HEX editor, verified official SSPRQ, burst/EFI error analysis and SECQ stressed-RX calibration (SJ + noise to the registry target, RX BER with verdict); sinusoidal interference missing"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["Anritsu MP1900A", "RJ/SJ/BUJ/SSC + common/differential/white noise", L("RJ/PJ(SJ)/DCD, BUJ (PRBS filtrata) e SSC triangolare implementati e verificati (audit sul time-base: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); la misura ai crossing include correttamente anche DDJ", "RJ/PJ(SJ)/DCD, BUJ (filtered PRBS), and triangular SSC implemented and verified (time-base audit: RJ 1006/1000 fs; SSC −24.1/−24.1 ppm); crossing measurements correctly include DDJ too"), "warn", "https://www.anritsu.com/en-us/test-measurement/products/mp1900a"],
       ["MathWorks SerDes Designer", "auto-analyze, pulse/impulse, statistical eye, contours, bathtub, COM", L("auto-update condiviso, pulse + impulse + cursor, eye/contour/bathtub implementati; COM Annex 93A subset con PDF@DER e package dichiarato; PAM3/8/16 ed export IBIS-AMI completo restano fuori", "shared auto-update, pulse + impulse + cursors, eye/contour/bathtub implemented; Annex 93A COM subset with PDF@DER and declared package; PAM3/8/16 and full IBIS-AMI export remain outside"), "warn", "https://www.mathworks.com/help/serdes/ref/serdesdesigner-app.html"],
-      ["Xena Ethernet Test Platform", "streams, rate, size distributions, throughput/loss/latency/jitter", L("frame/FCS/sequence reali con ispettore byte, size sweep, load ramp via IPG, latency budget per blocco, throughput/loss; mancano multi-stream, scheduler/modifier per stream, impairment drop/misorder/duplicate e latenza con timestamp nel payload", "real frame/FCS/sequence with byte inspector, size sweep, IPG load ramp, per-block latency budget, throughput/loss; missing multi-stream, per-stream scheduler/modifiers, drop/misorder/duplicate impairments, and payload-timestamped latency"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
-      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Ref RX BT4, EH/EW@BER e SNDR hanno confini dichiarati; COM segue un subset Annex 93A. La procedura DR4 v1 esegue SSPRQ completo, estremi di dispersione e catena RX/DSP, ma reflection/polarization stress, uncertainty e golden correlation mantengono la conformità a NOT ASSESSED.", "BT4 Ref RX, EH/EW@BER, and SNDR have declared boundaries; COM follows an Annex 93A subset. DR4 procedure v1 runs the full SSPRQ period, both dispersion endpoints, and the RX/DSP chain, but reflection/polarization stress, uncertainty, and golden correlation keep compliance at NOT ASSESSED."), "warn", "https://www.ieee802.org/3/"],
+      ["Xena Ethernet Test Platform", "streams, scheduler, impairments, workloads, throughput/loss/latency", L("multi-stream con scheduler round-robin/WRR/IMIX, profili di workload (AI training, LLM inference, storage, web, video), emulatore di impairment drop/dup/misorder/corrupt con contatori per stream, PCS 64b/66b con block lock, ispettore byte, size sweep, load ramp via IPG, latency budget; mancano header modifier, latenza con timestamp nel payload e RFC 2544/Y.1564", "multi-stream with round-robin/WRR/IMIX scheduler, workload profiles (AI training, LLM inference, storage, web, video), drop/dup/misorder/corrupt impairment emulator with per-stream counters, 64b/66b PCS with block lock, byte inspector, size sweep, IPG load ramp, latency budget; missing header modifiers, payload-timestamped latency and RFC 2544/Y.1564"), "warn", "https://docs.xenanetworks.com/projects/xenamanager-manual/en/latest/overview.html"],
+      ["IEEE/OIF", "compliance reference receiver / masks / procedures", L("Registro dei limiti per profilo, Ref RX BT4, RLM di clausola, SNDR con fit lineare, COM Annex 93A (93A-46/93A-30, stadio g_DC2). La DR4 v1.2 copre SSPRQ completo, due estremi di dispersione × tre split di polarizzazione, riflessione alla tolleranza TX, RIN di stress e chiude la correlazione golden quando è caricato un dataset da strumento; l'incertezza strumentale mantiene la conformità a NOT ASSESSED.", "Per-profile limit registry, BT4 Ref RX, clause-formula RLM, linear-fit SNDR, Annex 93A COM (93A-46/93A-30, g_DC2 stage). DR4 v1.2 covers the full SSPRQ period, two dispersion endpoints × three polarization splits, reflection at the TX tolerance, stress RIN and closes the golden correlation when an instrument dataset is loaded; instrument uncertainty keeps compliance at NOT ASSESSED."), "warn", "https://www.ieee802.org/3/"],
     ];
     p.body.innerHTML = `<div class="note">${L("Matrice derivata dalla documentazione ufficiale. 'Implementato' significa workflow equivalente nel modello LabPro, non emulazione del firmware o certificazione dello strumento.", "Matrix derived from official documentation. 'Implemented' means an equivalent LabPro model workflow, not firmware emulation or instrument certification.")}</div>
       <table class="mini"><tr><th>${L("riferimento", "reference")}</th><th>${L("funzione manuale", "manual workflow")}</th><th>LabPro</th></tr>
@@ -2712,7 +2782,7 @@ PANEL_DEFS.physics = {
 
 PANEL_DEFS.rxfe = {
   title: "RX front-end — PD · TIA · AGC", size: "s6",
-  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"]));
+  make(p) { p.body.innerHTML = ""; p.body.appendChild(paramsBlock(["pd_responsivity_a_w", "pd_dark_current_a", "pd_bw_hz", "pd_saturation_a", "rin_db_hz", "rin_at_source", "tia_noise_a_rt_hz", "tia_transimpedance_ohm", "tia_vga_range_db", "tia_headroom_ratio", "tia_bw_hz", "tia_clip_v", "agc_target_rms_v", "agc_min_gain_db", "agc_max_gain_db"]));
     p.body.appendChild(CE("div", "note", L("<b>PVT del ricevitore</b>: corner di processo, supply e temperatura scalano banda TIA/CTLE, rumore (∝√T), mismatch ADC e guadagno del loop CDR — sensibilità del primo ordine dichiarate. Prova lo sweep di pvt_temp_c: la BER vs temperatura è la curva di qualifica di un RX vero.", "<b>Receiver PVT</b>: process corner, supply, and temperature scale TIA/CTLE bandwidth, noise (∝√T), ADC mismatch, and CDR loop gain — declared first-order sensitivities. Try sweeping pvt_temp_c: BER vs temperature is a real RX qualification curve.")));
     p.body.appendChild(paramsBlock(["pvt_process", "pvt_vdd_pct", "pvt_temp_c"]));
     // camera climatica: profilo di temperatura del RX nel tempo
@@ -3046,6 +3116,30 @@ PANEL_DEFS.bert = {
     stbar.append(CE("span", "", "target Q [σ]:"), p.stressQ, stLab, p.stressBtn);
     proceduresPane.appendChild(stbar);
     p.stressOut = CE("div"); proceduresPane.appendChild(p.stressOut);
+    // --- stressed receiver v2: calibrazione sul SECQ + test del RX -----------
+    proceduresPane.appendChild(CE("div", "module-head", L(
+      "STRESSED RECEIVER (SECQ) · calibrazione SJ + rumore al target del registro, poi BER del RX",
+      "STRESSED RECEIVER (SECQ) · SJ + noise calibrated to the registry target, then RX BER")));
+    const srbar = CE("div", "scope-bar");
+    p.srBtn = CE("button", "btn btn-accent", L("Calibra stressed RX (~20 s)", "Calibrate stressed RX (~20 s)"));
+    p.srBtn.dataset.action = "stressed_rx";
+    p.srSj = CE("input"); p.srSj.type = "text"; p.srSj.value = "0.05"; p.srSj.style.width = "58px";
+    p.srSjF = CE("input"); p.srSjF.type = "text"; p.srSjF.value = "100"; p.srSjF.style.width = "64px";
+    p.srTarget = CE("input"); p.srTarget.type = "text"; p.srTarget.placeholder = L("registro", "registry"); p.srTarget.style.width = "64px";
+    p.srTarget.title = TT("target SECQ [dB]: vuoto = limite TDECQ del registro per il profilo attivo; un valore esplicito è dichiarato come criterio del modello", "SECQ target [dB]: empty = registry TDECQ limit for the active profile; an explicit value is declared as a model criterion");
+    p.srBtn.onclick = async () => {
+      p.srBtn.disabled = true; const prev = p.srBtn.textContent; p.srBtn.textContent = L("calibrazione…", "calibrating…");
+      try {
+        const body = { sj_ui: Number(p.srSj.value), sj_mhz: Number(p.srSjF.value) };
+        if (p.srTarget.value.trim() !== "") body.target_secq_db = Number(p.srTarget.value);
+        const d = await POST("/api/experiment/stressed-rx", body);
+        this.drawStressedRx(p, d.report);
+      } catch (e) { toast(e.message, "error"); }
+      p.srBtn.disabled = false; p.srBtn.textContent = prev;
+    };
+    srbar.append(CE("span", "", "SJ [UI]:"), p.srSj, CE("span", "", "SJ [MHz]:"), p.srSjF, CE("span", "", "SECQ target [dB]:"), p.srTarget, p.srBtn);
+    proceduresPane.appendChild(srbar);
+    p.srOut = CE("div"); proceduresPane.appendChild(p.srOut);
     proceduresPane.appendChild(CE("div", "note", L(
       "Sensitivity e stressed-eye sono procedure del ricevitore della stessa chain; non aggiungono un secondo RX e non sono procedure normative complete.",
       "Sensitivity and stressed-eye are procedures on the same chain receiver; they add no second RX and are not complete normative procedures.")));
@@ -3212,6 +3306,23 @@ PANEL_DEFS.bert = {
     p.outBtn.classList.toggle("on", on);
     p.outBtn.classList.toggle("off", !on);
   },
+  drawStressedRx(p, d) {
+    p.srOut.innerHTML = "";
+    const vd = d.secq_verdict || {};
+    const rx = d.rx || {};
+    const BASIS = { clause: L("clausola", "clause"), model: L("criterio del modello", "model criterion"), proxy: L("idealizzazione dichiarata", "declared idealization"), blocker: L("requisito non coperto", "uncovered requirement") };
+    p.srOut.appendChild(readout([
+      { l: L("verdetto modello", "model verdict"), v: verdictChip(d.model_status), big: true, sub: `${esc(d.procedure.procedure_id)} v${esc(d.procedure.version)}${d.procedure.interface ? " · " + esc(d.procedure.interface) : ""}` },
+      { l: "SECQ", v: d.secq_db == null ? "—" : fix(d.secq_db, 3) + " dB", cls: verdictCls(vd.model), sub: verdictPair(vd) + `<br>${L("target", "target")} ${fix(d.target_secq_db, 2)} dB (${d.target_basis === "clause" ? L("registro", "registry") : L("dichiarato", "declared")})` },
+      { l: L("ricetta di stress", "stress recipe"), v: `RIN ${fix(d.recipe.rin_db_hz, 1)} dB/Hz`, sub: `SJ ${fix(d.recipe.tx_pj_amp_ui, 3)} UI @ ${fix(d.recipe.tx_pj_freq_mhz, 0)} MHz · ${d.trail.length} sim` },
+      { l: L("BER RX sotto stress", "RX BER under stress"), v: rx.ber_post_dfe == null ? "LINK DOWN" : (rx.errors ? sci(rx.ber_post_dfe) : `< ${sci(rx.verdict && rx.verdict.bound ? rx.verdict.bound.upper : 0)}`), cls: verdictCls((rx.verdict || {}).model), sub: verdictPair(rx.verdict) + `<br>${rx.errors} err / ${eng(rx.bits)}b` + (rx.fec_uncorrectable != null ? ` · ${rx.fec_uncorrectable} ${L("codeword non correggibili", "uncorrectable codewords")}` : "") },
+    ]));
+    p.srOut.appendChild(CE("div", "mbar-host", marginBar(Object.assign({}, vd, { value: d.secq_db })) + `<div class="sub">${L("barra: SECQ calibrato contro il limite TDECQ del registro", "bar: calibrated SECQ against the registry TDECQ limit")}</div>`));
+    const steps = d.steps.map(st => `<tr><td>${verdictChip(st.status)}</td><td><b>${esc(bi(st.label))}</b><br><span class="sub">${esc(bi(st.requirement))}</span></td><td>${esc(tr(st.evidence))}<br><span class="sub">${esc(BASIS[st.basis] || st.basis || "")}</span></td></tr>`).join("");
+    p.srOut.appendChild(CE("div", "standard-table", `<table class="mini"><tr><th>status</th><th>${L("passo / requisito", "step / requirement")}</th><th>${L("evidenza · base", "evidence · basis")}</th></tr>${steps}</table>`));
+    const trail = d.trail.map(t => `${fix(t.rin_db_hz, 1)} → ${t.secq_db == null ? "—" : fix(t.secq_db, 3)} dB`).join(" · ");
+    p.srOut.appendChild(CE("div", "sub", `${L("bisezione RIN", "RIN bisection")}: ${esc(trail)}`));
+  },
   drawStressCal(p, d) {
     p.stressOut.innerHTML = "";
     if (d.status === "already_below") {
@@ -3341,10 +3452,13 @@ PANEL_DEFS.bert = {
 
 /* --- Ethernet L2 (traffic analyzer) --- */
 PANEL_DEFS.l2 = {
-  title: "Ethernet · Traffic L2-lite", size: "s6",
+  title: L("Ethernet · traffico PHY · L1 · L2", "Ethernet · traffic PHY · L1 · L2"), size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["pattern", "l2_frame_bytes", "l2_ipg_bytes", "l2_streams"]));
+    p.body.appendChild(CE("div", "module-head", L("L2 · MAC — generatore, scheduler, workload, impairment", "L2 · MAC — generator, scheduler, workload, impairments")));
+    p.body.appendChild(paramsBlock(["pattern", "l2_workload", "l2_scheduler", "l2_streams", "l2_frame_bytes", "l2_ipg_bytes", "l2_drop_pct", "l2_dup_pct", "l2_misorder_pct", "l2_corrupt_pct"]));
+    p.body.appendChild(CE("div", "module-head", L("L1 · PCS — codifica di linea", "L1 · PCS — line coding")));
+    p.body.appendChild(paramsBlock(["l2_pcs_coding"]));
     const toolsBar = CE("div", "scope-bar");
     const bench = CE("button", "btn btn-accent", L("Benchmark frame size", "Frame-size benchmark"));
     bench.dataset.action = "traffic_benchmark";
@@ -3354,15 +3468,15 @@ PANEL_DEFS.l2 = {
         const d = await POST("/api/experiment/traffic", { frame_sizes: [64, 128, 256, 512, 1024] });
         const rows = d.rows;
         const lay = PL({ height: 220, yaxis2: { overlaying: "y", side: "right", type: "log",
-          title: { text: L("frame loss [%]", "frame loss [%]"), font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+          title: { text: L("frame loss [%]", "frame loss [%]"), font: { size: 10 } }, gridcolor: "rgba(0,0,0,0)" } });
         axis(lay, "xaxis", L("dimensione frame [B]", "frame size [B]"));
         axis(lay, "yaxis", L("throughput utile [Gb/s]", "useful throughput [Gb/s]"));
         plot(p.benchPlot, [
-          { x: rows.map(r => r.frame_bytes), y: rows.map(r => r.throughput_gbps), name: "throughput", line: { color: COL.ok, width: 2 } },
-          { x: rows.map(r => r.frame_bytes), y: rows.map(r => Math.max(r.loss_pct, 1e-4)), name: "FLR %", yaxis: "y2", line: { color: COL.fail, dash: "dot" } },
+          { x: rows.map(r => r.frame_bytes), y: rows.map(r => r.throughput_gbps), name: "throughput", line: { color: SERIES[0], width: 2 } },
+          { x: rows.map(r => r.frame_bytes), y: rows.map(r => Math.max(r.loss_pct, 1e-4)), name: "FLR %", yaxis: "y2", line: { color: SERIES[2], dash: "dot" } },
         ], lay);
-        p.benchTable.innerHTML = `<table class="mini"><tr><th>B</th><th>det/exp</th><th>OK</th><th>FCS</th><th>lost</th><th>eff.</th></tr>${rows.map(r => `<tr><td>${r.frame_bytes}</td><td>${r.frames_detected}/${r.frames_expected}</td><td>${r.frames_ok}</td><td>${r.frames_fcs_bad}</td><td>${r.frames_lost}</td><td>${fix(r.payload_efficiency_pct, 1)}%</td></tr>`).join("")}</table>`;
-      } catch (e) { p.benchTable.innerHTML = `<div class="note w">${e.message}</div>`; }
+        p.benchTable.innerHTML = `<table class="mini"><tr><th>B</th><th>det/exp</th><th>OK</th><th>FCS</th><th>lost</th><th>eff.</th></tr>${rows.map(r => `<tr><td>${r.frame_bytes}</td><td>${r.frames_detected}/${r.frames_expected}</td><td>${r.frames_ok}</td><td>${r.frames_fcs_bad}</td><td>${r.frames_lost}</td><td>${fix(r.payload_efficiency_pct, 1)} %</td></tr>`).join("")}</table>`;
+      } catch (e) { p.benchTable.innerHTML = `<div class="note w">${esc(e.message)}</div>`; }
       bench.disabled = false; bench.textContent = L("Benchmark frame size", "Frame-size benchmark");
     };
     const ont = CE("button", "btn", L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)"));
@@ -3372,67 +3486,103 @@ PANEL_DEFS.l2 = {
       try {
         const d = await POST("/api/experiment/ont", {});
         const lay = PL({ height: 210, yaxis2: { overlaying: "y", side: "right",
-          title: { text: "FLR [%]", font: { size: 9 } }, gridcolor: "rgba(0,0,0,0)" } });
+          title: { text: "FLR [%]", font: { size: 10 } }, gridcolor: "rgba(0,0,0,0)" } });
         axis(lay, "xaxis", "offered load [%]");
         axis(lay, "yaxis", "goodput [Gb/s]");
         const rr = d.ramp.filter(r => isFinite(r.goodput_gbps));
         plot(p.benchPlot, [
-          { x: rr.map(r => r.offered_pct), y: rr.map(r => r.goodput_gbps), name: "goodput", mode: "lines+markers", line: { color: COL.ok, width: 2 } },
-          { x: d.ramp.map(r => r.offered_pct), y: d.ramp.map(r => r.loss_pct), name: "FLR", yaxis: "y2", mode: "lines+markers", line: { color: COL.fail, dash: "dot" } },
+          { x: rr.map(r => r.offered_pct), y: rr.map(r => r.goodput_gbps), name: "goodput", mode: "lines+markers", line: { color: SERIES[0], width: 2 } },
+          { x: d.ramp.map(r => r.offered_pct), y: d.ramp.map(r => r.loss_pct), name: "FLR", yaxis: "y2", mode: "lines+markers", line: { color: SERIES[2], dash: "dot" } },
         ], lay);
-        const bud = d.latency_budget.map(b => `<tr><td>${tr(b.item)}</td><td>${b.ns >= 1000 ? fix(b.ns / 1000, 2) + " µs" : fix(b.ns, 1) + " ns"}</td><td>${tr(b.detail)}</td></tr>`).join("");
+        const bud = d.latency_budget.map(b => `<tr><td>${esc(tr(b.item))}</td><td>${b.ns >= 1000 ? fix(b.ns / 1000, 2) + " µs" : fix(b.ns, 1) + " ns"}</td><td>${esc(tr(b.detail))}</td></tr>`).join("");
         p.benchTable.innerHTML = `<table class="mini"><tr><th>${L("latency budget (one-way)", "latency budget (one-way)")}</th><th>t</th><th></th></tr>${bud}` +
           `<tr><th>${L("totale (budget)", "total (budget)")}</th><th>${fix(d.latency_total_ns / 1000, 2)} µs</th><th></th></tr>` +
-          (d.latency_measured_analog_ns != null ? `<tr><td>${L("GD analogico MISURATO (xcorr)", "MEASURED analog GD (xcorr)")}</td><td>${d.latency_measured_analog_ns < 1 ? fix(d.latency_measured_analog_ns * 1e3, 1) + " ps" : fix(d.latency_measured_analog_ns, 1) + " ns"}</td><td>${L("con filtri zero-fase ≈ 0: attiva causal_filters per il GD reale; fibra e DSP restano budget (record ≪ ritardo)", "≈ 0 with zero-phase filters: enable causal_filters for the real GD; fiber and DSP stay budget (record ≪ delay)")}</td></tr>` : "") +
+          (d.latency_measured_analog_ns != null ? `<tr><td>${L("GD analogico MISURATO (xcorr)", "MEASURED analog GD (xcorr)")}</td><td>${d.latency_measured_analog_ns < 1 ? fix(d.latency_measured_analog_ns * 1e3, 1) + " ps" : fix(d.latency_measured_analog_ns, 2) + " ns"}</td><td>${L("TX drive → uscita CTLE", "TX drive → CTLE output")}</td></tr>` : "") +
           (d.cdr_lock_us != null ? `<tr><td>${L("service disruption proxy", "service disruption proxy")}</td><td>${fix(d.cdr_lock_us, 2)} µs</td><td>${L("tempo di lock del CDR", "CDR lock time")}</td></tr>` : "") + `</table>` +
-          `<div class="note">${L("Ramp: l'IPG modula l'offered load come il rate scheduler di un ONT; la perdita qui viene SOLO dai bit error del PHY (nessun DUT con code). Latenza = budget dai blocchi, non un round-trip con timestamp.", "Ramp: IPG modulates offered load like an ONT rate scheduler; loss here comes ONLY from PHY bit errors (no queueing DUT). Latency = block budget, not a timestamped round-trip.")}</div>`;
-      } catch (e) { p.benchTable.innerHTML = `<div class="note w">${e.message}</div>`; }
+          `<div class="note">${L("Ramp: l'IPG modula l'offered load come il rate scheduler di un ONT; la perdita qui viene SOLO dai bit error del PHY (nessun DUT con code). Latenza = budget dai blocchi, non un round-trip con timestamp.", "Ramp: IPG modulates the offered load like an ONT rate scheduler; loss here comes ONLY from PHY bit errors (no queueing DUT). Latency = block budget, not a timestamped round trip.")}</div>`;
+      } catch (e) { p.benchTable.innerHTML = `<div class="note w">${esc(e.message)}</div>`; }
       ont.disabled = false; ont.textContent = L("ONT: load ramp + latency (~6 s)", "ONT: load ramp + latency (~6 s)");
     };
     const disr = CE("button", "btn", L("Service disruption", "Service disruption"));
     disr.dataset.action = "disrupt";
     disr.title = L("interrompe il segnale per un record (fibra tagliata) e misura l'outage fino al ritorno del lock — il test di disruption di un ONT", "kills the signal for one record (fiber cut) and measures the outage until lock returns — an ONT disruption test");
-    disr.onclick = () => POST("/api/disrupt", {}).then(() => toast(L("segnale interrotto: guarda SYNC LOSS e l'outage misurato", "signal cut: watch SYNC LOSS and the measured outage"))).catch(e => toast(e.message, "error"));
+    disr.onclick = () => POST("/api/disrupt", {}).then(() => toast(L("segnale interrotto: guarda SYNC LOSS e l'outage misurato", "signal cut: watch SYNC LOSS and the measured outage"), "warn")).catch(e => toast(e.message, "error"));
     p.disrInfo = CE("span", "", "");
     toolsBar.append(bench, ont, disr, p.disrInfo, CE("span", "", L("PHY end-to-end; non RFC 2544", "end-to-end PHY; not RFC 2544")));
     p.body.appendChild(toolsBar);
+    p.layers = CE("div", "layers"); p.body.appendChild(p.layers);
     p.ro = CE("div"); p.body.appendChild(p.ro);
     p.insp = CE("div"); p.body.appendChild(p.insp);
     p.benchPlot = CE("div", "plot"); p.body.appendChild(p.benchPlot);
     p.benchTable = CE("div"); p.body.appendChild(p.benchTable);
     p.note = CE("div", "note", L(
-      "Frame reali con preamble/SFD, header, sequence e FCS attraversano FEC e PHY. Workflow ispirato a Xena: il benchmark misura throughput/loss sulla frame size, ma non è RFC 2544 (mancano DUT di rete, latency, rate search e multi-stream).",
-      "Real frames with preamble/SFD, header, sequence, and FCS cross FEC and PHY. Xena-inspired workflow: the benchmark measures throughput/loss versus frame size, but is not RFC 2544 (no network DUT, latency, rate search, or multi-stream)."));
+      "Tre livelli sullo stesso record: L2 (frame MAC con scheduler WRR/IMIX, profili di workload AI/LLM/storage/web/video, emulatore di impairment), L1 (PCS: scrambler Clause 49 o 64b/66b con block lock e monitor dei sync header) e PHY (serializer, canale, ottica, RX, FEC). Le righe 'verifica' chiudono identità contabili fra i livelli. Dichiarato: una sola corsia seriale, niente switch/code/congestione, non è RFC 2544.",
+      "Three layers on the same record: L2 (MAC frames with WRR/IMIX scheduler, AI/LLM/storage/web/video workload profiles, impairment emulator), L1 (PCS: Clause 49 scrambler or 64b/66b with block lock and sync-header monitor) and PHY (serializer, channel, optics, RX, FEC). The 'audit' rows close accounting identities across the layers. Declared: one serial lane, no switch/queues/congestion, not RFC 2544."));
     p.body.appendChild(p.note);
     this.onTick(p);
   },
   async refetchFrames(p) {
     try {
       const d = await GET(`/api/panel/l2?source=${S.running ? "live" : "auto"}`);
+      p.lastPanel = d;
+      if (d.inactive || d.link_down) { p.layers.innerHTML = ""; p.insp.innerHTML = d.link_down ? "" : `<div class="note w">${esc(bi(d.reason || ""))}</div>`; return; }
+      const phy = d.phy || {}, l1 = d.l1 || {}, wl = d.workload || {};
+      // --- tre schede di livello -------------------------------------------
+      const phyCard = `<div class="layer"><div class="layer-h">PHY <span class="sub">${L("serializer · canale · RX · FEC", "serializer · channel · RX · FEC")}</span></div>
+        ${readout([
+          { l: "line rate", v: fix(phy.line_rate_gbps, 1) + " Gb/s", sub: `${esc(S.cfg.modulation)} · ${fix(S.cfg.symbol_rate_hz / 1e9, 3)} GBd` },
+          { l: "BER pre-FEC", v: sci(phy.ber_post_dfe), sub: phy.post_fec_ber != null ? `post-FEC ${sci(phy.post_fec_ber)}` : L("FEC bypass", "FEC bypass") },
+          { l: "lock", v: `${phy.cdr_locked ? "CDR" : "—"} · ${phy.pattern_locked ? "PATTERN" : "—"}`, cls: phy.cdr_locked && phy.pattern_locked ? "ok" : "fail" },
+        ]).outerHTML}</div>`;
+      const mix = l1.block_mix || {};
+      const l1Card = `<div class="layer"><div class="layer-h">L1 · PCS <span class="sub">${esc(l1.coding === "64b66b" ? "64b/66b" : L("scrambler Clause 49", "Clause 49 scrambler"))}</span></div>
+        ${readout(l1.coding === "64b66b" ? [
+          { l: "block lock", v: verdictChip(l1.verdict ? l1.verdict.model : "NOT_ASSESSED", { label: l1.lock ? "LOCK" : "NO LOCK" }), sub: `offset ${l1.lock_offset_bits ?? "—"} bit · ${l1.blocks} ${L("blocchi", "blocks")}` },
+          { l: L("sync header errati", "sync header errors"), v: String(l1.sync_header_errors ?? "—"), cls: (l1.sync_header_errors || 0) ? "warn" : "ok", sub: l1.hi_ber ? "hi_ber" : L("sotto soglia hi_ber (16)", "below hi_ber threshold (16)") },
+          { l: L("mix blocchi", "block mix"), v: `D ${mix.D ?? 0} · S ${mix.S ?? 0} · T ${mix.T ?? 0} · I ${mix.I ?? 0}`, sub: `${L("overhead", "overhead")} ${fix(l1.overhead_pct, 3)} % (66/64)` + (mix.invalid ? ` · ${mix.invalid} ${L("tipi non validi", "invalid types")}` : "") },
+        ] : [
+          { l: L("codifica", "coding"), v: "scrambler", sub: L("1+x³⁹+x⁵⁸ sull'intero flusso · nessun block lock", "1+x³⁹+x⁵⁸ on the whole stream · no block lock") },
+          { l: L("overhead", "overhead"), v: "0 %", sub: L("attiva 64b/66b per vedere il PCS", "enable 64b/66b to see the PCS") },
+        ]).outerHTML}</div>`;
+      const kpi = [
+        { l: L("frame OK · attesi", "frames OK · expected"), v: `${d.frames_ok} / ${d.frames_expected}`, cls: d.frames_lost ? "warn" : "ok", sub: `${d.frames_detected} ${L("rilevati", "detected")} · ${d.frames_fcs_bad} FCS bad` },
+        { l: L("persi", "lost"), v: String(d.frames_lost), cls: d.frames_lost ? "fail" : "ok", sub: `${d.lost_emulated} ${L("emulati", "emulated")} · ${d.lost_phy} PHY` },
+        { l: L("dup · fuori ordine", "dup · out-of-order"), v: `${d.frames_duplicated} · ${d.frames_out_of_order}`, sub: `${d.corrupt_emulated} ${L("corrotti emulati", "emulated corruptions")}` },
+        { l: "goodput", v: fix(d.throughput_gbps, 2) + " Gb/s", sub: `${L("offered", "offered")} ${fix(d.offered_load_pct, 1)} % · ${esc(d.scheduler)}` + (d.weights && d.weights.length > 1 ? ` [${d.weights.join(":")}]` : "") },
+      ];
+      if (wl.name && wl.name !== "custom") kpi.push(
+        { l: L("workload", "workload"), v: esc(wl.label || wl.name), sub: `${L("burst", "burst")} ${wl.burst_on} ${L("frame", "frames")} · ${L("pausa", "gap")} ${wl.gap_ipg} B · ${wl.bursts_in_window} ${L("burst nella finestra", "bursts in window")}` },
+        { l: esc(wl.kpi || "KPI"), v: wl.burst_completion_us != null ? fix(wl.burst_completion_us, 3) + " µs" : "—", sub: `${L("tail FLR", "tail FLR")} ${wl.tail_loss_pct != null ? fix(wl.tail_loss_pct, 1) + " %" : "—"} · ${fix(wl.frames_per_us, 2)} ${L("frame/µs", "frames/µs")}` });
+      const l2Card = `<div class="layer"><div class="layer-h">L2 · MAC <span class="sub">${L("frame, sequence, FCS, scheduler, impairment", "frames, sequence, FCS, scheduler, impairments")}</span></div>${readout(kpi).outerHTML}</div>`;
+      p.layers.innerHTML = phyCard + l1Card + l2Card;
+      // --- tabella per stream + istogramma size + audit ----------------------
       let head = "";
       if (d.per_stream) {
-        head = `<table class="mini"><tr><th>${L("stream", "stream")}</th><th>size</th><th>det</th><th>OK</th><th>FCS</th><th>${L("persi", "lost")}</th></tr>` +
-          d.per_stream.map(st => `<tr><td><b>S${st.stream_id}</b></td><td>${st.size}B</td><td>${st.detected}</td><td class="ok">${st.ok}</td><td class="${st.fcs_bad ? "fail" : ""}">${st.fcs_bad}</td><td class="${st.lost ? "fail" : ""}">${st.lost}</td></tr>`).join("") +
-          `</table><div class="note">${L("Multi-stream stile Xena: ogni stream ha id, sequence e size propri (round-robin). I frame grandi raccolgono più bit error per frame: guarda S0/S2 vs S1.", "Xena-style multi-stream: each stream has its own id, sequence space, and size (round-robin). Large frames collect more bit errors per frame: compare S0/S2 vs S1.")}</div>`;
+        head = `<table class="mini"><tr><th>stream</th><th>${L("peso", "weight")}</th><th>size</th><th>${L("attesi", "exp")}</th><th>OK</th><th>FCS</th><th>${L("persi", "lost")}</th><th>emul.</th><th>dup</th><th>ooo</th></tr>` +
+          d.per_stream.map(st => `<tr><td><b>S${st.stream_id}</b></td><td>${st.weight}</td><td>${st.size ? st.size + "B" : "mix"}</td><td>${st.expected}</td><td class="ok">${st.ok}</td><td class="${st.fcs_bad ? "fail" : ""}">${st.fcs_bad}</td><td class="${st.lost ? "fail" : ""}">${st.lost}</td><td>${st.lost_emulated}</td><td>${st.duplicates}</td><td>${st.out_of_order}</td></tr>`).join("") + `</table>`;
       }
-      if (!d.frames || !d.frames.length) { p.insp.innerHTML = head; return; }
+      const hist = wl.size_histogram ? `<div class="sub">${L("size dei frame attesi", "expected frame sizes")}: ${Object.entries(wl.size_histogram).map(([k, v]) => `${k} B × ${v}`).join(" · ")}</div>` : "";
+      const audit = (d.audit || []).map(a => `<tr><td>${verdictChip(a.status)}</td><td><b>${esc(a.name)}</b><br><span class="sub">${esc(LANG === "en" ? a.en : a.it)}</span></td><td>${esc(a.measured)}</td><td>${esc(a.expected)}</td></tr>`).join("");
+      const auditTbl = audit ? `<table class="mini"><tr><th>${L("verifica", "audit")}</th><th>${L("identità della catena L2→L1→PHY→L1→L2", "L2→L1→PHY→L1→L2 chain identity")}</th><th>${L("misurato", "measured")}</th><th>${L("atteso", "expected")}</th></tr>${audit}</table>` : "";
+      if (!d.frames || !d.frames.length) { p.insp.innerHTML = head + hist + auditTbl; return; }
       const rows = d.frames.map(f => `<tr>
-        <td>${f.seq}</td><td>${f.da.slice(0, 8)}…</td><td>${f.sa.slice(0, 8)}…</td><td>${f.ethertype}</td><td>${f.payload_len}B</td>
-        <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_rx}</td><td>${f.fcs_calc}</td>
-        <td class="${f.fcs_ok ? "ok" : "fail"}">${f.fcs_ok ? "OK" : "BAD"}</td></tr>
-        <tr><td colspan="8" style="font-family:monospace;font-size:9px;color:var(--muted,#7e93a2)">${f.hex_head} …</td></tr>`).join("");
-      p.insp.innerHTML = head + `<table class="mini"><tr><th>seq</th><th>DA</th><th>SA</th><th>EthType</th><th>len</th><th>${L("FCS ricevuta", "FCS received")}</th><th>${L("CRC-32 ricalcolato", "recomputed CRC-32")}</th><th>✓</th></tr>${rows}</table>` +
-        `<div class="note">${L("Ispettore frame: questi sono i byte VERI decodificati dall'ultimo record RX (dopo FEC e descrambler). Ogni frame si verifica così: preamble+SFD (55…d5) delimitano, il sequence number scova i persi, e la FCS ricevuta deve coincidere col CRC-32 ricalcolato sui byte — esattamente come l'ED di uno Xena/ONT.", "Frame inspector: these are the REAL bytes decoded from the last RX record (after FEC and descrambler). Each frame is verified like this: preamble+SFD (55…d5) delimit it, the sequence number catches lost frames, and the received FCS must match the CRC-32 recomputed over the bytes — exactly like a Xena/ONT error detector.")}</div>`;
-    } catch (e) { p.insp.innerHTML = ""; }
+        <td>${f.seq}</td><td>S${f.stream}</td><td>${esc(f.da.slice(0, 8))}…</td><td>${esc(f.sa.slice(0, 8))}…</td><td>${esc(f.ethertype)}</td><td>${f.payload_len}B</td>
+        <td class="${f.fcs_ok ? "ok" : "fail"}">${esc(f.fcs_rx)}</td><td>${esc(f.fcs_calc)}</td>
+        <td>${verdictChip(f.fcs_ok ? "PASS" : "FAIL", { label: f.fcs_ok ? "OK" : "BAD" })}</td></tr>
+        <tr><td colspan="9" style="font-family:monospace;font-size:9px;color:var(--muted,#7e93a2)">${esc(f.hex_head)} …</td></tr>`).join("");
+      p.insp.innerHTML = head + hist + auditTbl + `<table class="mini"><tr><th>seq</th><th>str</th><th>DA</th><th>SA</th><th>EthType</th><th>len</th><th>${L("FCS ricevuta", "FCS received")}</th><th>${L("CRC-32 ricalcolato", "recomputed CRC-32")}</th><th>✓</th></tr>${rows}</table>` +
+        `<div class="note">${L("Ispettore frame: byte VERI ricostruiti dall'ultimo record RX (dopo FEC, PCS/descrambler): preamble+SFD delimitano, il sequence number scova persi/duplicati/fuori ordine, la FCS ricevuta è confrontata con la CRC-32 ricalcolata sul body.", "Frame inspector: REAL bytes reconstructed from the last RX record (after FEC, PCS/descrambler): preamble+SFD delimit, the sequence number reveals lost/duplicate/out-of-order frames, the received FCS is compared with the CRC-32 recomputed on the body.")}</div>`;
+    } catch (e) { p.insp.innerHTML = `<div class="note w">${esc(e.message)}</div>`; }
   },
   onTick(p) {
     if (throttled(p, 2200)) this.refetchFrames(p);
     const a = S.acc; if (!a) return;
     if (p.disrInfo) p.disrInfo.textContent = a.last_disruption_ms != null ? `⏱ outage ${fix(a.last_disruption_ms, 0)} ms` : "";
     if (!a.l2) return;
-    const l = a.l2;
+    const l = a.l2, l1 = a.l1 || {};
     p.ro.innerHTML = "";
     if (!l.active) {
+      p.layers.innerHTML = "";
       p.ro.appendChild(readout([{ l: L("traffico", "traffic"), v: "OFF", sub: L("imposta pattern = frame Ethernet (L2)", "set pattern = Ethernet frames (L2)") }]));
       return;
     }
@@ -3441,12 +3591,11 @@ PANEL_DEFS.l2 = {
       return;
     }
     p.ro.appendChild(readout([
-      { l: L("frame OK (cum.)", "frames OK (cum.)"), v: String(l.frames_ok), big: true, cls: "ok", sub: l.frame_bytes + "B/frame" },
-      { l: L("rilevati / attesi", "detected / expected"), v: `${l.frames_detected || 0} / ${l.frames_expected}` },
-      { l: L("FCS errati", "bad FCS"), v: String(l.frames_fcs_bad), cls: l.frames_fcs_bad ? "fail" : "ok" },
-      { l: L("persi", "lost"), v: String(l.frames_lost), cls: l.frames_lost ? "fail" : "ok", sub: isFinite(l.loss_pct) ? fix(l.loss_pct, 2) + " %" : "" },
+      { l: L("frame OK (cum.)", "frames OK (cum.)"), v: String(l.frames_ok), big: true, cls: "ok", sub: `${l.frames_detected || 0} / ${l.frames_expected} ${L("rilevati / attesi", "detected / expected")}` },
+      { l: L("persi (cum.)", "lost (cum.)"), v: String(l.frames_lost), cls: l.frames_lost ? "fail" : "ok", sub: (isFinite(l.loss_pct) ? fix(l.loss_pct, 2) + " % · " : "") + `${l.lost_emulated || 0} ${L("emulati", "emulated")}` },
+      { l: L("FCS errati · dup · ooo", "bad FCS · dup · ooo"), v: `${l.frames_fcs_bad} · ${l.frames_duplicated || 0} · ${l.frames_out_of_order || 0}`, cls: l.frames_fcs_bad ? "warn" : "ok" },
       { l: L("throughput utile", "useful throughput"), v: fix(l.throughput_gbps, 2) + " Gb/s", sub: L("payload con FCS ok / tempo", "FCS-good payload / time") },
-      { l: L("offered load", "offered load"), v: (() => { const w = l.frame_bytes + 8, ipg = S.cfg.l2_ipg_bytes || 12; return fix(100 * w / (w + ipg), 1); })() + " %", sub: `IPG ${S.cfg.l2_ipg_bytes || 12} B`, title: L("frazione di linea occupata da frame vs IPG: il rate control del generatore, come su uno Xena/ONT", "line fraction carrying frames vs IPG: the generator rate control, as on a Xena/ONT") },
+      ...(l1.coding === "64b66b" ? [{ l: "PCS lock (cum.)", v: `${l1.locked_records} / ${l1.records}`, cls: l1.records && l1.locked_records === l1.records ? "ok" : "warn", sub: `${l1.sync_header_errors} ${L("header errati", "header errors")} / ${l1.blocks} ${L("blocchi", "blocks")}` + (l1.hi_ber_records ? ` · ${l1.hi_ber_records} hi_ber` : "") }] : []),
     ]));
   },
   onConfig(p) { syncParams(p.body); p.lastFetch = 0; this.onTick(p); },
@@ -3727,7 +3876,7 @@ const PALETTE = [
   ["spectrum", "Spectrum analyzer", "electrical", 4, 2],
   ["berlive", L("BER live (accumulo)", "Live BER (accumulated)"), "digital", 4, 3],
   ["feclive", L("FEC live (accumulo)", "Live FEC (accumulated)"), "digital", 4, 5],
-  ["l2", "Ethernet · Traffic L2", "digital", 4, 6],
+  ["l2", "Ethernet · Traffic PHY · L1 · L2", "digital", 4, 6],
   ["cmis", "Module · CMIS-lite", "optical", 4, 6.5],
   ["sweep", L("Sweep parametrico", "Parametric sweep"), null, 4, 7],
   ["jtol", "JTOL-lite (PJ)", "digital", 4, 8],
@@ -3765,7 +3914,7 @@ const PANEL_EN = {
   eq: "RX FFE (T/2 FSE) + DFE", decisions: "Decisions · slicer", scope: "Scope · DCA",
   jitter: "Jitter · TIE", spectrum: "Spectrum analyzer", berlive: "Live BER · accumulated",
   bert: "BERT · TX generator + error analyzer", feclive: "Live FEC · accumulated",
-  l2: "Ethernet · Traffic L2-lite", sweep: "End-to-end parametric sweep",
+  l2: "Ethernet · traffic PHY · L1 · L2", sweep: "End-to-end parametric sweep",
   jtol: "JTOL-lite (PJ)", train: "Link training · coordinate descent", anlt: "AN/LT · Clause 73 + training",
   standards: "Compliance · IEEE / OIF", checks: "Checkpoints & signal ledger",
   dr4proc: "DR4 · end-to-end physical procedure",
@@ -4534,6 +4683,8 @@ async function boot() {
   $("#btn-add").onclick = (e) => {
     e.stopPropagation();
     const open = dd.classList.toggle("open");
+    // il catalogo è a colonne e fisso sotto il bottone: ancoralo alla riga corrente
+    if (open) $("#panel-menu").style.top = ($("#btn-add").getBoundingClientRect().bottom + 8) + "px";
     $("#btn-add").setAttribute("aria-expanded", String(open));
     if (open) setTimeout(() => {
       const f = $("#panel-menu input");
@@ -4559,29 +4710,32 @@ async function boot() {
   mFilter.type = "search";
   mFilter.placeholder = L("filtra pannelli…", "filter panels…");
   mFilter.setAttribute("aria-label", L("filtra pannelli", "filter panels"));
-  mFilter.style.cssText = "margin:4px 6px 6px;width:calc(100% - 12px)";
   mFilter.onclick = (e) => e.stopPropagation();   // non chiudere il menu
   mFilter.oninput = () => {
     const q = mFilter.value.trim().toLowerCase();
     for (const b of menu.querySelectorAll("button"))
       b.hidden = !!q && !b.textContent.toLowerCase().includes(q);
-    for (const s of menu.querySelectorAll(".menu-sec")) {
-      let el = s.nextElementSibling, any = false;
-      while (el && !el.classList.contains("menu-sec")) {
-        if (el.tagName === "BUTTON" && !el.hidden) any = true;
-        el = el.nextElementSibling;
-      }
-      s.hidden = !!q && !any;
-    }
+    for (const g of menu.querySelectorAll(".menu-group"))
+      g.hidden = !!q && ![...g.querySelectorAll("button")].some(b => !b.hidden);
   };
   menu.appendChild(mFilter);
-  let lastGroup = -1;
+  // una colonna per gruppo (griglia fluida): 34 card leggibili senza scroll
+  const groupHosts = new Map();
   for (const [type, name, dom, group] of PALETTE) {
-    if (group !== lastGroup) { menu.appendChild(CE("div", "menu-sec", GROUPS[group])); lastGroup = group; }
+    let host = groupHosts.get(group);
+    if (!host) {
+      host = CE("div", "menu-group");
+      host.appendChild(CE("div", "menu-sec", GROUPS[group]));
+      groupHosts.set(group, host);
+      menu.appendChild(host);
+    }
     const b = CE("button", "", `<span class="dom-dot" style="background:${dom ? DOMC[dom] : COL.muted}"></span>${name}`);
     b.onclick = () => addPanel(type);
-    menu.appendChild(b);
+    host.appendChild(b);
   }
+  // un gruppo con molte card (strumenti + procedure) scorre su due colonne
+  for (const host of groupHosts.values())
+    host.classList.toggle("wide", host.querySelectorAll("button").length > 10);
   cfgChips(); tickTopbar();
   loadLayout();
   connectWS();

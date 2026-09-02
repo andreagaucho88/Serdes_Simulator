@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..utils import (C0_M_S, apply_frequency_response, butterworth_response,
+                     white_noise_from_one_sided_psd,
                      dbm_to_w, w_to_dbm)
 
 
@@ -33,6 +34,8 @@ class OpticalResult:
     # transfer statica per il grafico
     v_static: np.ndarray
     p_static: np.ndarray
+    reflection_mpi_db: float = None  # potenza dell'eco MPI (−2·RL) o None
+    laser_rin_rms_pct: float = None  # RIN alla sorgente: σ relativa [%] o None
 
 
 def mzm_static_transfer(cfg, n_points=1200):
@@ -135,7 +138,46 @@ def run_optical(cfg, electrical_waveform_v, rng=None) -> OpticalResult:
                      / lambda_m ** 3))
     fiber_length_m = cfg.fiber_km * 1e3
 
+    # RIN alla sorgente (rin_at_source): rumore d'intensità moltiplicativo
+    # sull'uscita del modulatore (laser CW × modulatore lineare ⇒ equivale
+    # a metterlo sul laser), bianco sulla banda analogica.  La PSD è quella
+    # della definizione di clausola RIN_xOMA (52.9.6 / 124.8.7): rumore al
+    # livello ALTO riferito all'OMA, cioè σ²_high = 10^(RIN/10)·OMA²·BW; per
+    # gli altri livelli il rumore scala con la potenza istantanea.  Entra nel
+    # campo ottico (TDECQ/SECQ lo vedono) e arriva al PD via square-law; il
+    # termine RIN del ricevitore viene azzerato per non contarlo due volte.
+    # Con il flag spento resta il modello storico della baseline (corrente
+    # di rumore bianca al PD riferita alla corrente media).
+    laser_rin_rms_pct = None
+    if cfg.rin_at_source and rng is not None:
+        p_inst = np.abs(E_mzm) ** 2
+        p_hi = float(np.percentile(p_inst, 99.0))
+        p_lo = float(np.percentile(p_inst, 1.0))
+        oma_over_hi = (p_hi - p_lo) / p_hi if p_hi > 0 else 0.0
+        rel = white_noise_from_one_sided_psd(10 ** (cfg.rin_db_hz / 10),
+                                             len(E_mzm), cfg.fs_analog_hz, rng) * oma_over_hi
+        E_mzm = E_mzm * np.sqrt(np.clip(1.0 + rel, 1e-3, None))
+        P_mzm_w = np.abs(E_mzm) ** 2
+        laser_rin_rms_pct = float(100.0 * np.std(rel))
     E_launch = E_mzm * 10 ** (-cfg.coupling_il_db / 20)
+    # Riflessione ottica: interferenza multipath (MPI) coerente da una COPPIA
+    # di discontinuità con return loss RL ciascuna.  L'eco che rientra nel
+    # verso di propagazione è riflesso due volte, quindi la sua potenza sta
+    # 2·RL sotto il segnale (campo 10^(−RL/10)); ritardo
+    # optical_reflection_delay_ns e fase casuale per record.  Nella procedura
+    # DR4 è lo stress "reflection" alla tolleranza ORL del TX (21.4 dB per
+    # discontinuità → eco a −42.8 dB).  DICHIARATO: eco singola coerente,
+    # non un modello di cavità né di feedback nel laser (quello è coperto dal
+    # RIN_21.4OMA, cioè dallo stress RIN alla sorgente).
+    reflection_mpi_db = None
+    if cfg.optical_return_loss_db > 0:
+        r_field = 10 ** (-2.0 * cfg.optical_return_loss_db / 20)
+        delay = int(round(cfg.optical_reflection_delay_ns * 1e-9 * cfg.fs_analog_hz))
+        delay = max(1, min(delay, len(E_launch) - 1))
+        phase = (rng.uniform(0, 2 * np.pi) if rng is not None else 0.0)
+        echo = np.roll(E_launch, delay) * r_field * np.exp(1j * phase)
+        E_launch = E_launch + echo
+        reflection_mpi_db = float(-2.0 * cfg.optical_return_loss_db)
     # Kerr SPM con effective length che include l'attenuazione. Ai power
     # level degli interconnect l'effetto e normalmente piccolo, ma ora e
     # esplicito e può essere stressato senza alterare il power budget.
@@ -214,4 +256,6 @@ def run_optical(cfg, electrical_waveform_v, rng=None) -> OpticalResult:
         power_budget_dbm=power_budget_dbm,
         v_static=v_static,
         p_static=p_static,
+        reflection_mpi_db=reflection_mpi_db,
+        laser_rin_rms_pct=laser_rin_rms_pct,
     )

@@ -70,6 +70,18 @@ KNOBS = {
     "tx_output_on": (False, {}, {"driver"}, set()),
     "l2_ipg_bytes": (96, {"pattern": "eth"}, {"driver"}, set()),
     "l2_streams": (3, {"pattern": "eth"}, {"driver"}, set()),
+    # L2 scheduler / workload / impairment emulator / L1 PCS: cambiano i
+    # bit di linea (frame diversi o codifica diversa) → driver
+    "l2_scheduler": ("imix", {"pattern": "eth", "l2_streams": 2}, {"driver"}, set()),
+    "l2_stream_weights": ((1, 4, 1, 1), {"pattern": "eth", "l2_streams": 2,
+                                        "l2_scheduler": "weighted"},
+                          {"driver"}, set()),
+    "l2_workload": ("ai_training", {"pattern": "eth"}, {"driver"}, set()),
+    "l2_drop_pct": (20.0, {"pattern": "eth"}, {"driver"}, set()),
+    "l2_dup_pct": (20.0, {"pattern": "eth"}, {"driver"}, set()),
+    "l2_misorder_pct": (20.0, {"pattern": "eth"}, {"driver"}, set()),
+    "l2_corrupt_pct": (20.0, {"pattern": "eth"}, {"driver"}, set()),
+    "l2_pcs_coding": ("64b66b", {"pattern": "eth"}, {"driver"}, set()),
     # coppia differenziale P/N (post-driver: NON tocca il driver ideale)
     "pn_skew_ps": (4.0, {}, {"pfib"}, {"driver"}),
     # il mismatch da solo non tocca il differenziale (fisica: genera solo CM);
@@ -107,6 +119,10 @@ KNOBS = {
     "direct_laser_er_db": (2.0, {"optical_modulator": "dml", "laser_type": "dfb_direct"}, {"pfib"}, {"driver"}),
     "direct_laser_chirp_alpha": (7.0, {"optical_modulator": "dml", "laser_type": "dfb_direct", "fiber_km": 8.0}, {"pfib"}, {"driver"}),
     "coupling_il_db": (4.0, {}, {"pfib"}, {"driver"}),
+    # riflessione ottica (MPI): agisce dal lancio in fibra in giù
+    "optical_return_loss_db": (20.0, {}, {"pfib"}, {"driver"}),
+    "optical_reflection_delay_ns": (1.0, {"optical_return_loss_db": 20.0},
+                                    {"pfib"}, {"driver"}),
     "wavelength_nm": (1310.0, {}, {"pfib"}, {"driver"}),
     "fiber_km": (5.0, {}, {"pfib"}, {"driver"}),
     "dispersion_ps_nm_km": (-10.0, {}, {"pfib"}, {"driver"}),
@@ -123,6 +139,7 @@ KNOBS = {
     "pd_bw_hz": (25e9, {}, {"vctle"}, {"driver", "pfib"}),
     "pd_saturation_a": (5e-5, {}, {"vctle"}, {"driver", "pfib"}),
     "rin_db_hz": (-130.0, {}, {"vctle"}, {"driver", "pfib"}),
+    "rin_at_source": (True, {"rin_db_hz": -128.0}, {"pfib"}, {"driver"}),
     "tia_noise_a_rt_hz": (60e-12, {}, {"vctle"}, {"driver", "pfib"}),
     # oltre il range del VGA (~10 dB): overload reale contro le rail
     "tia_transimpedance_ohm": (20000.0, {}, {"vctle"}, {"driver", "pfib"}),

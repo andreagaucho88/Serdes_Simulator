@@ -728,9 +728,10 @@ def test_tdecq_reference_receiver_contract():
 
 
 def test_dr4_versioned_procedure_closes_full_physical_chain():
-    """Golden della procedura P0: SSPRQ completo, due estremi di
-    dispersione e catena TX→fibra→RX→DSP. Il profilo rappresentativo attuale
-    chiude il link ma fallisce onestamente il limite TDECQ del modello."""
+    """Golden della procedura P0 v1.2: SSPRQ completo, due estremi di
+    dispersione × tre split di polarizzazione, MPI alla tolleranza ORL,
+    RIN di stress alla sorgente e catena TX→fibra→RX→DSP. Il profilo
+    rappresentativo chiude il link ma fallisce onestamente il limite TDECQ."""
     from serdes_sim.procedures import (DR4_TDECQ_V1,
                                        dr4_dispersion_bounds_ps_nm,
                                        run_dr4_tdecq_e2e)
@@ -739,35 +740,56 @@ def test_dr4_versioned_procedure_closes_full_physical_chain():
     assert dmin == pytest.approx(-0.93, abs=1e-12)
     assert dmax == pytest.approx(+0.80, abs=1e-12)
     report = run_dr4_tdecq_e2e(seed=500283)
-    assert report["procedure"]["version"] == DR4_TDECQ_V1.version
+    assert report["procedure"]["version"] == DR4_TDECQ_V1.version == "1.2.0"
     assert report["compliance_status"] == "NOT_ASSESSED"
     assert report["verdict"]["compliance"] == "NOT_ASSESSED"
     assert report["verdict"]["basis"] == "clause-limit"
     assert report["limit"]["confidence"] == "published"
     assert report["tdecq_limit_db"] == report["limit"]["limit"]
     assert not report["uncertainty_complete"]
-    assert len(report["cases"]) == 2
-    assert all(c["pattern_exact"] and c["link_up"]
-               and c["physical_checks_pass"] for c in report["cases"])
-    assert all(c["ber_post_dfe"] == 0.0 for c in report["cases"])
-    values = [c["tdecq"]["tdecq_db"] for c in report["cases"]]
-    assert values[1] > values[0]
-    assert report["worst_tdecq_db"] == pytest.approx(4.33479, abs=0.03)
+    cases = report["cases"]
+    assert [c["name"] for c in cases] == [
+        "minimum·pol0", "minimum·pol0.5", "minimum·pol1",
+        "maximum·pol0", "maximum·pol0.5", "maximum·pol1",
+        "maximum·reflection", "maximum·rin"]
+    assert all(c["pattern_exact"] and c["link_up"] for c in cases)
+    pol = [c for c in cases if c["stress"] == "polarization"]
+    assert all(c["physical_checks_pass"] and c["ber_post_dfe"] == 0.0 for c in pol)
+    by = {c["name"]: c["tdecq"]["tdecq_db"] for c in cases}
+    assert report["all_finite"] and report["cases_without_tdecq"] == []
+    # split 0/1 simmetrici, 50/50 (DGD pieno) peggiore; estremo massimo peggiore
+    assert by["minimum·pol0"] == pytest.approx(by["minimum·pol1"], abs=1e-9)
+    assert by["minimum·pol0.5"] > by["minimum·pol0"]
+    assert by["maximum·pol0.5"] > by["minimum·pol0.5"]
+    assert report["baseline_tdecq_db"] == pytest.approx(by["maximum·pol0.5"])
+    assert report["baseline_tdecq_db"] == pytest.approx(4.3124, abs=0.03)
+    refl = next(c for c in cases if c["stress"] == "reflection")
+    assert refl["return_loss_db"] == 21.4
+    assert 0.0 < by["maximum·reflection"] - by["maximum·pol0.5"] < 0.3
+    rin = next(c for c in cases if c["stress"] == "rin")
+    assert rin["rin_db_hz"] == -136.0
+    assert by["maximum·rin"] > by["maximum·pol0.5"] + 1.0
+    assert report["worst_case"] == "maximum·rin"
+    assert report["worst_tdecq_db"] == pytest.approx(by["maximum·rin"])
     assert report["numerical_uncertainty_db"] == pytest.approx(0.10, abs=0.02)
-    assert report["guarded_tdecq_db"] == pytest.approx(4.43795, abs=0.04)
+    assert report["guarded_tdecq_db"] == pytest.approx(
+        report["worst_tdecq_db"] + report["numerical_uncertainty_db"])
     assert report["model_status"] == "FAIL"
     assert report["verdict"]["model"] == "FAIL"
     status = {s["id"]: s["status"] for s in report["steps"]}
     basis = {s["id"]: s["basis"] for s in report["steps"]}
-    assert (status["pattern"] == status["channel"]
-            == status["channel_loss"] == status["e2e"] == "PASS")
+    assert (status["pattern"] == status["channel"] == status["channel_loss"]
+            == status["dgd"] == status["e2e"] == "PASS")
     # Un'idealizzazione dichiarata (σS=0) non è un PASS: è un PROXY.
     assert status["calibration"] == "PROXY" and basis["calibration"] == "proxy"
     assert status["numeric_uncertainty"] == "PASS" and basis["numeric_uncertainty"] == "model"
     assert status["tdecq_limit"] == "FAIL" and basis["tdecq_limit"] == "clause"
-    assert (status["reflection"] == status["uncertainty"]
-            == status["correlation"] == "NOT_ASSESSED")
-    assert all(basis[k] == "blocker" for k in ("reflection", "uncertainty", "correlation"))
+    assert status["polarization"] == "FAIL" and basis["polarization"] == "model"
+    assert status["reflection"] == "FAIL" and basis["reflection"] == "model"
+    assert status["rin"] == "FAIL" and basis["rin"] == "proxy"
+    assert status["uncertainty"] == status["correlation"] == "NOT_ASSESSED"
+    assert all(basis[k] == "blocker" for k in ("uncertainty", "correlation"))
+    assert report["stress_space"]["cases"] == 8
     from serdes_sim.standards import VERDICTS
     assert all(s["status"] in VERDICTS for s in report["steps"])
     assert all(isinstance(s["label"], dict) and s["label"]["it"] and s["label"]["en"]

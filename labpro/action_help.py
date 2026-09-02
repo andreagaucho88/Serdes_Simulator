@@ -284,6 +284,52 @@ _a("bert_phase", "Auto-search fase", "Phase auto-search", "BERT", "ADC sampling 
    "Ricerca su record finiti; può sovra-adattare al seed corrente.",
    "Finite-record search; it can overfit the current seed.",
    "/api/experiment/sweep", "adc_phase_ui")
+_a("stressed_rx", "Stressed RX (SECQ)", "Stressed RX (SECQ)", "BERT · procedures",
+   "TX stress → reference receiver → RX/DSP",
+   "Calibra una ricetta di stress (SJ dichiarato + RIN alla sorgente per "
+   "bisezione) finché il SECQ al ricevitore di riferimento raggiunge il target "
+   "del registro, poi misura la BER del RX su un record lungo con verdetto "
+   "Clopper-Pearson.",
+   "Calibrates a stress recipe (declared SJ + RIN at the source by bisection) "
+   "until the SECQ at the reference receiver reaches the registry target, then "
+   "measures the RX BER on a long record with a Clopper-Pearson verdict.",
+   "Guarda la traccia della bisezione, il SECQ calibrato contro il limite e la "
+   "BER del RX; 'already_above' significa che il TX da solo eccede il target.",
+   "Watch the bisection trail, the calibrated SECQ against the limit and the RX "
+   "BER; 'already_above' means the TX alone exceeds the target.",
+   "Non modifica il banco; SI di clausola e incertezza strumentale restano "
+   "NOT ASSESSED: è un criterio del modello, non una conformità.",
+   "Does not modify the bench; clause SI and instrument uncertainty stay NOT "
+   "ASSESSED: a model criterion, not compliance.",
+   "/api/experiment/stressed-rx", "report only")
+_a("golden_load", "Carica dataset golden", "Load golden dataset", "DR4 · golden",
+   "instrument waveform → LabPro measures",
+   "Carica un JSON labpro-golden/1 (waveform ottica, simboli, riferimenti "
+   "TDECQ/OMA/ER dello strumento) e confronta le misure LabPro sulla stessa "
+   "waveform con i valori dichiarati.",
+   "Loads a labpro-golden/1 JSON (optical waveform, symbols, instrument "
+   "TDECQ/OMA/ER references) and compares the LabPro measures on the same "
+   "waveform with the declared values.",
+   "Tabella LabPro vs strumento con Δ e tolleranza; source=instrument chiude "
+   "lo step 'correlation' della DR4 alla prossima esecuzione.",
+   "LabPro vs instrument table with Δ and tolerance; source=instrument closes "
+   "the DR4 'correlation' step at the next run.",
+   "Il file è letto in memoria e non salvato; il verdetto è del modello, la "
+   "conformità resta NOT ASSESSED.",
+   "The file is read in memory and not stored; the verdict is the model's, "
+   "compliance stays NOT ASSESSED.",
+   "/api/golden", "last golden dataset (in memory)")
+_a("golden_example", "Esempio sintetico", "Synthetic example", "DR4 · golden",
+   "self-generated waveform",
+   "Genera dal banco stesso un dataset golden di esempio e lo correla: serve "
+   "a esercitare la pipeline, per costruzione i Δ sono ~0.",
+   "Generates an example golden dataset from the bench itself and correlates "
+   "it: it exercises the pipeline, by construction the Δ are ~0.",
+   "Verdetto PROXY (auto-correlazione) e Δ nulli.",
+   "PROXY verdict (self-correlation) and zero Δ.",
+   "Non è una correlazione strumentale: non chiude lo step della DR4.",
+   "Not an instrument correlation: it does not close the DR4 step.",
+   "/api/golden", "last golden dataset (in memory)")
 _a("traffic_benchmark", "Benchmark frame size", "Frame-size benchmark", "Traffic", "MAC → PHY → analyzer",
    "Esegue frame reali a più dimensioni attraverso la catena completa.",
    "Runs real frames of several sizes through the complete chain.",

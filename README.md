@@ -157,6 +157,57 @@ Sweep, JTOL-lite, link training, AN/LT, DR4, instrument alignment, the signal
 ledger, and the physics audit make both the result and the path that produced
 it inspectable.
 
+### 7. Latest developments: traffic PHY · L1 · L2, DR4 stress space, stressed RX, compliance
+
+The screenshots below are captured from the running application after the
+instrument-fidelity iteration (traffic layers, golden correlation, stressed
+receiver, DCA fixture de-embedding, J2/J9).
+
+![Ethernet traffic panel with PHY, L1 PCS and L2 MAC cards](docs/media/07-traffic-phy-l1-l2.jpg)
+
+**Traffic on three layers of the same record.** L2 generates real MAC frames
+from up to four streams with a round-robin, weighted round-robin or IMIX
+scheduler and workload profiles (AI training all-reduce bursts, LLM inference
+token streams, storage, web, video) with burst-completion KPIs; the impairment
+emulator drops, duplicates, misorders and corrupts a declared share of frames.
+L1 is a Clause 49 64b/66b PCS with block lock, sync-header monitor and 66/64
+overhead. The audit rows close accounting identities across the layers on
+every record (frame conservation, detected = OK + bad FCS, emulated losses ⊆
+losses, FCS catches every emulated corruption, WRR share ≈ weights, block
+lock, overhead).
+
+![DR4 procedure with golden correlation and eight-case stress space](docs/media/08-dr4-stress-golden.jpg)
+
+**DR4 v1.2 stress space and golden correlation.** Eight cases on the full
+SSPRQ period: two dispersion extremes × three polarization splits, a
+multipath-reflection pair at the TX return-loss tolerance and a stress-RIN
+case at the optical source. A `labpro-golden/1` dataset exported from a real
+DCA closes the correlation step; the synthetic example only exercises the
+pipeline and stays PROXY.
+
+![Stressed receiver calibration on SECQ with RX BER verdict](docs/media/09-stressed-rx-secq.jpg)
+
+**Stressed receiver (SECQ).** Sinusoidal jitter plus RIN at the source are
+bisected until the SECQ at the reference receiver reaches the registry target
+(or a declared one); the RX BER is then measured on a long record with a
+Clopper-Pearson verdict against the PMD pre-FEC limit.
+
+![Compliance panel with registry limits, margins and separate model/compliance chips](docs/media/10-compliance.jpg)
+
+**Compliance panel.** One row per measurement contract of the active profile,
+registry limit with clause/table, margin bar with uncertainty, a model verdict
+and a separate compliance chip that stays NOT ASSESSED; JSON/Markdown report
+export from the same record.
+
+![Scope with declared fixture and regularized de-embedding](docs/media/11-scope-fixture-deembed.jpg)
+
+**DCA fixture and de-embedding.** The scope declares a √f fixture between DUT
+and DCA and removes it with a regularized inverse filter on the same record,
+for both EYE and WAVE; the jitter panel adds the DCA jitter-mode pair J2/J9
+(measured and dual-Dirac extrapolated).
+
+![Jitter panel with J2/J9 readout](docs/media/12-jitter-j2-j9.jpg)
+
 ## Quick start
 
 ### Requirements
@@ -274,8 +325,8 @@ The public workbench contains 32 panels organized by signal flow:
 | Source and TX | BERT, TX FIR/DAC/driver |
 | Channel and optics | Electrical channel, COM, modulator/fiber |
 | Receiver and DSP | RX front end, PD, TIA, AGC, CTLE, ADC, CDR, FSE/DFE, decisions |
-| Live instruments | DCA, jitter/TIE, spectrum, BER, FEC, L2 traffic, CMIS-lite |
-| Procedures | Sweep, JTOL, training, AN/LT, standards, DR4, alignment, ledger, physics audit |
+| Live instruments | DCA (fixture/de-embed), jitter/TIE (J2/J9), spectrum, BER, FEC, traffic PHY · L1 · L2, CMIS-lite |
+| Procedures | Sweep, JTOL, training, AN/LT, Compliance, DR4 (stress space + golden), alignment, ledger, physics audit |
 
 Each entry documents purpose, controls, readouts, a suggested experiment, and
 the boundary between implemented physics and educational approximation.
@@ -329,7 +380,11 @@ automation:
 | <code>/api/reset</code> | POST | Reset bench state |
 | <code>/api/s2p</code> | POST | Validate and apply Touchstone text |
 | <code>/api/panel/&lt;name&gt;</code> | GET | Build a panel payload |
-| <code>/api/experiment/&lt;name&gt;</code> | POST | Sweep, training, JTOL, traffic, and procedures |
+| <code>/api/experiment/&lt;name&gt;</code> | POST | Sweep, training, JTOL, traffic, ONT, stressed-eye and procedures |
+| <code>/api/experiment/stressed-rx</code> | POST | Stressed receiver: SJ + RIN bisection to the SECQ target, RX BER verdict |
+| <code>/api/golden</code> | GET / POST | Golden-instrument dataset (<code>labpro-golden/1</code>) and its correlation |
+| <code>/api/scope?fix=&lt;dB&gt;&amp;deembed=1</code> | GET | EYE/WAVE with a declared fixture and regularized de-embedding |
+| <code>/api/report/standards?format=json|md</code> | GET | Traceable compliance report from the same record |
 | <code>/ws</code> | WebSocket | State, invalidation, record, and progress updates |
 
 Example:
@@ -419,7 +474,7 @@ This also makes <code>python -m build --no-isolation</code> valid after the
 development install; without that extra, prefer the isolated command shown
 above so the build frontend can provision <code>setuptools&gt;=77</code>.
 
-Current validated state: **392/392 tests pass**, physical self-test
+Current validated state: **475/475 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -512,8 +567,14 @@ process. Symlinks that resolve outside that directory are ignored.
 - The model is system-level rather than transistor- or layout-level.
 - COM and JTOL are educational proxies with declared boundaries.
 - CMIS and traffic tests are functional subsets.
-- DR4 does not include traceable uncertainty, reflection, or the complete
-  polarization-stress space.
+- DR4 covers dispersion × polarization, a reflection pair and stress RIN,
+  but traceable instrument uncertainty is still missing and the stress RIN
+  value is declared (clause RIN_21.4OMA to verify); golden correlation needs
+  a real DCA export to close.
+- Traffic is one serial lane without switch, queues or congestion; no header
+  modifiers, payload timestamps, RFC 2544 or Y.1564.
+- RIN at the source and the receiver noise-current model are alternatives
+  selected by a declared flag; the frozen baseline keeps the receiver model.
 - IBIS-AMI behavior depends on each vendor library and contract.
 - The Streamlit UI is legacy and receives security maintenance but no new
   features.

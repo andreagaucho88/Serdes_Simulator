@@ -17,6 +17,7 @@ from .blocks import adc as adc_block
 from .blocks import cdr as cdr_block
 from .blocks import channel as channel_block
 from .blocks import ethernet
+from .blocks import pcs
 from .blocks import fec as fec_block
 from .blocks import optical as optical_block
 from .blocks import receiver as receiver_block
@@ -82,7 +83,10 @@ class SimResult:
     # BERT / L2
     err_positions: np.ndarray = None        # bit invertiti al TX (riferimento ED)
     l2: "ethernet.L2Analysis" = None        # analisi frame (pattern eth)
+    l1: "pcs.PcsStats" = None                # PCS 64b/66b (block lock, header)
+    l2_schedule: "ethernet.TxSchedule" = None   # frame emessi (scheduler+impairment)
     l2_window_bits: np.ndarray = None       # finestra RX descramblata (ispettore)
+    l2_window_bytes: bytes = b""            # ottetti ricostruiti (ispettore)
     l2_seq0: int = 0
 
     @property
@@ -188,12 +192,12 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
     # sorgente del payload (stile PPG di un BERT)
     def _payload_bits(n):
         if cfg.pattern == "eth":
-            bits, _, _ = ethernet.build_stream_bits(
-                n, cfg.l2_frame_bytes, ipg_bytes=cfg.l2_ipg_bytes,
-                streams=cfg.l2_streams)
-            # scrambler PCS (Clause 49): senza, l'idle 0x00 di un IPG lungo
-            # produce run costanti che ammazzano CDR e AGC
-            return ethernet.scramble(bits)
+            # L2 scheduler + impairment emulator + L1 (scrambler Clause 49
+            # oppure PCS 64b/66b): i bit di linea arrivano già codificati.
+            # Senza scrambler l'idle 0x00 di un IPG lungo produrrebbe run
+            # costanti che ammazzano CDR e AGC.
+            bits, result.l2_schedule = ethernet.build_line_bits(cfg, n)
+            return bits
         if cfg.pattern == "ssprq_like":
             return stimulus.ssprq_like_bits(n, spec)
         if cfg.pattern == "ssprq":
@@ -593,20 +597,8 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
         result.optical_levels = metrics_block.optical_level_proxies(
             result.optical.P_fiber_w)
 
-    # --- 9d. Analyzer L2 (pattern eth): delineazione frame e contatori ------
-    if cfg.pattern == "eth":
-        def _frame_bits(sz):
-            return (len(ethernet.PREAMBLE) + len(ethernet.HEADER)
-                    + max(sz - len(ethernet.HEADER) - 4, 8) + 4
-                    + cfg.l2_ipg_bytes) * 8
-        if cfg.l2_streams > 1:
-            # multi-stream: l'unità di allineamento è il ROUND (un frame
-            # per stream, round-robin) — seq del round = indice del round
-            sizes = [(ethernet.STREAM_SIZES[i] or cfg.l2_frame_bytes)
-                     for i in range(cfg.l2_streams)]
-            flb = sum(_frame_bits(sz) for sz in sizes)
-        else:
-            flb = _frame_bits(cfg.l2_frame_bytes)          # bit per frame
+    # --- 9d. Analyzer L1/L2 (pattern eth): PCS, delineazione, contatori -----
+    if cfg.pattern == "eth" and result.l2_schedule is not None:
         if result.fec_link is not None and result.fec_link.post_payload_bits is not None:
             codec = fec_block.FEC_CODECS[cfg.fec_mode]
             stream = result.fec_link.post_payload_bits
@@ -617,25 +609,28 @@ def simulate(cfg: LinkConfig = None, seed: int = 20240731,
             stream = stimulus.symbols_to_bits(decided, spec)
             offset = int(eq.symbol_k_fse[0]) * bps
             payload_rate = cfg.symbol_rate_hz * bps
-        # descrambler self-sync: servono 58 bit di burn-in prima del primo
-        # frame che vogliamo delineare
-        stream = ethernet.descramble(stream)
-        seq0 = int(np.ceil((offset + 58) / flb))
-        skip = seq0 * flb - offset
-        window = stream[skip:]
-        result.l2_window_bits = window[:60000]   # per l'ispettore frame
-        result.l2_seq0 = seq0
-        if len(window) > flb + 64:
-            result.l2 = ethernet.analyze_stream_bits(
-                window, cfg.l2_frame_bytes,
-                window_s=len(window) / payload_rate, seq0=seq0,
-                ipg_bytes=cfg.l2_ipg_bytes, streams=cfg.l2_streams)
-            _check(result, result.l2.frames_detected > 0,
+        window_s = len(stream) / payload_rate
+        l2, l1, data = ethernet.analyze_line_bits(
+            cfg, stream, result.l2_schedule, int(offset), window_s)
+        result.l1 = l1
+        result.l2 = l2
+        result.l2_window_bytes = data[:60000]
+        result.l2_window_bits = np.unpackbits(
+            np.frombuffer(result.l2_window_bytes, dtype=np.uint8))
+        if l1 is not None:
+            _check(result, l1.lock and not l1.hi_ber,
+                   "PCS 64b/66b block lock",
+                   (f"lock={'YES' if l1.lock else 'NO'} @ offset {l1.lock_offset_bits} bit · "
+                    f"{l1.sync_header_errors} sync header errati su {l1.blocks} blocchi"
+                    + (" · hi_ber" if l1.hi_ber else "")))
+        if l2 is not None:
+            _check(result, l2.frames_detected > 0,
                    "Analyzer L2: frame delineati",
-                   f"{result.l2.frames_ok} ok / {result.l2.frames_fcs_bad} FCS "
-                   f"bad / {result.l2.frames_lost} persi su "
-                   f"{result.l2.frames_expected} attesi · "
-                   f"throughput {result.l2.throughput_gbps:.2f} Gb/s")
+                   f"{l2.frames_ok} ok / {l2.frames_fcs_bad} FCS "
+                   f"bad / {l2.frames_lost} persi su "
+                   f"{l2.frames_expected} attesi · "
+                   f"throughput {l2.throughput_gbps:.2f} Gb/s"
+                   + (f" · {l2.lost_emulated} drop emulati" if l2.lost_emulated else ""))
 
     # --- 10. Diagnostiche approfondite (solo depth full) --------------------
     if depth == "full":

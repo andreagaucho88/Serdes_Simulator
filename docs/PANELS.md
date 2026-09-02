@@ -41,7 +41,14 @@ The one-box BERT contains four mutually exclusive subviews:
 - **Stress:** RJ, PJ, DCD, BUJ, SSC, and differential noise applied to the
   real TX time base or output.
 - **Control and procedures:** gated start/stop, target BER, confidence
-  interval, pattern lock, synchronization, JTF, and sensitivity workflows.
+  interval, pattern lock, synchronization, JTF, and sensitivity workflows,
+  plus the **stressed receiver (SECQ)** calibration: declared sinusoidal
+  jitter at the TX PLL and RIN at the optical source bisected until the SECQ
+  at the TDECQ reference receiver reaches the registry target (or a declared
+  one), then the RX BER on a long record with a Clopper-Pearson verdict
+  against the PMD pre-FEC limit. `already_above` means the TX alone exceeds
+  the target; clause SI and instrument uncertainty stay
+  <code>NOT_ASSESSED</code>.
 
 The ED is a digital checker connected to the same physical RX. It is not a
 second hidden analog receiver.
@@ -201,10 +208,23 @@ Additional functions include P/N/Diff/CM quick sets, persistent Plotly camera,
 per-channel scale/offset/deskew, masks, and automatic DCA markers in the
 Signal chain panel.
 
+**Fixture and de-embedding.** The scope bar declares a measurement fixture
+between DUT and DCA (0, 3, 6 or 10 dB at Nyquist, √f loss with a 50 ps delay)
+and a regularized inverse filter <code>H*/(|H|²+ε)</code> with a 30 dB floor.
+Both are evaluated by the server on the same record (EYE and WAVE) and never
+touch the datapath: the "embedded" eye is what the DCA would see without
+correction, the de-embedded one recovers the DUT plane up to the
+regularization floor.
+
 #### 18. Jitter and TIE
 
 Analyzes time-interval error for the selected record through trend,
 histogram, spectrum, RJ/PJ/DCD estimates, and an empirical bathtub curve.
+
+The dual-Dirac tail fit also reports the DCA jitter-mode pair **J2 / J9**:
+total jitter at BER 2.5e-3 and 2.5e-10. J2 is measured directly from the TIE
+percentiles when at least 2000 crossings are available (shown next to the
+extrapolated value), J9 is always extrapolated from the RJ/DJ(δδ) fit.
 
 The seed makes stress comparisons reproducible. The measurement plane remains
 consistent with the selected node and CDR state.
@@ -234,15 +254,44 @@ The panel accumulates clean, corrected, uncorrectable, and miscorrected
 codewords; pre/post-FEC BER; and interleave 1/2/4 behavior. Bypass mode clearly
 separates data that was not decoded.
 
-#### 22. Ethernet L2 traffic
+#### 22. Ethernet traffic · PHY · L1 · L2
 
-Generates real Ethernet frames with the Clause 49 PCS scrambler
-<code>x^58 + x^39 + 1</code>, selectable frame size and IPG, and one to four
-streams.
+Three layers on the same record, each with its own card and counters:
 
-It includes frame-size benchmarks and an ONT-style test with load ramp,
-per-block latency budget, and service disruption derived from CDR lock. The
-feature is deliberately labeled **L2-lite** and does not claim RFC 2544.
+- **L2 · MAC** — real Ethernet frames (preamble/SFD, DA/SA, EtherType,
+  sequence number, CRC-32 FCS) from one to four streams. The scheduler is
+  round-robin, smooth weighted round-robin (per-stream weights) or IMIX
+  (7:4:1 mix of 64/576/1024 B). Workload profiles fix sizes, burst length,
+  inter-burst gap, stream mix and a completion KPI: *AI training*
+  (all-reduce collectives, 576/1024 B bursts of 12), *LLM inference*
+  (token streams, 64/256/576 B, 4:1 weights), *storage* (long 1024 B bursts),
+  *web* (short 64/128 B bursts) and *video* (paced 1024 B bursts). The
+  impairment emulator drops, duplicates, misorders (one position, within the
+  stream) or corrupts (FCS) a declared percentage of frames with a fixed seed,
+  so the analyzer can be checked against the schedule.
+- **L1 · PCS** — Clause 49 scrambler <code>x^58 + x^39 + 1</code> on the
+  whole stream, or a 64b/66b block coding: /S/, /D/, /T0…T7/ and /I/ blocks,
+  scrambled payload, RX block lock over the 66 offsets (64 consecutive valid
+  sync headers), sync-header error monitor with the 16-error hi_ber
+  threshold and the 66/64 overhead. No alignment markers, 256b/257b
+  transcoding or lane distribution (declared).
+- **PHY** — line rate, pre/post-FEC BER, CDR and pattern lock.
+
+The analyzer works on the bytes decoded from the last RX record (after FEC and
+PCS): frames expected in the window, detected, FCS-good, lost (split into
+emulated and PHY losses), duplicates, out-of-order, goodput, offered load,
+burst completion time and tail loss for the workload, a per-stream table and a
+frame inspector with the real bytes. The **audit rows** close accounting
+identities across the layers on every record — frame conservation
+(expected = unique OK + lost), detected = OK + bad FCS, emulated losses ⊆
+losses, FCS catches every emulated corruption, WRR share ≈ weights, PCS block
+lock, PCS overhead 66/64 — and go to <code>NOT_ASSESSED</code> with a
+suggested record length when no complete frame fits the window.
+
+Frame-size benchmark, ONT-style load ramp with latency budget and service
+disruption from CDR lock are kept. Declared: one serial lane, no switch,
+queues or congestion, no header modifiers or payload timestamps, not RFC 2544
+or Y.1564.
 
 #### 23. Module / CMIS-lite
 
@@ -314,23 +363,38 @@ DR4 run, library versions).
 Loading a profile configures the complete bench rather than changing only a
 label; touching a knob keeps the profile and marks it as modified.
 
-#### 29. DR4 physical procedure
+#### 29. DR4 physical procedure (v1.2)
 
 An on-demand, reproducible workflow over the complete 65,535-symbol SSPRQ
-period, at both public dispersion extremes and with stressed DGD.
+period on an eight-case stress space: the two public dispersion extremes ×
+three polarization splits (0, 0.5, 1 of the DGD power split), an MPI case
+(two discontinuities at the 21.4 dB TX return-loss tolerance, coherent echo at
+−42.8 dB with random phase) and a stress-RIN case (−136 dB/Hz at the source,
+declared value; the clause RIN_21.4OMA is still to be verified against the
+text).
 
 TDECQ uses 0.45/0.55 UI windows, a normalized five-tap FFE, and
-<code>Ceq</code> integrated over BT4-shaped noise. The same records close
-through PD, TIA, ADC, CDR, and DSP.
+<code>Ceq</code> integrated over BT4-shaped noise; the worst finite TDECQ,
+the 50/50 baseline, the polarization/reflection/RIN deltas and the numerical
+grid uncertainty are reported per step. The same records close through PD,
+TIA, ADC, CDR, and DSP (closure evaluated on the un-stressed grid; the stress
+cases carry their own steps).
 
-Reflection, full polarization stress, traceable measurement uncertainty, and
-golden-instrument correlation remain out of scope; compliance therefore
-remains <code>NOT ASSESSED</code>.
+**Golden correlation.** A <code>labpro-golden/1</code> JSON (optical
+waveform, transmitted symbols, instrument references for TDECQ/OMA/ER) can be
+loaded from the panel; LabPro measures the same waveform and reports the
+deltas with a tolerance. A dataset exported from a real DCA
+(<code>source = instrument</code>) closes the correlation step with a
+PASS/FAIL model verdict; the built-in synthetic example only exercises the
+pipeline (<code>PROXY</code>). Traceable instrument uncertainty remains out of
+scope, so compliance stays <code>NOT ASSESSED</code>.
 
 #### 30. Instrument alignment
 
 Maps workbench concepts and functions to real DCA, BERT, and traffic-generator
-terminology, indicating what is implemented and what is not.
+terminology, indicating what is implemented and what is not: J2/J9 and
+fixture de-embedding on the DCA row, the SECQ stressed-receiver calibration
+on the BERT row, scheduler/workloads/impairments/PCS on the traffic row.
 
 External links are learning references, not endorsements or claims of
 proprietary emulation.

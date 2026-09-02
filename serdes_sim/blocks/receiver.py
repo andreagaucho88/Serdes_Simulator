@@ -169,7 +169,9 @@ def run_receiver(cfg, P_fiber_w, rng) -> ReceiverResult:
     RIN_linear_hz_inv = 10 ** (cfg.rin_db_hz / 10)
     S_shot_a2_hz = 2 * Q_E_C * I_mean_a
     S_tia_a2_hz = pvt["tia_noise"] ** 2
-    S_rin_a2_hz = I_mean_a ** 2 * RIN_linear_hz_inv
+    # con rin_at_source il RIN è già nel campo ottico (blocco optical): qui
+    # il termine è nullo per non contarlo due volte
+    S_rin_a2_hz = 0.0 if cfg.rin_at_source else I_mean_a ** 2 * RIN_linear_hz_inv
 
     f_enbw_hz = np.linspace(0, cfg.fs_analog_hz / 2, 80_001)
     H_tia_positive = butterworth_magnitude(f_enbw_hz, pvt["tia_bw_hz"], order=3)

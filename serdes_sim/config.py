@@ -21,6 +21,21 @@ class LinkConfig:
     l2_frame_bytes: int = 256     # dimensione frame per pattern "eth"
     l2_ipg_bytes: int = 12        # inter-packet gap (rate control del PPG)
     l2_streams: int = 1           # generatore multi-stream stile Xena (1..4)
+    # L2 · scheduler e workload (stile Xena): round_robin | weighted | imix;
+    # i pesi valgono per lo scheduler weighted (stream 0..3)
+    l2_scheduler: str = "round_robin"
+    l2_stream_weights: tuple = (4, 2, 1, 1)
+    # profilo di workload: custom = usa scheduler/size sopra; gli altri
+    # impongono mix di frame e burst (AI training, LLM inference, storage…)
+    l2_workload: str = "custom"
+    # emulatore di impairment fra MAC e PCS [% dei frame], deterministico
+    l2_drop_pct: float = 0.0
+    l2_dup_pct: float = 0.0
+    l2_misorder_pct: float = 0.0
+    l2_corrupt_pct: float = 0.0
+    # L1 · PCS: scrambler = solo scrambler Clause 49 (baseline);
+    # 64b66b = blocchi 66 bit con sync header, /S/ /T/ /I/ e block lock
+    l2_pcs_coding: str = "scrambler"
     modulation: str = "PAM4"      # "PAM4" | "NRZ"
     pam4_mapping: str = "gray"    # "gray" | "binary" (ignorato per NRZ)
     fec_mode: str = "none"        # "none" | "kp4" RS(544,514) | "kr4" RS(528,514)
@@ -107,6 +122,11 @@ class LinkConfig:
     direct_laser_er_db: float = 5.0
     direct_laser_chirp_alpha: float = 3.0
     coupling_il_db: float = 2.0
+    # Riflessione ottica (MPI coerente): 0 = off; altrimenti optical return
+    # loss in dB della riflessione che rientra nel campo lanciato dopo
+    # optical_reflection_delay_ns (stress DR4: tolleranza TX 21.4 dB)
+    optical_return_loss_db: float = 0.0
+    optical_reflection_delay_ns: float = 5.0
     wavelength_nm: float = 1550.0
     fiber_km: float = 2.0
     dispersion_ps_nm_km: float = 17.0
@@ -124,6 +144,7 @@ class LinkConfig:
     pd_bw_hz: float = 42e9
     pd_saturation_a: float = 1.5e-3
     rin_db_hz: float = -145.0
+    rin_at_source: bool = False
     tia_noise_a_rt_hz: float = 28e-12
     tia_transimpedance_ohm: float = 2500.0
     tia_vga_range_db: float = 10.0
@@ -353,6 +374,17 @@ class LinkConfig:
                             "custom_hex") and self.fec_mode != "none":
             problems.append("il FEC in-path richiede un payload prbs/eth; "
                             "i pattern PPG di test devono restare bit-exact")
+        if self.l2_scheduler not in ("round_robin", "weighted", "imix"):
+            problems.append("l2_scheduler deve essere round_robin/weighted/imix")
+        if self.l2_workload not in ("custom", "ai_training", "llm_inference",
+                                    "storage", "web", "video"):
+            problems.append("l2_workload non supportato")
+        if self.l2_pcs_coding not in ("scrambler", "64b66b"):
+            problems.append("l2_pcs_coding deve essere scrambler o 64b66b")
+        if len(self.l2_stream_weights) != 4 or any(
+                (not isinstance(w, (int, float)) or w < 1 or w > 100)
+                for w in self.l2_stream_weights):
+            problems.append("l2_stream_weights: 4 pesi interi in [1, 100]")
         if not (8 <= self.l2_ipg_bytes <= 2000):
             problems.append("l2_ipg_bytes fuori range [8, 2000]")
         if not (64 <= self.l2_frame_bytes <= 1024):
@@ -452,10 +484,12 @@ _STRING_FIELDS = {
     "electrical_drive_mode", "link_medium", "err_insert_target",
     "optical_modulator", "laser_type", "fiber_type", "pvt_process",
     "adc_cal_mode", "cdr_mode", "s2p_text", "s2p_name", "s4p_pairs",
+    "l2_scheduler", "l2_workload", "l2_pcs_coding",
 }
-_BOOL_FIELDS = {"tx_output_on", "err_insert_burst", "use_s2p_channel",
+_BOOL_FIELDS = {"tx_output_on", "err_insert_burst", "use_s2p_channel", "rin_at_source",
                 "causal_filters"}
-_TUPLE_FIELDS = {"tx_ffe_taps", "ctle_zeros_hz", "ctle_poles_hz"}
+_TUPLE_FIELDS = {"tx_ffe_taps", "ctle_zeros_hz", "ctle_poles_hz",
+                 "l2_stream_weights"}
 _INT_FIELDS = {
     "analog_sps", "n_symbols", "prbs_order", "l2_frame_bytes", "l2_ipg_bytes",
     "l2_streams", "fec_interleave", "dac_bits", "err_insert_bits", "adc_sps",
@@ -468,6 +502,9 @@ _NUMERIC_RANGES = {
     "symbol_rate_hz": (1e9, 400e9), "analog_sps": (4, 64),
     "n_symbols": (2000, 400_000), "l2_frame_bytes": (64, 1024),
     "l2_ipg_bytes": (8, 2000), "l2_streams": (1, 4), "fec_interleave": (1, 4),
+    "l2_drop_pct": (0, 50), "l2_dup_pct": (0, 50), "l2_misorder_pct": (0, 50),
+    "l2_corrupt_pct": (0, 50), "optical_return_loss_db": (0, 80),
+    "optical_reflection_delay_ns": (0.05, 100),
     "tx_rj_rms_fs": (0, 2000), "tx_pj_amp_ui": (0, 0.4),
     "tx_pj_freq_mhz": (1, 5000), "tx_dcd_pct": (0, 30),
     "tx_buj_amp_ui": (0, 0.5), "tx_ssc_ppm": (0, 20000), "tx_ssc_khz": (1, 1000),

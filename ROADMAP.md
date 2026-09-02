@@ -7,6 +7,8 @@
 - [x] Public validation, contribution, security, and panel documentation
 - [x] Guided DCA/BER/FEC demo
 - [ ] Correlated example Touchstone datasets with provenance
+- [x] Golden-instrument correlation pipeline (`labpro-golden/1`), waiting for
+      a real DCA export to close the DR4 step
 - [ ] Automated accessibility and browser-performance checks
 
 ## 0.2 — comparison and reporting

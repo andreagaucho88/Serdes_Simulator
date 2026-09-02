@@ -178,7 +178,10 @@ def pattern_sync(y_data, tx_symbols, max_lag=64):
     pattern atteso. Ritorna (lag, correlazione normalizzata, inverted)."""
     y = np.asarray(y_data, dtype=float)
     a = np.asarray(tx_symbols, dtype=float)
-    n = min(len(y) - max_lag, len(a) - max_lag, 4000)
+    # la finestra deve stare dentro entrambi i vettori per OGNI lag in
+    # [-max_lag, +max_lag]: serve 2·max_lag di margine, non max_lag
+    n = min(len(y), len(a)) - 2 * max_lag
+    n = min(n, 4000)
     if n < 500:
         return None, 0.0, False
     seg = y[max_lag:max_lag + n]

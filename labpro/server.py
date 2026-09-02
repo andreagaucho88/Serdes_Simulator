@@ -39,7 +39,9 @@ from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                l2_ont_report, link_train,
                                rx_sensitivity_search, stressed_eye_calibrate,
                                traffic_sweep)
-from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
+from serdes_sim.procedures import run_dr4_tdecq_e2e, run_stressed_receiver  # noqa: E402
+from serdes_sim.golden import (correlate_golden, synthetic_golden_dataset,  # noqa: E402
+                               validate_dataset)
 from serdes_sim.livebench import (BertNotRunning, InjectionInProgress,  # noqa: E402
                                   LiveBench)
 from labpro import paneldata                 # noqa: E402
@@ -75,6 +77,9 @@ BENCH = LiveBench()
 PROFILE = {"name": None}
 # Ultimo report della procedura DR4 (entra nel report di conformità).
 LAST_DR4 = {"report": None}
+# Ultima correlazione golden e ultima calibrazione stressed-RX.
+LAST_GOLDEN = {"result": None, "dataset_meta": None}
+LAST_STRESSED = {"report": None}
 CLIENTS: set = set()
 MAIN_LOOP = None
 _persist_lock = threading.Lock()
@@ -987,13 +992,69 @@ class ApiDr4Procedure(Base):
         if not 0 <= seed <= 2 ** 32 - 1:
             self.set_status(400)
             return self.write_json({"error": "seed fuori range uint32"})
+        golden = LAST_GOLDEN["result"]
         report, ok = await run_experiment(
             self, "DR4",
-            lambda evt: run_dr4_tdecq_e2e(seed=seed, cancel=evt))
+            lambda evt: run_dr4_tdecq_e2e(seed=seed, cancel=evt, golden=golden))
         if not ok:
             return
         LAST_DR4["report"] = paneldata.J(report)
         self.write_json({"ok": True, "report": LAST_DR4["report"]})
+
+
+class ApiStressedRx(Base):
+    """Calibrazione stressed-eye sul SECQ + test del RX (procedura v2)."""
+
+    async def post(self):
+        body = self.body_json()
+        seed = as_number(body.get("seed"), "seed", 0, 2 ** 32 - 1, integer=True,
+                         default=500283)
+        sj_ui = as_number(body.get("sj_ui"), "sj_ui", 0.0, 0.4, default=0.05)
+        sj_mhz = as_number(body.get("sj_mhz"), "sj_mhz", 1.0, 5000.0, default=100.0)
+        target = (as_number(body.get("target_secq_db"), "target_secq_db", 0.1, 10.0)
+                  if body.get("target_secq_db") is not None else None)
+        cfg = BENCH.cfg
+        profile = PROFILE["name"]
+        if cfg.link_medium != "optical" or cfg.modulation != "PAM4":
+            raise BadParam("la calibrazione stressed-RX richiede un link ottico PAM4",
+                           "stressed-RX calibration requires an optical PAM4 link")
+        report, ok = await run_experiment(
+            self, "stressed RX",
+            lambda evt: run_stressed_receiver(cfg, profile=profile, seed=seed,
+                                              sj_ui=sj_ui, sj_mhz=sj_mhz,
+                                              target_secq_db=target, cancel=evt))
+        if not ok:
+            return
+        LAST_STRESSED["report"] = paneldata.J(report)
+        self.write_json({"ok": True, "report": LAST_STRESSED["report"]})
+
+
+class ApiGolden(Base):
+    """Dataset golden (waveform + riferimenti strumento) e correlazione."""
+
+    def get(self):
+        self.write_json({"result": LAST_GOLDEN["result"],
+                         "dataset": LAST_GOLDEN["dataset_meta"]})
+
+    async def post(self):
+        body = self.body_json()
+        if body.get("example"):
+            dataset = await tornado.ioloop.IOLoop.current().run_in_executor(
+                REF_POOL, synthetic_golden_dataset)
+        else:
+            dataset = body.get("dataset")
+        problems = validate_dataset(dataset)
+        if problems:
+            return self.write_bad("dataset golden non valido: " + "; ".join(problems),
+                                  "invalid golden dataset: " + "; ".join(problems))
+        result = await tornado.ioloop.IOLoop.current().run_in_executor(
+            REF_POOL, correlate_golden, dataset)
+        meta = {k: dataset.get(k) for k in ("schema", "source", "instrument", "interface",
+                                             "symbol_rate_hz", "samples_per_ui", "note")}
+        meta["n_symbols"] = len(dataset.get("symbols", []))
+        LAST_GOLDEN["result"] = paneldata.J(result)
+        LAST_GOLDEN["dataset_meta"] = meta
+        self.write_json({"ok": True, "result": LAST_GOLDEN["result"], "dataset": meta})
 
 
 class ApiSensitivity(Base):
@@ -1137,7 +1198,9 @@ class ApiReport(Base):
 
         def work():
             sim = live_sim if cfg_matches_live(live_sim, cfg) else paneldata.ref_sim(cfg)
-            extras = {"records": records, "dr4": dr4}
+            extras = {"records": records, "dr4": dr4,
+                      "golden": LAST_GOLDEN["result"],
+                      "stressed_rx": LAST_STRESSED["report"]}
             if cfg.link_medium == "copper" and cfg.modulation == "PAM4":
                 from serdes_sim.blocks.com import com_report
                 ctx = paneldata.profile_context(cfg, profile)
@@ -1179,12 +1242,12 @@ class ApiScope(Base):
         # vista FlexDCA: eye (default) oppure wave = Oscilloscope mode,
         # finestra continua del record navigabile con start/span [UI]
         view = self.get_argument("view", "eye")
-        try:
-            start_ui = float(self.get_argument("start", "100"))
-            span_ui = float(self.get_argument("span", "64"))
-        except ValueError:
-            self.set_status(400)
-            return self.write_json({"error": "start/span devono essere numeri"})
+        start_ui = self.float_arg("start", 100.0, 0.0, 1e7)
+        span_ui = self.float_arg("span", 64.0, 1.0, 1e5)
+        # fixture di misura (dB a Nyquist) e de-embedding: strumenti del DCA,
+        # non del datapath
+        fixture_db = self.float_arg("fix", 0.0, 0.0, 30.0)
+        deembed = self.get_argument("deembed", "0") == "1"
 
         def work():
             sim = live_sim if source in ("auto", "live") else None
@@ -1196,12 +1259,17 @@ class ApiScope(Base):
                 channels = [paneldata.wave_panel(sim, cfg, node=n,
                                                  start_ui=start_ui,
                                                  span_ui=span_ui,
-                                                 ref_filter=rf)
+                                                 ref_filter=rf,
+                                                 fixture_db=fixture_db,
+                                                 deembed=deembed)
                             for n in requested]
             else:
                 channels = [paneldata.eye_panel(sim, cfg, node=n,
                                                 n_traces=n_traces,
-                                                ref_filter=rf)
+                                                ref_filter=rf,
+                                                profile=PROFILE["name"],
+                                                fixture_db=fixture_db,
+                                                deembed=deembed)
                             for n in requested]
             return sim, source_used, channels
 
@@ -1302,6 +1370,8 @@ def make_app():
         (r"/api/experiment/jtf", ApiJtf),
         (r"/api/experiment/traffic", ApiTraffic),
         (r"/api/experiment/dr4-tdecq", ApiDr4Procedure),
+        (r"/api/experiment/stressed-rx", ApiStressedRx),
+        (r"/api/golden", ApiGolden),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
         (r"/api/experiment/sensitivity", ApiSensitivity),

@@ -4,6 +4,26 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Traffic panel rebuilt as PHY · L1 · L2 on the same record: real MAC frames
+  with round-robin / weighted round-robin / IMIX scheduler, workload profiles
+  (AI training, LLM inference, storage, web, video) with bursts and completion
+  KPIs, drop/duplicate/misorder/corrupt impairment emulator with per-stream
+  counters, Clause 49 64b/66b PCS with block lock and sync-header monitor,
+  and audit rows that close accounting identities across the layers.
+- DCA jitter mode J2/J9 (measured and dual-Dirac extrapolated), declared
+  measurement fixture with regularized de-embedding on the scope (EYE/WAVE).
+- Optics: coherent multipath reflection pair (return loss per discontinuity)
+  and RIN at the source (clause RIN_xOMA definition) as an explicit,
+  baseline-preserving alternative to the receiver noise-current model.
+- DR4 procedure v1.2.0: eight-case stress space (dispersion × polarization
+  split, MPI at the TX return-loss tolerance, stress RIN), worst finite TDECQ
+  with the list of non-finite cases, golden-instrument correlation from a
+  `labpro-golden/1` dataset (`/api/golden`).
+- Stressed receiver v2 (`/api/experiment/stressed-rx`): SJ + RIN bisection to
+  the registry SECQ target, RX BER on a long record with a Clopper-Pearson
+  verdict.
+- Engine: pattern-sync window now leaves room for every lag (fixes short
+  records around 4k symbols).
 - Standards registry (`serdes_sim/standards.py`): per-interface limits with
   clause, table, edition and a published/to-verify confidence flag; a closed
   verdict taxonomy (PASS, FAIL, MARGINAL, PROXY, NOT_APPLICABLE, NOT_ASSESSED,

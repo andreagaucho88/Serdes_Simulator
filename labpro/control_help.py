@@ -259,6 +259,106 @@ _add("l2_streams", "Traffic generator", "PPG payload (frames)",
      "streams and compare per-stream loss% in the frame inspector.",
      "round = 1 frame per stream", "pattern = eth")
 
+_add("l2_scheduler", "Traffic generator", "MAC scheduler (L2)",
+     "scheduler dei frame fra gli stream (stile Xena): round_robin = un "
+     "frame per stream a turno; weighted = weighted round-robin 'smooth' "
+     "con i pesi l2_stream_weights (lo stream con più credito emette); "
+     "imix = mix di size 64/576/1024 B in rapporto 7:4:1 (IMIX-like, "
+     "dichiarato: il classico 1500 B non entra nel limite di 1024 B). "
+     "Sul banco: pannello Traffic, tabella per stream (quota di frame ≈ "
+     "pesi) e istogramma delle size.",
+     "frame scheduler across streams (Xena-style): round_robin = one frame "
+     "per stream in turn; weighted = smooth weighted round-robin with the "
+     "l2_stream_weights (the stream with most credit transmits); imix = "
+     "64/576/1024 B size mix at 7:4:1 (IMIX-like, declared: the classic "
+     "1500 B does not fit the 1024 B cap). On the bench: Traffic panel, "
+     "per-stream table (frame share ≈ weights) and size histogram.",
+     "WRR: credit_i += w_i; emit argmax; credit -= Σw", "pattern = eth")
+_add("l2_stream_weights", "Traffic generator", "MAC scheduler (L2)",
+     "pesi degli stream 0..3 per lo scheduler weighted: la quota di frame "
+     "di ogni stream è w_i/Σw (con 4:2:1:1 lo stream 0 emette la metà dei "
+     "frame). Con round_robin o imix i pesi sono ignorati. Sul banco: "
+     "confronta 'attesi' per stream nella tabella Traffic con i pesi.",
+     "weights of streams 0..3 for the weighted scheduler: each stream's "
+     "frame share is w_i/Σw (with 4:2:1:1 stream 0 sends half of the "
+     "frames). Ignored by round_robin and imix. On the bench: compare the "
+     "per-stream 'expected' column in the Traffic table with the weights.",
+     "share_i = w_i / Σ w", "pattern = eth, l2_scheduler = weighted")
+_add("l2_workload", "Traffic generator", "MAC scheduler (L2)",
+     "profilo di WORKLOAD che impone mix di size e burst al generatore: "
+     "ai_training = collettive all-reduce (frame grandi, burst lunghi "
+     "sincroni con pause), llm_inference = richieste piccole e risposte "
+     "medie a bassa latenza, storage = frame grandi continui, web = molti "
+     "frame piccoli, video = frame medi a rate costante. custom = usa "
+     "scheduler/size configurati. DICHIARATO: emulazione della FORMA del "
+     "traffico su una singola corsia seriale — niente switch, code, "
+     "congestione o RDMA. Sul banco: Traffic → KPI del workload (goodput, "
+     "completamento burst, FLR di coda) e come le pause lunghe (idle "
+     "scramblato) e i frame grandi reagiscono agli errori del PHY.",
+     "WORKLOAD profile shaping size mix and bursts: ai_training = "
+     "all-reduce collectives (large frames, long synchronous bursts with "
+     "pauses), llm_inference = small requests and medium latency-sensitive "
+     "replies, storage = continuous large frames, web = many small frames, "
+     "video = medium frames at constant rate. custom = configured "
+     "scheduler/size. DECLARED: emulation of the traffic SHAPE on one "
+     "serial lane — no switch, queues, congestion or RDMA. On the bench: "
+     "Traffic → workload KPIs (goodput, burst completion, tail FLR) and how "
+     "long pauses (scrambled idle) and large frames react to PHY errors.",
+     "burst on/off · size mix · streams", "pattern = eth")
+_add("l2_drop_pct", "Impairment emulator", "between MAC and PCS",
+     "percentuale di frame SCARTATI dall'emulatore di impairment prima del "
+     "PCS (come il modulo impairment di un test set): il sequence number "
+     "salta e l'analyzer li conta come 'persi (emulati)', separati dai "
+     "persi per errori del PHY. Deterministico per configurazione.",
+     "percentage of frames DROPPED by the impairment emulator before the "
+     "PCS (like a test set's impairment module): the sequence number skips "
+     "and the analyzer counts them as 'lost (emulated)', separate from "
+     "PHY-error losses. Deterministic per configuration.",
+     "P(drop) = pct/100", "pattern = eth")
+_add("l2_dup_pct", "Impairment emulator", "between MAC and PCS",
+     "percentuale di frame DUPLICATI (seconda copia con lo stesso sequence "
+     "number): l'analyzer li conta come duplicati e non come frame ok in "
+     "più. Sul banco: colonna 'dup' per stream.",
+     "percentage of DUPLICATED frames (second copy with the same sequence "
+     "number): the analyzer counts them as duplicates, not as extra good "
+     "frames. On the bench: per-stream 'dup' column.",
+     "P(dup) = pct/100", "pattern = eth")
+_add("l2_misorder_pct", "Impairment emulator", "between MAC and PCS",
+     "percentuale di frame RITARDATI di una posizione (escono dopo il frame "
+     "successivo): l'analyzer li conta come fuori ordine (seq minore del "
+     "massimo già visto sullo stesso stream).",
+     "percentage of frames DELAYED by one position (sent after the next "
+     "frame): the analyzer counts them as out-of-order (seq lower than the "
+     "maximum already seen on the same stream).",
+     "swap(f_i, f_{i+1})", "pattern = eth")
+_add("l2_corrupt_pct", "Impairment emulator", "between MAC and PCS",
+     "percentuale di frame CORROTTI: un bit di payload viene invertito DOPO "
+     "il calcolo dell'FCS, quindi al RX la CRC-32 non torna. È il modo per "
+     "vedere l'FCS lavorare senza errori del PHY: FCS bad ≥ corrotti emulati.",
+     "percentage of CORRUPTED frames: one payload bit is flipped AFTER the "
+     "FCS is computed, so the RX CRC-32 fails. It shows the FCS at work "
+     "without PHY errors: FCS bad ≥ emulated corruptions.",
+     "FCS ≠ CRC32(body)", "pattern = eth")
+_add("l2_pcs_coding", "PCS (L1)", "between MAC frames and PMA",
+     "livello L1 fra i frame e il PHY: scrambler = solo scrambler "
+     "self-sync di Clause 49 sul flusso (baseline storica); 64b66b = "
+     "codifica a blocchi di 66 bit con sync header 01/10, blocchi /S/ /D/ "
+     "/T/ /I/, scrambler sul payload e BLOCK LOCK al RX (64 header validi "
+     "consecutivi, hi_ber con ≥16 header errati). Overhead 66/64 = 3.125 % "
+     "di bit di linea in più a parità di payload. DICHIARATO: niente "
+     "alignment marker, 256b/257b, lane distribution. Sul banco: Traffic → "
+     "sezione L1 (lock, offset, header errati, mix di blocchi) e "
+     "checkpoint 'PCS 64b/66b block lock'.",
+     "L1 layer between frames and PHY: scrambler = Clause 49 self-sync "
+     "scrambler only (historic baseline); 64b66b = 66-bit block coding with "
+     "01/10 sync headers, /S/ /D/ /T/ /I/ blocks, payload scrambler and RX "
+     "BLOCK LOCK (64 consecutive valid headers, hi_ber with ≥16 bad "
+     "headers). Overhead 66/64 = 3.125 % more line bits per payload. "
+     "DECLARED: no alignment markers, 256b/257b or lane distribution. On "
+     "the bench: Traffic → L1 section (lock, offset, header errors, block "
+     "mix) and the 'PCS 64b/66b block lock' checkpoint.",
+     "66 = 2 sync + 64 payload; lock: 64 valid headers", "pattern = eth")
+
 # ==================================================== BERT error insertion
 _add("err_insert_bits", "BERT PPG", "TX bits after reference copy",
      "numero di bit invertiti al TX DOPO aver conservato la copia di "
@@ -1109,6 +1209,65 @@ _add("fiber_km", "Optical path", "fiber propagation",
      "falling monotonically between 0.5 and 3.5 km; at large D·L the "
      "non-equalizable IM/DD fading appears.",
      "CD: β2·L; PMD: DGD∝√L; loss: α·L")
+_add("optical_return_loss_db", "Optical link", "fiber launch (MPI)",
+     "return loss di CIASCUNA delle due discontinuità che formano una coppia "
+     "di riflessioni (multipath interference): l'eco che rientra nel verso "
+     "di propagazione è riflessa due volte, quindi sta 2·RL sotto il segnale "
+     "(campo 10^(−RL/10)), ritardata di optical_reflection_delay_ns e con "
+     "fase casuale per record. 0 = spenta. Nella procedura DR4 è lo stress "
+     "'reflection' alla tolleranza ORL del TX (21.4 dB per discontinuità → "
+     "eco a −42.8 dB, penalità di frazioni di dB come le allocazioni MPI di "
+     "clausola); con 10-15 dB l'eco batte contro il segnale e chiude "
+     "l'occhio in modo pattern-dipendente. DICHIARATO: eco singola coerente, "
+     "non cavità né feedback nel laser (quello è RIN_21.4OMA → rin_at_source). "
+     "Sul banco: Optical → P al PD e TDECQ; DR4 → caso 'reflection'.",
+     "return loss of EACH of the two discontinuities forming a reflection "
+     "pair (multipath interference): the echo re-entering the propagation "
+     "direction is reflected twice, so it sits 2·RL below the signal (field "
+     "10^(−RL/10)), delayed by optical_reflection_delay_ns and with a random "
+     "phase per record. 0 = off. In the DR4 procedure it is the 'reflection' "
+     "stress at the TX ORL tolerance (21.4 dB per discontinuity → echo at "
+     "−42.8 dB, fractions of a dB of penalty like the clause MPI allocations); "
+     "at 10-15 dB the echo beats against the signal and closes the eye "
+     "pattern-dependently. DECLARED: single coherent echo, no cavity or laser "
+     "feedback (that is RIN_21.4OMA → rin_at_source). On the bench: Optical → "
+     "PD power and TDECQ; DR4 → 'reflection' case.",
+     "E' = E + 10^(−2·RL/20)·E(t−τ)·e^{jφ}", "valore > 0 dB")
+_add("optical_reflection_delay_ns", "Optical link", "fiber launch (MPI)",
+     "ritardo dell'eco riflessa: pochi ns = riflessione su un connettore "
+     "vicino (eco entro la coerenza del laser → interferenza coerente). "
+     "Con delay lungo rispetto al record l'eco esce dalla finestra.",
+     "delay of the reflected echo: a few ns = reflection at a nearby "
+     "connector (echo within the laser coherence → coherent interference). "
+     "With a delay long compared with the record the echo leaves the "
+     "window.",
+     "τ [ns]", "optical_return_loss_db > 0")
+_add("rin_at_source", "Optical link", "laser intensity",
+     "dove vive il RIN del laser: OFF = modello storico della baseline, "
+     "corrente di rumore bianca al fotodiodo con PSD I_media²·10^(RIN/10) "
+     "(non tocca la forma d'onda ottica, quindi TDECQ/SECQ non lo vedono); "
+     "ON = rumore d'intensità moltiplicativo all'uscita del modulatore, "
+     "bianco sulla banda analogica, con la definizione di clausola RIN_xOMA: "
+     "al livello alto σ² = 10^(RIN/10)·OMA²·BW, agli altri livelli scala con "
+     "la potenza istantanea; entra nel campo ottico e arriva al PD via "
+     "square-law (il termine al ricevitore viene azzerato: mai contato due "
+     "volte). Serve alla calibrazione stressed-RX sul SECQ e al caso 'rin' "
+     "della DR4 (RIN_21.4OMA, misurato dallo standard con 21.4 dB di return "
+     "loss verso il laser). Sul banco: ON + RIN −128 dB/Hz → Optical/TDECQ "
+     "peggiora, Noise budget mostra RIN 0 al PD.",
+     "where the laser RIN lives: OFF = the baseline's historical model, a "
+     "white noise current at the photodiode with PSD I_mean²·10^(RIN/10) (it "
+     "does not touch the optical waveform, so TDECQ/SECQ cannot see it); ON = "
+     "multiplicative intensity noise at the modulator output, white over the "
+     "analog band, with the clause RIN_xOMA definition: at the high level "
+     "σ² = 10^(RIN/10)·OMA²·BW, at the other levels it scales with the "
+     "instantaneous power; it enters the optical field and reaches the PD via "
+     "the square law (the receiver term is zeroed: never counted twice). Needed "
+     "by the SECQ stressed-RX calibration and by the DR4 'rin' case "
+     "(RIN_21.4OMA, which the standard measures with 21.4 dB return loss "
+     "toward the laser). On the bench: ON + RIN −128 dB/Hz → Optical/TDECQ "
+     "degrades, Noise budget shows RIN 0 at the PD.",
+     "P(t)·(1 + n(t)·OMA/P_high), S_n = 10^(RIN/10) 1/Hz", "link ottico / optical link")
 _add("wavelength_nm", "SMF dispersion", "optical field in fiber",
      "lunghezza d'onda operativa: fissa D(λ) tramite pendenza e zero di "
      "dispersione della G.652 (zero a ~1310 nm — la banda O di DR/FR/LR "

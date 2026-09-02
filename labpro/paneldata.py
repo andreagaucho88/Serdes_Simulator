@@ -8,6 +8,7 @@ nominale per i nodi TX.
 
 from __future__ import annotations
 
+import math
 import json
 from functools import lru_cache
 
@@ -161,6 +162,45 @@ def _node_delay_ui(sim, node):
 # Eye + misure da strumento
 # ---------------------------------------------------------------------------
 
+def fixture_response(f_hz, cfg, loss_db_nyq, delay_ps=50.0):
+    """Fixture di misura dichiarata (cavo/connettore fra DUT e DCA): perdita
+    ∝ √f (skin effect) con ``loss_db_nyq`` dB a Nyquist e ritardo lineare."""
+    f = np.abs(np.asarray(f_hz, dtype=float))
+    mag = 10 ** (-float(loss_db_nyq) * np.sqrt(f / cfg.nyquist_hz) / 20)
+    return mag * np.exp(-2j * np.pi * np.asarray(f_hz) * delay_ps * 1e-12)
+
+
+def apply_fixture(wave, cfg, loss_db_nyq):
+    """Waveform come la vede il DCA ATTRAVERSO la fixture (embedded)."""
+    y, _, _ = apply_frequency_response(
+        np.asarray(wave, float), cfg.fs_analog_hz,
+        lambda f: fixture_response(f, cfg, loss_db_nyq))
+    return y
+
+
+def deembed_fixture(wave, cfg, loss_db_nyq, reg_db=30.0):
+    """De-embedding della fixture: filtro inverso regolarizzato
+    H⁻¹ = H*/(|H|²+ε), ε = 10^(−reg/10)·max|H|² — il guadagno ad alta
+    frequenza resta limitato dal floor di regolarizzazione (rumore)."""
+    def inv(f):
+        H = fixture_response(f, cfg, loss_db_nyq)
+        eps = 10 ** (-float(reg_db) / 10) * float(np.max(np.abs(H)) ** 2)
+        return np.conj(H) / (np.abs(H) ** 2 + eps)
+    y, _, _ = apply_frequency_response(np.asarray(wave, float),
+                                       cfg.fs_analog_hz, inv)
+    return y
+
+
+def _fixture_stage(wave, cfg, fixture_db=0.0, deembed=False):
+    """Applica fixture (+ de-embedding) e ritorna (wave, etichetta)."""
+    if not fixture_db or fixture_db <= 0:
+        return wave, ""
+    w = apply_fixture(wave, cfg, fixture_db)
+    if deembed:
+        return deembed_fixture(w, cfg, fixture_db), f"fixture {fixture_db:g} dB · de-embedded"
+    return w, f"fixture {fixture_db:g} dB (embedded)"
+
+
 def _bt4_reference(wave, cfg, ref):
     """Filtro di misura Bessel-Thomson 4° ordine come da 802.3 (ricevitore
     di riferimento: 0.75·baud per le maschere NRZ, 0.5·baud per TDECQ PAM4).
@@ -178,11 +218,14 @@ def _bt4_reference(wave, cfg, ref):
 
 
 def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter="",
-              profile=None):
+              profile=None, fixture_db=0.0, deembed=False):
     wave = np.asarray(get_wave(sim, node), dtype=float)
+    wave, fix_label = _fixture_stage(wave, cfg, fixture_db, deembed)
     wave, ref_label = _bt4_reference(wave, cfg, ref_filter)
-    meas = dict(_memo(sim, ("eye", node, ref_filter),
-                      lambda: eye_measures(sim, cfg, node, ref_filter=ref_filter)))
+    meas = dict(_memo(sim, ("eye", node, ref_filter, float(fixture_db or 0), bool(deembed)),
+                      lambda: eye_measures(sim, cfg, node, ref_filter=ref_filter,
+                                           fixture_db=fixture_db, deembed=deembed)))
+    meas["fixture"] = fix_label
     if node == "pfiber" and sim.spec.bits_per_symbol == 2:
         meas["tdecq"] = _tdecq_for(sim, cfg, profile)
     if node == "pfiber" and sim.spec.bits_per_symbol == 1:
@@ -206,17 +249,20 @@ def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter="",
         "sps": sps, "traces": np.round(traces, 5),
         "align": ("ritardo CDR" if side == "rx" else "centro nominale TX")
                  + (" · INV" if meas.get("inverted") else "")
-                 + (f" · {ref_label}" if ref_label else ""),
+                 + (f" · {ref_label}" if ref_label else "")
+                 + (f" · {fix_label}" if fix_label else ""),
         "meas": meas,
     })
 
 
-def eye_measures(sim, cfg, node="vctle", ref_filter=""):
+def eye_measures(sim, cfg, node="vctle", ref_filter="", fixture_db=0.0,
+                 deembed=False):
     """Misure per occhio: livelli μ/σ, height 3σ, width alla soglia, Q, RLM.
 
     Proxy dichiarati: allineamento dal timing dell'acquisition, niente filtro
     di riferimento né procedure di clause (non è TDECQ)."""
     wave = np.asarray(get_wave(sim, node), dtype=float)
+    wave, _fix_label = _fixture_stage(wave, cfg, fixture_db, deembed)
     wave, _ref_label = _bt4_reference(wave, cfg, ref_filter)
     sps = cfg.analog_sps
     spec = sim.spec
@@ -446,6 +492,16 @@ def _tie_tail_fit(tie_ui, ui_ps):
     dj = max(float(mu_r) - float(mu_l), 0.0)
     q12 = float(sp_norm.isf(1e-12))
     q4 = float(sp_norm.isf(2.4e-4))
+    # J2/J9 (jitter mode dei DCA Keysight): jitter totale a BER 2.5e-3 e
+    # 2.5e-10 nella stessa convenzione dual-Dirac di TJ@BER. J2 è anche
+    # MISURATO direttamente dai percentili del TIE (2.5e-3 per coda) quando
+    # il record ha abbastanza crossing; J9 resta un'estrapolazione.
+    q_j2 = float(sp_norm.isf(2.5e-3))
+    q_j9 = float(sp_norm.isf(2.5e-10))
+    j2_meas = None
+    if n >= 2000:
+        j2_meas = float(np.percentile(x, 100 * (1 - 2.5e-3))
+                        - np.percentile(x, 100 * 2.5e-3)) * ui_ps
     return {
         "rj_ps": rj * ui_ps, "dj_dd_ps": dj * ui_ps,
         "sigma_left_ps": abs(float(sig_l)) * ui_ps,
@@ -453,6 +509,11 @@ def _tie_tail_fit(tie_ui, ui_ps):
         "tj_1e12_ps": (dj + 2 * q12 * rj) * ui_ps,
         "tj_2p4e4_ps": (dj + 2 * q4 * rj) * ui_ps,
         "ew_2p4e4_ui": 1.0 - (dj + 2 * q4 * rj),
+        "j2_ps": (dj + 2 * q_j2 * rj) * ui_ps,
+        "j9_ps": (dj + 2 * q_j9 * rj) * ui_ps,
+        "j2_measured_ps": j2_meas,
+        "j2_ber": 2.5e-3, "j9_ber": 2.5e-10,
+        "n_edges": int(n),
     }
 
 
@@ -710,14 +771,17 @@ def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
 
 
 def wave_panel(sim, cfg, node="vctle", start_ui=100.0, span_ui=64.0,
-               ref_filter="", max_points=2600):
+               ref_filter="", max_points=2600, fixture_db=0.0, deembed=False):
     """Vista Oscilloscope stile FlexDCA/N1000A: finestra della waveform
     CONTINUA del nodo — non ripiegata sull'occhio — dallo stesso record
     coerente dello Scope, con lo stesso ricevitore di riferimento BT4
     opzionale usato dalle misure. start/span navigano il record."""
     wave = get_wave(sim, node)
     label, _domain, unit, _side = NODES[node]
+    wave, fix_label = _fixture_stage(np.asarray(wave, float), cfg, fixture_db, deembed)
     wave, rf_note = _bt4_reference(wave, cfg, ref_filter)
+    if fix_label:
+        rf_note = (rf_note + " · " if rf_note else "") + fix_label
     n_ui = len(wave) / cfg.analog_sps
     span_ui = float(min(max(span_ui, 4.0), 512.0))
     start_ui = float(min(max(start_ui, 0.0), max(n_ui - span_ui, 0.0)))
@@ -1250,76 +1314,205 @@ def bert_panel(sim, cfg):
     return J(out)
 
 
+def _l2_audit_rows(sim, cfg):
+    """Metriche VERIFICATE della catena L2→L1→PHY→L1→L2 sul record: ogni
+    riga chiude un'identità contabile, non un KPI."""
+    rows = []
+    l2, l1, sched = sim.l2, sim.l1, sim.l2_schedule
+
+    def add(name, ok, measured, expected, it, en, applicable=True):
+        rows.append({"name": name, "status": (PASS if ok else FAIL) if applicable else NOT_APPLICABLE,
+                     "measured": measured, "expected": expected, "it": it, "en": en,
+                     "verdict": verdict((PASS if ok else FAIL) if applicable else NOT_APPLICABLE,
+                                        basis="checkpoint", evidence=f"{measured} vs {expected}")})
+
+    if l2 is not None and l2.frames_expected == 0:
+        # finestra più corta di un frame intero: le identità sarebbero vere
+        # per vacuità (0 = 0), quindi NON si valutano e si suggerisce il record
+        from serdes_sim.blocks.ethernet import body_length as _body_len
+        biggest = max((f.size_bytes for f in sched.frames), default=cfg.l2_frame_bytes) \
+            if sched is not None and sched.frames else cfg.l2_frame_bytes
+        frame_bits = (8 + _body_len(biggest) + int(cfg.l2_ipg_bytes)) * 8 * 66 / 64
+        bps = 2 if cfg.modulation == "PAM4" else 1
+        suggest = int(math.ceil((cfg.training_stop + 4 * frame_bits / (bps * 0.85)) / 4096.0) * 4096)
+        rows.append({"name": "L2 window", "status": NOT_ASSESSED,
+                     "measured": "0 frame interi nella finestra",
+                     "expected": f"≥ 1 frame da {biggest} B",
+                     "it": (f"Il record analizzato non contiene nessun frame intero: con frame da {biggest} B "
+                            f"servono ≥ {suggest} simboli/record (n_symbols). Le identità non vengono valutate."),
+                     "en": (f"The analyzed record holds no complete frame: with {biggest}-B frames you need "
+                            f"≥ {suggest} symbols/record (n_symbols). The identities are not evaluated."),
+                     "verdict": verdict(NOT_ASSESSED, basis="none",
+                                        evidence=f"0 frames expected; suggest n_symbols ≥ {suggest}")})
+        return rows
+    if l2 is not None:
+        unique_ok = l2.frames_ok - l2.frames_duplicated
+        add("L2 frame conservation", l2.frames_expected == unique_ok + l2.frames_lost,
+            f"{unique_ok} ok unici + {l2.frames_lost} persi", f"{l2.frames_expected} attesi",
+            "Ogni frame atteso nella finestra è ricevuto con FCS ok (una volta) oppure conteggiato perso: nessun frame sparisce dalla contabilità.",
+            "Every frame expected in the window is either received once with a good FCS or counted lost: no frame disappears from the accounting.")
+        add("Detected = ok + FCS bad", l2.frames_detected == l2.frames_ok + l2.frames_fcs_bad,
+            f"{l2.frames_ok} + {l2.frames_fcs_bad}", f"{l2.frames_detected} rilevati",
+            "I frame delineati dal preamble si dividono esattamente fra FCS ok e FCS errata.",
+            "Frames delineated by the preamble split exactly into good and bad FCS.")
+        add("Emulator: lost emulated ≤ lost", l2.lost_emulated <= l2.frames_lost,
+            f"{l2.lost_emulated} emulati", f"≤ {l2.frames_lost} persi",
+            "Le perdite dell'emulatore (drop) sono un sottoinsieme delle perdite totali; il resto viene dal PHY.",
+            "Emulator losses (drops) are a subset of total losses; the rest comes from the PHY.")
+        add("FCS catches emulated corruption", l2.frames_fcs_bad >= l2.corrupt_emulated,
+            f"{l2.frames_fcs_bad} FCS bad", f"≥ {l2.corrupt_emulated} corrotti emulati",
+            "Ogni frame corrotto dall'emulatore deve fallire la CRC-32 al RX.",
+            "Every frame corrupted by the emulator must fail the RX CRC-32.")
+        if l2.per_stream and l2.scheduler == "weighted":
+            total = sum(st.expected for st in l2.per_stream)
+            wsum = sum(st.weight for st in l2.per_stream)
+            worst = max(abs(st.expected - total * st.weight / wsum) for st in l2.per_stream) if total else 0
+            add("Scheduler share ≈ weights", worst <= 1.0 + 0.1 * total,
+                " / ".join(str(st.expected) for st in l2.per_stream),
+                " / ".join(f"{total * st.weight / wsum:.1f}" for st in l2.per_stream),
+                "La quota di frame per stream nella finestra segue i pesi del WRR (±1 frame + 10%).",
+                "The per-stream frame share in the window follows the WRR weights (±1 frame + 10%).")
+    if cfg.l2_pcs_coding == "64b66b":
+        if l1 is not None:
+            add("PCS block lock", l1.lock and not l1.hi_ber,
+                f"lock={'YES' if l1.lock else 'NO'}, {l1.sync_header_errors} header errati",
+                "lock, < 16 header errati",
+                "Il RX trova l'allineamento a 66 bit (64 header validi consecutivi) e resta sotto la soglia hi_ber.",
+                "The RX finds the 66-bit alignment (64 consecutive valid headers) and stays below the hi_ber threshold.")
+            if sched is not None and sched.total_line_bits:
+                payload_bytes = sum(len(PCS_PREAMBLE) + body_len_of(f.size_bytes)
+                                    + int(cfg.l2_ipg_bytes) + int(f.extra_ipg)
+                                    for f in sched.emitted())
+                ratio = sched.total_line_bits / max(8 * payload_bytes, 1)
+                add("PCS overhead 66/64", 1.03 <= ratio <= 1.12,
+                    f"{ratio:.4f} bit di linea / bit MAC", "1.0313 (+ idle di arrotondamento)",
+                    "I bit di linea del PCS sono i bit MAC × 66/64 più gli idle di arrotondamento dei blocchi /I/.",
+                    "PCS line bits are MAC bits × 66/64 plus the rounding idles of the /I/ blocks.")
+    return rows
+
+
+from serdes_sim.blocks.ethernet import PREAMBLE as PCS_PREAMBLE  # noqa: E402
+from serdes_sim.blocks.ethernet import body_length as body_len_of  # noqa: E402
+
+
 def l2_panel(sim, cfg):
-    from serdes_sim.blocks.ethernet import STREAM_SIZES
-    ethernet_sizes = [(STREAM_SIZES[i] or cfg.l2_frame_bytes)
-                      for i in range(cfg.l2_streams)]
+    from serdes_sim.blocks.ethernet import WORKLOADS
     if cfg.pattern != "eth":
-        return {"inactive": True}
+        return {"inactive": True,
+                "reason": {"it": "imposta pattern = frame Ethernet (L2)",
+                           "en": "set pattern = Ethernet frames (L2)"}}
     if not sim.link_up:
         return {"link_down": True}
-    if sim.l2 is None:
-        return {"inactive": True, "reason": "finestra troppo corta"}
-    l2 = sim.l2
-    return J({
-        "frames_expected": l2.frames_expected,
-        "frames_detected": l2.frames_detected,
-        "frames_ok": l2.frames_ok,
-        "frames_fcs_bad": l2.frames_fcs_bad,
-        "frames_lost": l2.frames_lost,
-        "throughput_gbps": l2.throughput_gbps,
-        "line_rate_gbps": l2.line_rate_gbps,
-        "frame_bytes": cfg.l2_frame_bytes,
+    l2, l1, sched = sim.l2, sim.l1, sim.l2_schedule
+    bps = sim.spec.bits_per_symbol
+    wl = WORKLOADS.get(cfg.l2_workload)
+    streams = (sched.streams if sched is not None else cfg.l2_streams)
+    phy = {
+        "line_rate_gbps": cfg.symbol_rate_hz * bps / 1e9,
+        "ber_post_dfe": float(sim.ber_post_dfe),
         "fec": cfg.fec_mode,
+        "post_fec_ber": (sim.fec_link.post_fec_ber if sim.fec_link is not None else None),
+        "cdr_locked": (bool(sim.cdr.locked) if sim.cdr is not None else True),
+        "pattern_locked": (bool(sim.cdr.pattern_locked) if sim.cdr is not None else True),
+    }
+    if cfg.l2_pcs_coding == "64b66b":
+        l1d = {
+            "coding": "64b66b", "overhead_pct": 100.0 * 2 / 64,
+            "lock": (bool(l1.lock) if l1 else False),
+            "lock_offset_bits": (l1.lock_offset_bits if l1 else None),
+            "blocks": (l1.blocks if l1 else 0),
+            "sync_header_errors": (l1.sync_header_errors if l1 else None),
+            "hi_ber": (bool(l1.hi_ber) if l1 else True),
+            "block_mix": ({"D": l1.data_blocks, "S": l1.start_blocks, "T": l1.terminate_blocks,
+                           "I": l1.idle_blocks, "invalid": l1.invalid_types} if l1 else None),
+            "verdict": verdict((PASS if (l1 and l1.lock and not l1.hi_ber) else FAIL),
+                               basis="checkpoint",
+                               evidence=(f"lock @ {l1.lock_offset_bits} bit, {l1.sync_header_errors} header errors / {l1.blocks} blocks"
+                                         if l1 else "no PCS statistics")),
+            "note": (l1.note if l1 else ""),
+        }
+    else:
+        l1d = {"coding": "scrambler", "overhead_pct": 0.0, "lock": None,
+               "verdict": verdict(NOT_APPLICABLE, compliance=NOT_APPLICABLE, basis="none",
+                                  evidence="Clause 49 self-sync scrambler only (no block coding)"),
+               "note": "scrambler 1+x^39+x^58 on the whole stream; enable 64b66b for block lock"}
+    if l2 is None:
+        return J({"inactive": True,
+                  "reason": {"it": "finestra troppo corta o PCS senza lock",
+                             "en": "window too short or PCS not locked"},
+                  "phy": phy, "l1": l1d})
+    per_stream = ([{"stream_id": st.stream_id, "detected": st.detected, "ok": st.ok,
+                    "fcs_bad": st.fcs_bad, "lost": st.lost, "lost_emulated": st.lost_emulated,
+                    "duplicates": st.duplicates, "out_of_order": st.out_of_order,
+                    "weight": st.weight, "expected": st.expected,
+                    "size": (st.size_bytes if wl is None and l2.scheduler != "imix" else None)}
+                   for st in l2.per_stream] if l2.per_stream else None)
+    fps = (l2.frames_ok / max(len(sim.pam4_symbols) / cfg.symbol_rate_hz, 1e-12)) / 1e6
+    out = {
+        "phy": phy, "l1": l1d,
+        "frames_expected": l2.frames_expected, "frames_detected": l2.frames_detected,
+        "frames_ok": l2.frames_ok, "frames_fcs_bad": l2.frames_fcs_bad,
+        "frames_lost": l2.frames_lost, "lost_emulated": l2.lost_emulated,
+        "lost_phy": l2.lost_phy, "frames_duplicated": l2.frames_duplicated,
+        "frames_out_of_order": l2.frames_out_of_order,
+        "corrupt_emulated": l2.corrupt_emulated,
+        "throughput_gbps": l2.throughput_gbps, "line_rate_gbps": l2.line_rate_gbps,
+        "offered_load_pct": l2.offered_load_pct,
+        "frame_bytes": cfg.l2_frame_bytes, "fec": cfg.fec_mode,
+        "scheduler": l2.scheduler, "weights": list(l2.weights), "streams": streams,
+        "workload": {"name": cfg.l2_workload, "label": l2.workload_label,
+                     "kpi": l2.workload_kpi,
+                     "burst_on": (sched.burst_on if sched is not None else 0),
+                     "gap_ipg": (sched.gap_ipg if sched is not None else 0),
+                     "bursts_in_window": l2.bursts_in_window,
+                     "burst_bytes": l2.burst_bytes,
+                     "burst_completion_us": l2.burst_completion_us,
+                     "tail_loss_pct": l2.tail_loss_pct,
+                     "frames_per_us": fps,
+                     "size_histogram": l2.size_histogram},
+        "impairments": {"drop_pct": cfg.l2_drop_pct, "dup_pct": cfg.l2_dup_pct,
+                        "misorder_pct": cfg.l2_misorder_pct, "corrupt_pct": cfg.l2_corrupt_pct,
+                        "scheduled": ({"dropped": sched.n_dropped, "duplicated": sched.n_duplicated,
+                                       "reordered": sched.n_reordered, "corrupted": sched.n_corrupted}
+                                      if sched is not None else None)},
         "frames": _decode_frames(sim, cfg),
-        "per_stream": ([{"stream_id": st.stream_id, "detected": st.detected,
-                         "ok": st.ok, "fcs_bad": st.fcs_bad, "lost": st.lost,
-                         "size": (ethernet_sizes[st.stream_id]
-                                  if st.stream_id < len(ethernet_sizes)
-                                  else cfg.l2_frame_bytes)}
-                        for st in l2.per_stream] if l2.per_stream else None),
-    })
+        "per_stream": per_stream,
+        "audit": _l2_audit_rows(sim, cfg),
+    }
+    return J(out)
+
 
 
 def _decode_frames(sim, cfg, max_frames=8):
-    """Ispettore frame: decodifica i frame REALI della finestra RX
-    descramblata dell'ultimo record — preamble/SFD, DA/SA/EtherType,
-    sequence, FCS ricevuta vs CRC-32 ricalcolato, verdetto per campo."""
+    """Ispettore frame: decodifica i frame REALI della finestra RX (ottetti
+    ricostruiti dopo FEC, PCS/descrambler) — preamble/SFD, DA/SA/EtherType,
+    sequence, stream, FCS ricevuta vs CRC-32 ricalcolato, verdetto."""
     import zlib
     from serdes_sim.blocks import ethernet as eth
-    bits = getattr(sim, "l2_window_bits", None)
-    if bits is None or len(bits) < 512:
-        return []
-    data = eth._bits_to_bytes(np.asarray(bits, dtype=np.uint8))
-    body_len = (len(eth.HEADER)
-                + max(cfg.l2_frame_bytes - len(eth.HEADER) - 4, 8) + 4)
+    data = getattr(sim, "l2_window_bytes", b"") or b""
+    if len(data) < 64:
+        bits = getattr(sim, "l2_window_bits", None)
+        if bits is None or len(bits) < 512:
+            return []
+        data = eth._bits_to_bytes(np.asarray(bits, dtype=np.uint8))
+    sched = getattr(sim, "l2_schedule", None)
+    streams = (sched.streams if sched is not None else max(1, cfg.l2_streams))
+    sizes = [(eth.STREAM_SIZES[i] or cfg.l2_frame_bytes) for i in range(streams)]
+    found = eth.delineate(data, sizes, streams,
+                          lookup=(sched.lookup if sched is not None else None))
     frames = []
-    i = 0
-    while len(frames) < max_frames and i < len(data) - body_len - 8:
-        j = data.find(eth.PREAMBLE, i)
-        if j < 0:
-            break
-        start = j + len(eth.PREAMBLE)
-        if start + body_len > len(data):
-            break
-        body = data[start:start + body_len - 4]
-        fcs_rx = data[start + body_len - 4:start + body_len]
+    for (j, sid, seq, body_len, ok, body, fcs_rx) in found[:max_frames]:
+        if not body:
+            continue
         fcs_calc = zlib.crc32(body).to_bytes(4, "big")
-        seq = int.from_bytes(body[len(eth.HEADER):len(eth.HEADER) + 4], "big")
         frames.append({
-            "offset_byte": j,
-            "da": body[0:6].hex(":"),
-            "sa": body[6:12].hex(":"),
-            "ethertype": "0x" + body[12:14].hex(),
-            "seq": seq,
+            "offset_byte": j, "stream": sid,
+            "da": body[0:6].hex(":"), "sa": body[6:12].hex(":"),
+            "ethertype": "0x" + body[12:14].hex(), "seq": seq,
             "payload_len": body_len - 4 - len(eth.HEADER),
-            "fcs_rx": fcs_rx.hex(),
-            "fcs_calc": fcs_calc.hex(),
-            "fcs_ok": fcs_rx == fcs_calc,
-            "hex_head": " ".join(f"{b:02x}" for b in
-                                 (eth.PREAMBLE + body)[:36]),
+            "fcs_rx": fcs_rx.hex(), "fcs_calc": fcs_calc.hex(), "fcs_ok": bool(ok),
+            "hex_head": " ".join(f"{b:02x}" for b in (eth.PREAMBLE + body)[:36]),
         })
-        i = start + body_len
     return frames
 
 
@@ -1889,6 +2082,11 @@ def physics_audit_panel(sim, cfg):
             f"{gaussian:.4e}", rel, "10% if ≥30 errors", status,
             f"Confronto per-livello con soglie e Hamming Gray; errori contati={bit_errors}. Sotto 30 errori il record non sostiene il claim al 10%.",
             f"Per-level comparison with thresholds and Gray Hamming weights; counted errors={bit_errors}. Below 30 errors the record cannot support a 10% claim.")
+    if cfg.pattern == "eth":
+        # metriche verificate della catena L2→L1→PHY→L1→L2 sullo stesso record
+        for a in _l2_audit_rows(sim, cfg):
+            add(a["name"], a["measured"], a["expected"], None, "identity",
+                a["status"], a["it"], a["en"])
     for r in rows:
         r["status"] = normalize_status(r["status"])
         r["verdict"] = verdict(r["status"], basis="checkpoint",
@@ -1944,7 +2142,9 @@ def standards_report(sim, cfg, profile=None, extras=None):
         "physics": phys, "checkpoints": chk["checks"],
         "com": extras.get("com"),
         "procedures": {"dr4_last_run": extras.get("dr4"),
-                       "dr4_spec": _asdict(DR4_TDECQ_V1)},
+                       "dr4_spec": _asdict(DR4_TDECQ_V1),
+                       "stressed_rx_last_run": extras.get("stressed_rx")},
+        "golden": extras.get("golden"),
         "registry": registry_snapshot(),
         "versions": _versions(),
         "config": cfg.to_dict(),
