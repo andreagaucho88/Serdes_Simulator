@@ -1442,6 +1442,16 @@ def test_workspace_has_accessible_reorderable_lazy_tab_groups():
     assert '@media (max-width: 1100px)' in css and '#topbar { display: grid;' in css
 
 
+def test_chain_and_channel_plot_labels_are_bilingual():
+    """English README tours must not expose Italian-only chain/axis labels."""
+    source = (Path(__file__).resolve().parent.parent /
+              "labpro/static/app.js").read_text(encoding="utf-8")
+    assert 'L("Canale", "Channel")' in source
+    assert 'L("Fibra", "Fiber")' in source
+    assert 'L("tempo rispetto al main cursor [UI]", ' in source
+    assert '"time relative to main cursor [UI]")' in source
+
+
 def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
     """PPG, serializer/stress ed ED vivono nella sola console BERT, mentre
     il cambio profilo attende un riscontro fisico con BER contata."""

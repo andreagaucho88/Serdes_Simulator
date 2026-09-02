@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Cattura le GIF autentiche usate dal README di Lab PRO.
+"""Capture the authentic Lab PRO GIFs embedded in the README.
 
-Prerequisiti: server già attivo, Playwright Python e ImageMagick ``magick``.
-Lo script salva e ripristina configurazione e stato RUN del banco. Usa un
-profilo browser isolato, quindi non tocca workspace, lingua o camera utente.
-Non esegue procedure lunghe: mostra i pannelli e le loro viste operative.
+Prerequisites: a running server, Playwright for Python, and ImageMagick
+``magick``. The script saves and restores the bench configuration and RUN
+state. It uses an isolated browser profile, so it does not touch the user's
+workspace, language, or camera. It does not launch long procedures; it shows
+the panels and their operating views.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "docs" / "media"
 
 TOURS = {
+    "00-instruments-hero.gif": ["scope", "berlive", "feclive"],
     "01-workspace-overview.gif": ["chain", "education", "standards"],
     "02-source-and-tx.gif": ["bert", "tx"],
     "03-channel-and-optics.gif": ["channel", "com", "optical", "cmis"],
@@ -41,7 +43,7 @@ TOURS = {
 
 
 def _launch_chromium(playwright):
-    """Usa il browser Playwright standard o un cache binary compatibile."""
+    """Use Playwright's browser or a compatible binary from its cache."""
     try:
         return playwright.chromium.launch(headless=True)
     except PlaywrightError:
@@ -76,8 +78,8 @@ def _activate(page, panel):
 
 
 def _frame(page, directory, index, label):
-    # Badge discreto: chiarisce il blocco anche quando il titolo della card è
-    # fuori dal crop verticale dopo un cambio di layout.
+    # A discreet badge identifies the block even when a layout change places
+    # the card title outside the vertical crop.
     page.evaluate("""label => {
       let b=document.querySelector('#readme-tour-badge');
       if(!b){b=document.createElement('div');b.id='readme-tour-badge';
@@ -92,7 +94,7 @@ def _frame(page, directory, index, label):
 
 
 def _build_gif(frames, destination, magick):
-    # Primo/ultimo frame duplicati: una breve pausa rende leggibile il tour.
+    # Duplicate the first/last frame to add a short, readable pause.
     ordered = [frames[0], *frames, frames[-1]]
     subprocess.run([
         magick, "-delay", "135", "-loop", "0", *map(str, ordered),
@@ -104,7 +106,7 @@ def _build_gif(frames, destination, magick):
 def capture(base: str, out_dir: Path):
     magick = shutil.which("magick")
     if not magick:
-        raise SystemExit("ImageMagick 'magick' non trovato")
+        raise SystemExit("ImageMagick 'magick' was not found")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as playwright:
@@ -120,7 +122,7 @@ def capture(base: str, out_dir: Path):
 
         try:
             page.goto(base, wait_until="domcontentloaded")
-            page.evaluate("localStorage.setItem('labpro_lang','it')")
+            page.evaluate("localStorage.setItem('labpro_lang','en')")
             page.request.post(
                 f"{base}/api/preset",
                 data={"name": "Link con margine — FEC al lavoro"})
@@ -137,8 +139,8 @@ def capture(base: str, out_dir: Path):
                     index = 0
 
                     for panel in panels:
-                        # COM Annex 93A è applicabile al profilo KR1; le card
-                        # ottiche tornano invece al preset FEC ottico.
+                        # COM Annex 93A applies to the KR1 profile; optical
+                        # cards switch back to the optical FEC preset.
                         if panel == "com":
                             page.request.post(f"{base}/api/preset", data={
                                 "name": "IEEE 802.3ck — 100GBASE-KR1 · backplane elettrico"})
@@ -151,10 +153,10 @@ def capture(base: str, out_dir: Path):
                         _activate(page, panel)
 
                         if panel == "bert":
-                            bert = (("source", "BERT · 1/4 · sorgente TX"),
-                                    ("stress", "BERT · 2/4 · stress TX"),
-                                    ("checker", "BERT · 3/4 · checker RX/FEC"),
-                                    ("procedures", "BERT · 4/4 · procedure RX"))
+                            bert = (("source", "BERT · 1/4 · TX source"),
+                                    ("stress", "BERT · 2/4 · TX stress"),
+                                    ("checker", "BERT · 3/4 · RX/FEC checker"),
+                                    ("procedures", "BERT · 4/4 · RX procedures"))
                             for key, label in bert:
                                 page.evaluate("""key => {const p=S.panels.find(x=>x.type==='bert');
                                   PANEL_DEFS.bert.showTab(p,key)}""", key)

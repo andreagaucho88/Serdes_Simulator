@@ -1,482 +1,575 @@
 # SerDes Optical Lab PRO
 
-Laboratorio interattivo bilingue per studiare, misurare e stressare una catena
-SerDes elettrica o elettro-ottica fino a 224G-class:
+An interactive bilingual laboratory for studying, measuring, and stressing an
+electrical or electro-optical SerDes chain up to the 224G class.
 
-```text
-bit / frame → PRBS o Ethernet → FEC TX → mapper NRZ/PAM4 → TX FIR
-→ DAC → driver P/N → canale S-parameter → modulatore / fibra
+~~~text
+bits / frames → PRBS or Ethernet → TX FEC → NRZ/PAM4 mapper → TX FIR
+→ DAC → P/N driver → S-parameter channel → modulator / fiber
 → PD → TIA / AFE → AGC → CTLE → ADC → CDR → FSE → DFE
-→ slicer → FEC RX → BER, GMI, traffico L2 e checkpoint
-```
+→ slicer → RX FEC → BER, GMI, L2 traffic, and checkpoints
+~~~
 
-L'interfaccia mantenuta è **Lab PRO** (`labpro/`), un banco custom
-Tornado + WebSocket con 32 pannelli. Il motore numerico (`serdes_sim/`) è
-indipendente dalla GUI. La vecchia interfaccia Streamlit (`app/`) è
-conservata come riferimento, ma è congelata.
+The maintained interface is **Lab PRO** in <code>labpro/</code>: a custom
+Tornado and WebSocket workbench with 32 instrument panels. The numerical
+engine in <code>serdes_sim/</code> is independent from the GUI. The former
+Streamlit interface in <code>app/</code> is preserved as a reference but is
+frozen.
 
-> **Perimetro corretto.** Questo è un framework didattico system-level per
-> apprendimento, debug e sensitivity analysis. Le procedure e i profili
-> IEEE/OIF dichiarano esplicitamente assunzioni e parti non supportate:
-> `MODEL PASS/FAIL` non equivale mai a conformità certificata.
+> **Scope and validity.** This is a system-level educational framework for
+> learning, debugging, and sensitivity analysis. IEEE/OIF procedures and
+> profiles explicitly identify their assumptions and unsupported portions.
+> A <code>MODEL PASS/FAIL</code> result is never presented as certified
+> compliance.
 
-## Tour visuale
+## Instrument hero: DCA eye, live BER, and live FEC
 
-Le GIF seguenti sono registrazioni riproducibili della UI reale. Ogni cambio di
-scheda richiama gli endpoint del banco, non usa immagini o risultati fittizi.
+![DCA eye diagram, live BER, and live FEC tour](docs/media/00-instruments-hero.gif)
 
-### 1. Workspace, catena, Academy e standard
+This short tour puts the most instrument-like views first: a persistent DCA
+eye, accumulated BER with confidence information, and real in-path FEC
+codeword counters.
 
-![Tour del workspace, della catena e delle guide](docs/media/01-workspace-overview.gif)
+## Visual tour
 
-La catena è navigabile: un click su un blocco apre il pannello corrispondente.
-I checkpoint falliti colorano il blocco responsabile; i triangoli ambra
-indicano i reference plane acquisiti dagli Scope.
+Every GIF below is a reproducible recording of the real application. Each tab
+change requests live bench data; none of the screens use mocked plots or
+precomputed screenshots.
 
-### 2. Sorgente, BERT e trasmettitore
+### 1. Workspace, signal chain, Academy, and standards
 
-![Tour di BERT, generatore e TX](docs/media/02-source-and-tx.gif)
+![Workspace, signal chain, and guides tour](docs/media/01-workspace-overview.gif)
 
-Il BERT riunisce quattro viste: generatore PPG, analizzatore errori, stress e
-controllo. Lo stato è condiviso con FIR, DAC, driver P/N, TX PLL e inserzione
-degli errori.
+The signal chain is navigable: clicking a block opens its instrument panel.
+Failed checkpoints highlight the responsible block, while amber triangles
+show the reference planes currently acquired by DCA scopes.
 
-### 3. Canale, COM e ottica
+### 2. Source, BERT, and transmitter
 
-![Tour di canale, COM e ottica](docs/media/03-channel-and-optics.gif)
+![BERT, generator, and transmitter tour](docs/media/02-source-and-tx.gif)
 
-Il canale può essere analitico o importato da Touchstone; COM, modulatore,
-fibra e CMIS-lite espongono i rispettivi piani e limiti.
+The BERT combines four views: PPG source, TX stress, error checker, and RX
+procedures. Its state is shared with the FIR, DAC, P/N driver, TX PLL, and
+error-insertion path.
 
-### 4. Ricevitore e DSP
+### 3. Channel, COM, and optics
 
-![Tour di ricevitore, ADC, CDR ed equalizzazione](docs/media/04-rx-and-dsp.gif)
+![Channel, COM, and optics tour](docs/media/03-channel-and-optics.gif)
 
-PD, TIA, AGC, CTLE, ADC interleaved, CDR, FSE/DFE e slicer usano lo stesso
-record end-to-end: non sono demo scollegate.
+The channel can be analytical or imported from a Touchstone file. COM,
+modulator, fiber, and CMIS-lite expose their own physical planes,
+measurements, and declared limitations.
 
-### 5. Strumenti live
+### 4. Receiver and DSP
 
-![Tour di Scope, jitter, spettro, BER e FEC live](docs/media/05-live-instruments.gif)
+![Receiver, ADC, CDR, and equalization tour](docs/media/04-rx-and-dsp.gif)
 
-Scope EYE/WAVE, TIE, spettro, BER e FEC si aggiornano durante l'acquisizione.
-I contatori crescono record dopo record e si azzerano quando cambia la fisica.
+PD, TIA, AGC, CTLE, interleaved ADC, CDR, FSE/DFE, and slicer operate on the
+same end-to-end record. They are not disconnected demonstrations.
 
-### 6. Procedure, training e audit
+### 5. Live instruments
 
-![Tour di procedure L2, JTOL, AN/LT e audit](docs/media/06-procedures-and-audit.gif)
+![DCA, jitter, spectrum, BER, and FEC tour](docs/media/05-live-instruments.gif)
 
-Sweep, JTOL-lite, link training, AN/LT, DR4, instrument alignment, ledger e
-audit fisico rendono verificabili sia il risultato sia il percorso che lo ha
-prodotto.
+DCA EYE/WAVE, TIE, spectrum, BER, and FEC update while acquisition is
+running. Counters grow record by record and reset whenever the underlying
+physics changes.
 
-## Avvio rapido
+### 6. Procedures, training, and audit
 
-### Requisiti
+![L2, JTOL, AN/LT, training, and audit tour](docs/media/06-procedures-and-audit.gif)
 
-- Python 3.10 o successivo;
-- NumPy, SciPy, pandas, Tornado, Plotly, pytest;
-- scikit-rf per Touchstone 2.x;
-- un browser moderno;
-- facoltativi: Playwright e ImageMagick per rigenerare le GIF.
+Sweep, JTOL-lite, link training, AN/LT, DR4, instrument alignment, the signal
+ledger, and the physics audit make both the result and the path that produced
+it inspectable.
 
-Nell'ambiente di sviluppo del progetto:
+## Quick start
 
-```bash
+### Requirements
+
+- Python 3.10 or newer;
+- NumPy, SciPy, pandas, Tornado, Plotly, and pytest;
+- scikit-rf for Touchstone 2.x;
+- a modern web browser;
+- optional: Playwright and ImageMagick to regenerate the GIFs.
+
+In the project development environment:
+
+~~~bash
 cd simulatore
 python -m labpro.server --port 8640
-```
+~~~
 
-Poi aprire [http://localhost:8640](http://localhost:8640). Su macOS è anche
-possibile fare doppio click su `avvia_labpro.command`.
+Then open [http://localhost:8640](http://localhost:8640). On macOS you can
+also double-click <code>avvia_labpro.command</code>.
 
-Per usare un ambiente Python generico:
+To use a generic Python environment:
 
-```bash
+~~~bash
 python -m pip install numpy scipy pandas tornado plotly scikit-rf pytest
 python -m labpro.server --port 8640
-```
+~~~
 
-Il server ascolta solo in locale per impostazione normale. Interromperlo con
-`Ctrl+C`.
+The server binds to localhost. Stop it with <code>Ctrl+C</code>; shutdown
+stops the LiveBench cleanly without leaving a traceback.
 
-## Come si usa il banco
+## Using the workbench
 
-### Barra superiore
+### Top bar
 
-- **Preset** carica uno dei sette scenari didattici o uno dei 17 contesti
-  IEEE/OIF.
-- **RUN / STOP** avvia o sospende l'acquisizione server-side.
-- **Record** mostra il numero di acquisizioni accumulate.
-- **Seed** rende riproducibile rumore, pattern e stress.
-- **IT / EN** cambia lingua per pannelli, tooltip, Academy e messaggi.
-- **Viste** carica un workspace tematico: Banco completo, Essenziale,
-  Sorgente e TX, Canale e ottica, RX e DSP, Analisi live, BERT e traffico,
-  Scope P/N o Academy.
-- **Reset** ripristina il preset e invalida gli accumuli dipendenti.
+- **Preset** loads one of seven educational scenarios or one of 17 IEEE/OIF
+  contexts.
+- **RUN / STOP** starts or pauses server-side acquisition.
+- **Record** shows the number of accumulated acquisitions.
+- **Seed** makes noise, pattern generation, and stress reproducible.
+- **IT / EN** switches panels, tooltips, Academy content, and messages.
+- **Views** loads a themed workspace: Full bench, Essential, Source and TX,
+  Channel and optics, RX and DSP, Live analysis, BERT and traffic, P/N scope,
+  or Academy.
+- **Reset** restores the selected preset and invalidates dependent
+  accumulations.
 
-### Workspace a gruppi e schede
+### Grouped tab workspace
 
-La palette a sinistra è ordinata secondo il flusso del segnale. Un click apre
-il blocco come scheda; i pannelli singleton già aperti vengono attivati invece
-di essere duplicati. Scope è volutamente multiistanza per confrontare fino a
-quattro reference plane coerenti.
+The left palette follows signal flow. Clicking an entry opens it as a tab. A
+singleton panel that is already open is activated instead of duplicated.
+Scope is intentionally multi-instance so that up to four coherent reference
+planes can be compared.
 
-- trascinare una scheda per riordinarla;
-- trascinare un gruppo per cambiare l'ordine delle sezioni;
-- usare i pulsanti della card per Academy, reset locale o chiusura;
-- usare `←` e `→` da tastiera per cambiare scheda nel gruppo attivo;
-- il workspace, la scheda attiva, la lingua e la camera dei grafici sono
-  persistiti e ripristinati al reload.
+- Drag a tab to reorder it or move it to another group.
+- Drag a group to change the section order.
+- Use the card buttons to open Academy help, reset local state, or close it.
+- Use the left and right arrow keys to move through the active tab group.
+- Workspace order, collapsed groups, active tab, language, and plot camera
+  survive reloads.
+- Hidden panels are lazy: only the active instrument polls and renders.
 
-### Contratto comune dei controlli
+### Shared control contract
 
-Ogni slider o selettore modifica il `LinkConfig` condiviso. Il server
-incrementa la versione della configurazione, annulla il worker ormai obsoleto,
-svuota i contatori che non sarebbero più confrontabili e trasmette il nuovo
-stato via WebSocket. Il piccolo hash in basso consente di verificare che due
-pannelli stiano osservando la stessa configurazione.
+Every slider or selector updates the shared <code>LinkConfig</code>. The
+server increments the configuration version, cancels any obsolete worker,
+clears counters that can no longer be compared, and broadcasts the new state
+over WebSocket. The small hash in the status bar verifies that two panels are
+observing the same configuration.
 
-Il pulsante **?** accanto a un controllo spiega:
+The **?** button next to a control explains:
 
-1. piano fisico interessato;
-2. effetto atteso;
-3. readout da osservare;
-4. test paired suggerito;
-5. condizioni di attivazione;
-6. limite del modello;
-7. campo API effettivamente modificato.
+1. the affected physical plane;
+2. the expected effect;
+3. the readout to observe;
+4. a suggested paired experiment;
+5. activation conditions;
+6. the model boundary;
+7. the API field actually changed.
 
-Il **?** nel titolo della card apre invece la scheda Academy del blocco.
+The **?** button in a card title opens the corresponding Academy page.
 
-## Riferimento completo dei 32 pannelli
+## Complete reference for all 32 panels
 
-### Panoramica
+### Overview
 
-#### 1. Catena del segnale
+#### 1. Signal chain
 
-Mappa il datapath reale dal PPG al decoder. Distingue dominio digitale,
-elettrico, ottico e clock; mostra TX PLL, confini E/O e A/D, FEC bypassato o
-attivo e marker DCA. I blocchi sono link navigabili. La barra di salute deriva
-dai checkpoint del record corrente e localizza failure di driver, PD, TIA,
-ADC, CDR, equalizzatori e slicer.
+Maps the real datapath from PPG to decoder. It distinguishes digital,
+electrical, optical, and clock domains; shows the TX PLL, E/O and A/D
+boundaries, active or bypassed FEC, and DCA markers. Every block is a
+navigable link.
 
-**Esperimento:** aprire uno Scope su `Vdiff`, un altro su `Vctle`, poi
-aumentare la loss del canale. I marker si spostano sui due reference plane e
-il ledger consente di seguire la degradazione.
+The health strip is derived from the current record checkpoints and localizes
+driver, PD, TIA, ADC, CDR, equalizer, and slicer failures.
 
-#### 2. Academy · guida ai blocchi
+**Suggested experiment:** open one Scope on <code>Vdiff</code> and a second
+one on <code>Vctle</code>, then increase channel loss. The markers identify
+both reference planes and the ledger shows where degradation appears.
 
-Manuale contestuale IT/EN con fisica, formula, osservabili, prova guidata,
-limiti e collegamenti tra blocchi. Il selettore segue il pannello di
-provenienza; il pulsante “Apri banco” torna direttamente allo strumento.
+#### 2. Academy: block guide
 
-### Sorgente e trasmettitore
+A contextual IT/EN manual containing physics, formula, observables, guided
+experiment, limitations, and relationships between blocks. The selector
+follows the source panel, while **Open bench** returns directly to its
+instrument.
 
-#### 3. BERT · generatore TX e analizzatore errori
+### Source and transmitter
 
-Quattro sottoviste mutuamente esclusive:
+#### 3. BERT: TX generator and error analyzer
 
-- **Generator/PPG:** PRBS 7/9/11/13/15/23/31, SSPRQ, custom hex, clock ed
-  Ethernet; NRZ o PAM4 Gray/binario; output TX e pattern preview.
-- **Error detector:** BER/SER, lane MSB/LSB, pre/post-FEC, error insertion
-  singola o burst e destinazione random/MSB/LSB/simbolo RS.
-- **Stress:** RJ, PJ, DCD, BUJ, SSC e rumore differenziale sul time base o
-  sull'uscita reale del TX.
-- **Control:** start/stop gated, target BER, intervallo di confidenza,
-  lock del pattern e riepilogo di sincronizzazione.
+The one-box BERT contains four mutually exclusive subviews:
 
-L'ED è un checker digitale sullo stesso RX fisico, non un secondo ricevitore
-analogico.
+- **Generator / PPG:** PRBS 7/9/11/13/15/23/31, SSPRQ, custom hexadecimal
+  data, clock patterns, and Ethernet; NRZ or Gray/binary PAM4; TX output and
+  pattern preview.
+- **Error detector:** BER/SER, PAM4 MSB/LSB lanes, pre/post-FEC taps, single
+  or burst error insertion, and random/MSB/LSB/RS-symbol targeting.
+- **Stress:** RJ, PJ, DCD, BUJ, SSC, and differential noise applied to the
+  real TX time base or output.
+- **Control and procedures:** gated start/stop, target BER, confidence
+  interval, pattern lock, synchronization, JTF, and sensitivity workflows.
 
-#### 4. TX · FIR, DAC e driver
+The ED is a digital checker connected to the same physical RX. It is not a
+second hidden analog receiver.
 
-Controlla tap FFE, risoluzione e full-scale del DAC, bandwidth, gain e clipping
-del driver, skew/gain mismatch P/N, offset e rumore common-mode, drive
-differenziale o single-ended e filtri causali. Visualizza waveform, swing,
-headroom, clipping e risposta del percorso TX.
+#### 4. TX: FIR, DAC, and driver
 
-**Esperimento:** introdurre skew P/N e confrontare nello Scope le quick-set
-P, N, differenziale e common-mode.
+Controls FFE taps, DAC resolution and full scale, bandwidth, driver gain and
+clipping, P/N skew and gain mismatch, common-mode offset and noise,
+differential noise, differential or single-ended drive, and causal filters.
 
-### Canale e ottica
+The panel exposes waveforms, swing, headroom, clipping, and the effective TX
+response.
 
-#### 5. Canale elettrico
+**Suggested experiment:** introduce P/N skew and compare the Scope quick sets
+for P, N, differential, and common-mode signals.
 
-Il modello analitico espone insertion loss a Nyquist, return loss, ritardo,
-group-delay ripple, eco, NEXT e FEXT. In alternativa il file picker porta nel
-datapath un Touchstone:
+### Channel and optics
 
-- Touchstone 1.x o 2.x;
-- S2P single-ended;
-- S4P convertito in mixed-mode con coppie porte `13_24` o `12_34`;
-- formati RI, MA o DB;
-- impedenza di riferimento reale e uniforme.
+#### 5. Electrical channel
 
-Sono accettati `.s2p`, `.s4p`, `.ts` e `.txt`. Se il file è invalido,
-non monotono, non finito o con Z0 incompatibili viene rifiutato con un errore
-esplicito. Il pulsante **Torna al modello** disattiva l'S-parameter senza
-cancellare gli altri controlli.
+The analytical model exposes insertion loss at Nyquist, return loss, delay,
+group-delay ripple, echo, NEXT, and FEXT. A measured Touchstone file can
+replace it in the main datapath.
 
-#### 6. COM · IEEE 802.3 Annex 93A
+Supported measured-channel inputs:
 
-Calcola un proxy dichiarato di Channel Operating Margin sulla catena elettrica
-misurata, separando segnale, ISI, crosstalk e rumore. Riporta response/cursor,
-denominatore di rumore e margine. Serve a capire la metodologia e confrontare
-configurazioni, non sostituisce foglio COM normativo, package ufficiale o
-correlazione di compliance.
+- Touchstone 1.x and 2.x;
+- single-ended S2P;
+- S4P converted to mixed mode with <code>13_24</code> or
+  <code>12_34</code> port pairing;
+- RI, MA, and DB data formats;
+- a real, uniform reference impedance.
 
-#### 7. Ottica · modulatore e fibra
+The picker accepts <code>.s2p</code>, <code>.s4p</code>, <code>.ts</code>,
+and <code>.txt</code>. Invalid, non-monotonic, non-finite, or incompatible-Z0
+files are rejected with an explicit error. **Return to model** disables the
+measured S-parameter without disturbing unrelated settings.
 
-Seleziona CW-DFB+MZM, DFB-EML, DFB-DML o VCSEL/MMF. Espone potenza e linewidth
-laser, Vπ/bias o extinction ratio, chirp, bandwidth e insertion loss;
-lunghezza/tipo fibra, loss, dispersione β2 e slope/β3, PMD, Kerr e modal
-bandwidth. Il cambio di architettura sincronizza laser, modulatore, fibra e
-lunghezza d'onda per evitare combinazioni fisicamente impossibili.
+#### 6. COM: IEEE 802.3 Annex 93A
 
-### Ricevitore e DSP
+Computes a declared Channel Operating Margin proxy from the measured
+electrical chain. It separates available signal, ISI, crosstalk, and noise,
+and reports response/cursors, noise denominator, and margin.
 
-#### 8. RX front-end · PD, TIA e AGC
+It is useful for understanding methodology and comparing configurations. It
+does not replace the normative COM spreadsheet/package or a compliance
+correlation.
 
-Vista aggregata del budget analogico: potenza al PD, corrente, rumore,
-transimpedenza, gain automatico, clipping e headroom. È il punto più rapido
-per capire se il link è limitato da sensibilità, overload o ampiezza ADC.
+#### 7. Optics: modulator and fiber
 
-#### 9. Photodiode · PD
+Selects CW-DFB plus MZM, DFB-EML, DFB-DML, or VCSEL/MMF. Controls include
+laser power and linewidth, Vπ and bias or extinction ratio, chirp, bandwidth,
+insertion loss, fiber type and length, loss, chromatic dispersion and slope,
+PMD, Kerr nonlinearity, and modal bandwidth.
 
-Mostra responsivity, dark current, bandwidth, saturazione e RIN. Il rumore
-shot usa la corrente reale, mentre PVT/temperatura modifica dark current e
-banda secondo le assunzioni dichiarate. Readout: potenza ricevuta, corrente,
-noise density e saturation margin.
+Changing architecture synchronizes the laser, modulator, fiber, drive mode,
+and wavelength so the bench does not silently create impossible
+combinations.
+
+### Receiver and DSP
+
+#### 8. RX front end: PD, TIA, and AGC
+
+An aggregate analog budget showing PD power/current, noise, transimpedance,
+automatic gain, clipping, and headroom. It is the fastest place to determine
+whether a link is sensitivity-limited, overload-limited, or constrained by
+ADC range.
+
+#### 9. Photodiode
+
+Controls responsivity, dark current, bandwidth, saturation current, and RIN.
+Shot noise uses the actual current. PVT and temperature change dark current
+and bandwidth according to the declared first-order assumptions.
+
+Readouts include received optical power, photocurrent, noise density, and
+saturation margin.
 
 #### 10. TIA / electrical AFE
 
-Controlla transimpedenza, input-noise density, VGA range, bandwidth, headroom
-e clip. Per un link copper rappresenta l'AFE elettrico; per un link optical
-riceve la corrente del PD. La risposta impulsiva e il budget di rumore
-permettono di separare limite di banda e limite di sensibilità.
+Controls transimpedance, input-referred noise density, VGA range, bandwidth,
+headroom, and clipping. In an optical link it receives PD current; in a
+copper link it represents the electrical AFE.
 
-#### 11. AGC · gain e headroom
+Impulse response and the noise budget separate bandwidth limitations from
+sensitivity limitations.
 
-Regola target RMS, gain minimo/massimo e mostra gain scelto, residuo rispetto
-al target, headroom e saturazione. Il guadagno applicato entra davvero nel
-record inviato a CTLE e ADC.
+#### 11. AGC: gain and headroom
 
-#### 12. CTLE configurabile
+Controls target RMS and minimum/maximum gain. The panel reports selected
+gain, target residual, headroom, and saturation. The selected gain is applied
+to the actual record passed to the CTLE and ADC.
 
-Implementa topologie 1Z/1P, 1Z/2P e 2Z/3P, oppure tuple esplicite fino a
-quattro zeri e cinque poli, con gain DC. Bode, group delay, peaking e noise
-enhancement sono calcolati dalla stessa funzione di trasferimento usata nel
-datapath. Il grafico pulse/cursor mostra il compromesso ISI-rumore.
+#### 12. Configurable CTLE
 
-#### 13. ADC interleaved
+Implements 1Z/1P, 1Z/2P, and 2Z/3P topologies, or explicit tuples containing
+up to four zeros and five poles, together with DC gain.
 
-Configura sample/symbol, bit, full-scale, fase, jitter, interleave, rank di
-track-and-hold, bandwidth front-end, mismatch di gain/offset/skew/banda,
-rumore e calibrazione off/foreground/background. Readout: occupazione,
-clipping, ENOB/SNDR proxy e residui dipendenti da PVT.
+Bode response, group delay, peaking, and noise enhancement use the same
+transfer function as the datapath. Pulse/cursor plots expose the ISI versus
+noise tradeoff.
 
-#### 14. Timing · CDR
+#### 13. Interleaved ADC
 
-Confronta Gardner, Mueller-Müller e oracle dichiarato. Il loop PI di secondo
-ordine usa banda normalizzata, damping e offset clock RX in ppm. Il pannello
-mostra lock, pattern lock, fase, frequency error, TIE e andamento del loop.
-Senza lock il link è `DOWN` e le metriche downstream non vengono inventate.
+Controls samples/symbol, resolution, full scale, phase, jitter, interleave
+count, track-and-hold ranks, front-end bandwidth, gain/offset/skew/bandwidth
+mismatch, input noise, and off/foreground/background calibration.
 
-#### 15. RX FFE (FSE) + DFE
+Readouts include range utilization, clipping, ENOB/SNDR proxies, and
+PVT-dependent residual mismatch.
 
-Equalizzatore fractionally spaced T/2 seguito da DFE. Controlla numero di tap
-e finestra di training; mostra coefficienti, response/cursor, MSE e confronto
-prima/dopo. I checkpoint verificano che FSE migliori e DFE non degradi.
+#### 14. Timing and CDR
 
-#### 16. Decisioni · slicer
+Compares Gardner, Mueller-Müller, and a declared oracle mode. The second-order
+PI loop uses normalized bandwidth, damping, and RX clock offset in ppm.
 
-Visualizza istogrammi e soglie NRZ/PAM4, simboli stimati, LLR, confusion
-matrix, BER/SER, GMI e stato link. È il confine tra DSP analogico/digitale e
-FEC: qui si può distinguere un occhio brutto ma decodificabile da un link
-realmente fuori lock.
+The panel shows CDR lock, BERT-style pattern lock, phase, frequency error,
+TIE, and loop traces. Without lock the link is <code>DOWN</code>; downstream
+metrics are intentionally unavailable rather than fabricated.
 
-### Strumenti e analisi live
+#### 15. RX FFE (FSE) and DFE
 
-#### 17. Scope · DCA
+A T/2 fractionally spaced equalizer followed by a decision-feedback
+equalizer. Controls select tap counts and the training window.
 
-Strumento multiistanza e multicanale coerente. Ogni card può acquisire fino a
-quattro nodi dello stesso record: driver ideale, P, N, differenziale,
-common-mode, canale, potenza al modulatore, potenza al PD, TIA o CTLE.
+Coefficient, response/cursor, MSE, and before/after plots show what each
+equalizer contributes. Checkpoints verify that the FSE improves the result
+and the DFE does not statistically degrade it.
 
-- **EYE:** persistenza, overlay, height/width, Q, RLM e, sui nodi ottici,
-  OMA/ER.
-- **WAVE:** waveform nel tempo con canali sincronizzati.
-- quick-set P/N/Diff/CM;
-- camera Plotly persistente;
-- marker automatici nella Catena del segnale.
+#### 16. Decisions and slicer
 
-#### 18. Jitter · TIE
+Shows NRZ/PAM4 histograms and thresholds, symbol decisions, LLRs, confusion
+matrix, BER/SER, GMI, and link state.
 
-Analizza la time-interval error del record selezionato: trend, istogramma,
-spettro, RJ/PJ/DCD e bathtub empirica. Il seed rende confrontabili due stress;
-la selezione del piano è coerente con il CDR e con il nodo osservato.
+This is the boundary between analog/digital DSP and FEC. It distinguishes an
+ugly reference-plane eye that remains recoverable from a truly unlocked
+link.
+
+### Instruments and live analysis
+
+#### 17. Scope / DCA
+
+A coherent, multi-instance, multichannel instrument. Each card can acquire up
+to four nodes from the same record:
+
+- ideal driver;
+- P and N driver legs;
+- differential and common-mode voltage;
+- electrical channel output;
+- optical power at the modulator or PD;
+- TIA/AFE and CTLE outputs.
+
+The **EYE** view provides persistence, overlays, eye height and width, Q, RLM,
+and OMA/ER at optical nodes. The **WAVE** view displays synchronized time
+traces.
+
+Additional functions include P/N/Diff/CM quick sets, persistent Plotly camera,
+per-channel scale/offset/deskew, masks, and automatic DCA markers in the
+Signal chain panel.
+
+#### 18. Jitter and TIE
+
+Analyzes time-interval error for the selected record through trend,
+histogram, spectrum, RJ/PJ/DCD estimates, and an empirical bathtub curve.
+
+The seed makes stress comparisons reproducible. The measurement plane remains
+consistent with the selected node and CDR state.
 
 #### 19. Spectrum analyzer
 
-PSD/frequency response sul nodo scelto, con asse e span controllabili. Serve a
-vedere roll-off, notch da dispersione, peaking CTLE, spur PJ/SSC e bandwidth
-del front-end; non è un FFT decorativa separata dal record.
+Displays PSD and frequency-domain behavior for the selected node, with
+controllable axis and span. It reveals bandwidth roll-off, dispersion notches,
+CTLE peaking, PJ/SSC spurs, and front-end limits.
 
-#### 20. BER live
+The spectrum comes from the current physical record; it is not a decorative
+FFT detached from the simulation.
 
-Accumula bit ed errori tra record compatibili, riportando BER, limiti di
-confidenza, target e stato lock. Cambiando configurazione l'accumulo viene
-invalidato; STOP congela il totale senza perdere il contesto.
+#### 20. Live BER
 
-#### 21. FEC live
+Accumulates bits and errors across compatible records and reports BER,
+confidence limits, target status, and lock state. A physical configuration
+change invalidates the accumulation. STOP freezes the total without losing
+its context.
 
-KP4 RS(544,514) e KR4 RS(528,514) sono encoder/decoder algebrici nel percorso,
-non solo formule what-if. Il pannello accumula codeword clean, corrette,
-uncorrectable e miscorrected, pre/post-FEC BER e interleave 1/2/4. In bypass
-separa chiaramente ciò che non è stato decodificato.
+#### 21. Live FEC
 
-#### 22. Ethernet · Traffic L2
+KP4 RS(544,514) and KR4 RS(528,514) are algebraic encoders and decoders in
+the signal path, not only what-if formulas.
 
-Genera frame Ethernet reali con PCS scrambler Clause 49
-`x^58 + x^39 + 1`, dimensione frame, IPG e 1–4 stream. Offre benchmark per
-frame size e test ONT-style con load ramp, latency budget per blocco e service
-disruption derivata dal lock CDR. È intenzionalmente **L2-lite** e non dichiara
-RFC 2544.
+The panel accumulates clean, corrected, uncorrectable, and miscorrected
+codewords; pre/post-FEC BER; and interleave 1/2/4 behavior. Bypass mode clearly
+separates data that was not decoded.
 
-#### 23. Module · CMIS-lite
+#### 22. Ethernet L2 traffic
 
-Rappresenta un modulo coerente con l'architettura ottica scelta: application
-advertisement, datapath state, laser/Tx disable, Rx power, temperatura e
-allarmi principali. È un modello didattico del control plane, non una
-implementazione completa della memory map CMIS.
+Generates real Ethernet frames with the Clause 49 PCS scrambler
+<code>x^58 + x^39 + 1</code>, selectable frame size and IPG, and one to four
+streams.
 
-#### 24. Sweep parametrico
+It includes frame-size benchmarks and an ONT-style test with load ramp,
+per-block latency budget, and service disruption derived from CDR lock. The
+feature is deliberately labeled **L2-lite** and does not claim RFC 2544.
 
-Esegue uno sweep end-to-end di un campo ammesso e restituisce BER, GMI, eye,
-lock e punti `LINK DOWN`. Il job è versionato e cancellabile: se la
-configurazione cambia, un risultato vecchio non può sovrascrivere il banco.
+#### 23. Module / CMIS-lite
+
+Represents a module consistent with the selected optical architecture:
+application advertisement, datapath state, laser/Tx disable, Rx power,
+temperature, and principal alarms.
+
+It is an educational control-plane model, not a complete CMIS memory-map
+implementation.
+
+#### 24. Parametric sweep
+
+Sweeps an allowed configuration field end to end and returns BER, GMI, eye,
+lock state, and explicit <code>LINK DOWN</code> points.
+
+Jobs are versioned and cancellable. If the configuration changes, an obsolete
+result cannot overwrite the current bench.
 
 #### 25. JTOL-lite
 
-Varia frequenza e ampiezza del periodic jitter per stimare la tolleranza del
-CDR. Evidenzia jitter peaking vicino alla banda del loop e limiti imposti dalla
-durata del record. È una procedura educativa, non la maschera normativa di una
-clause.
+Sweeps periodic-jitter frequency and amplitude to estimate CDR tolerance. It
+exposes jitter peaking near the loop bandwidth and record-length limits at
+low frequency.
+
+This is an educational procedure, not a normative clause mask.
 
 #### 26. Link training
 
-Coordinate descent sui tap TX con metrica misurata dal ricevitore. Mostra ogni
-iterazione, coefficienti, miglioramento e condizione di arresto; non modifica
-silenziosamente la configurazione finché non si applica il risultato.
+Runs coordinate descent on TX taps using a metric measured by the receiver.
+Every iteration, coefficient update, improvement, and stopping condition is
+shown.
 
-#### 27. AN/LT · Clause 73
+The result is not silently committed to the shared configuration; the user
+chooses whether to apply it.
 
-Modella base page, priority resolution verso l'HCD, timer di Table 73-7 e
-handshake Clause 72/136: preset, increment/decrement dei coefficienti
-`c(-1)` e `c(+1)`, `updated`, `at_limit` e `receiver_ready`. La
-metrica di training proviene dal banco corrente.
+#### 27. AN/LT: Clause 73
 
-#### 28. Standard IEEE/OIF
+Models base pages, priority resolution to the highest common denominator,
+Table 73-7 timers, and a Clause 72/136-style training handshake.
 
-Catalogo di 17 profili che specifica standard/clause, reference plane/reach,
-mezzo, modulazione e FEC. Ogni scheda espone:
+The workflow includes presets, increment/decrement requests for
+<code>c(-1)</code> and <code>c(+1)</code>, <code>updated</code>,
+<code>at_limit</code>, and <code>receiver_ready</code>. Its training metric
+comes from the active bench.
 
-- cosa è pubblicato;
-- quali numeri sono rappresentativi;
-- quale claim è supportato;
-- cosa resta `unsupported` o `NOT ASSESSED`.
+#### 28. IEEE/OIF standards
 
-Caricare un profilo configura l'intero banco, non solo l'etichetta.
+A catalog of 17 profiles specifying standard or clause, reference
+plane/reach, medium, modulation, and FEC. Every profile states:
 
-#### 29. DR4 · procedura fisica
+- what is published;
+- which numbers are representative;
+- which claim is supported;
+- what remains unsupported or <code>NOT ASSESSED</code>.
 
-Workflow on-demand riproducibile sul periodo SSPRQ completo di 65.535 simboli,
-ai due estremi pubblici di dispersione e con DGD stressato. TDECQ usa finestre
-0,45/0,55 UI, FFE 5 tap normalizzato e `Ceq` integrato sul rumore sagomato
-BT4. Gli stessi record attraversano PD/TIA/ADC/CDR/DSP. Reflection,
-polarization stress, uncertainty tracciabile e correlazione con golden
-instrument restano fuori perimetro: conformità = `NOT ASSESSED`.
+Loading a profile configures the complete bench rather than changing only a
+label.
+
+#### 29. DR4 physical procedure
+
+An on-demand, reproducible workflow over the complete 65,535-symbol SSPRQ
+period, at both public dispersion extremes and with stressed DGD.
+
+TDECQ uses 0.45/0.55 UI windows, a normalized five-tap FFE, and
+<code>Ceq</code> integrated over BT4-shaped noise. The same records close
+through PD, TIA, ADC, CDR, and DSP.
+
+Reflection, full polarization stress, traceable measurement uncertainty, and
+golden-instrument correlation remain out of scope; compliance therefore
+remains <code>NOT ASSESSED</code>.
 
 #### 30. Instrument alignment
 
-Mappa concetti e funzioni del banco verso DCA, BERT e traffic generator reali,
-indicando cosa è implementato e cosa no. I collegamenti sono riferimenti per
-imparare la terminologia, non endorsement né emulazione proprietaria.
+Maps workbench concepts and functions to real DCA, BERT, and traffic-generator
+terminology, indicating what is implemented and what is not.
 
-#### 31. Checkpoint & ledger
+External links are learning references, not endorsements or claims of
+proprietary emulation.
 
-Tabella dei controlli automatici e dei reference plane prodotti dal motore:
-dimensioni, unità, salute, causalità, miglioramento equalizzatori, occupancy,
-lock, FEC e metriche. È il primo posto da consultare quando un risultato
-sembra incoerente.
+#### 31. Checkpoints and signal ledger
 
-#### 32. Audit fisico · invarianti
+Lists the automatic checks and reference planes produced by the engine,
+including dimensions, units, health, causality, equalizer improvement, range
+utilization, lock, FEC, and metrics.
 
-Esegue paired checks e invarianti: aumentare rumore non deve migliorare la
-qualità in modo sistematico, cambiare loss deve propagarsi, disabilitare TX
-deve abbattere il link, FEC e CDR devono rispettare le proprie condizioni.
-I risultati distinguono `PASS`, `FAIL` e non valutabile.
+This is the first panel to inspect when a result appears inconsistent.
 
-## Preset didattici
+#### 32. Physics audit and invariants
 
-| Preset | Uso consigliato |
+Runs paired checks and invariants. Examples include:
+
+- increasing noise must not systematically improve quality;
+- changing loss must propagate downstream;
+- disabling TX must collapse the link;
+- FEC and CDR must honor their activation conditions;
+- upstream planes must not depend on downstream controls.
+
+Results distinguish <code>PASS</code>, <code>FAIL</code>, and not assessable
+conditions.
+
+## Educational presets
+
+| Preset | Recommended use |
 | --- | --- |
-| 112G didattico — 2 km @1550 nm | baseline del corso, 56 GBd PAM4 in C-band |
-| Back-to-back | riferimento senza penalty di fibra |
-| Stress 10 km — fading CD | notch IM/DD e limite dell'equalizzazione |
+| 112G educational, 2 km at 1550 nm | Course baseline: 56 GBd PAM4 in C-band |
+| Back-to-back | Reference without fiber penalty |
+| 10 km stress: CD fading | IM/DD notch and equalization limit |
 | 100GBASE-LR1 context | O-band, 53.125 GBd, 10 km |
-| Canale elettrico severo | CTLE/FSE/DFE contro 20 dB a Nyquist |
-| RX rumoroso | sensitivity e noise budget del TIA |
-| Link con margine — FEC al lavoro | osservare codeword KP4 corrette |
+| Severe electrical channel | CTLE/FSE/DFE against 20 dB at Nyquist |
+| Noisy receiver | TIA sensitivity and noise budget |
+| Link with margin: FEC at work | Observe corrected KP4 codewords |
 
-I 17 profili standard aggiungono contesti 10G/25G/50G/100G/400G/800G,
-CEI-56G/112G/224G e P802.3dj. Non sono preset di certificazione.
+The 17 standard profiles add 10G, 25G, 50G, 100G, 400G, and 800G Ethernet;
+CEI-56G/112G/224G; and P802.3dj contexts. They are not certification presets.
 
-## Persistenza e coerenza
+## Persistence and coherence
 
-- `LinkConfig` è una dataclass immutabile con 123 campi serializzabili.
-- Il server salva configurazione, preset e stato RUN nella directory utente
-  del laboratorio.
-- Il browser salva layout, lingua, tab attivo e camera localmente.
-- Ogni risposta include versione/hash della configurazione e identità record.
-- I worker lunghi sono associati alla versione che li ha avviati.
-- Una disconnessione WebSocket o un rapido reload viene assorbito senza lasciare
-  future asincrone non gestite.
+- <code>LinkConfig</code> is an immutable dataclass with 123 serializable
+  fields.
+- The server saves configuration, preset, chamber state, and RUN state in the
+  laboratory session file.
+- The browser saves layout, language, active tab, and plot camera locally.
+- Every response carries configuration version/hash and record identity.
+- Long-running workers are tied to the version that started them.
+- WebSocket disconnects and rapid reloads are consumed without orphaned
+  asynchronous futures.
+- Config import/export uses a versioned JSON contract.
 
-Per una sessione pulita usare Reset dalla UI. Prima di cancellare manualmente
-file di stato, fermare il server e conservarne una copia se la configurazione
-è importante.
+Use Reset in the UI for a clean session. Before manually removing a session
+file, stop the server and keep a copy if its configuration matters.
 
-## API locale
+## Local API
 
-La UI usa la stessa API disponibile per ispezione e automazione locale:
+The UI uses the same API that is available for local inspection and
+automation:
 
-| Endpoint | Metodo | Scopo |
+| Endpoint | Method | Purpose |
 | --- | --- | --- |
-| `/api/state` | GET | configurazione, preset, lingua e stato RUN |
-| `/api/config` | POST | patch atomica dei campi di `LinkConfig` |
-| `/api/preset` | POST | carica preset o profilo standard |
-| `/api/run` | POST | start/stop acquisizione |
-| `/api/panel/<name>` | GET | payload del pannello richiesto |
-| `/api/experiment/<name>` | POST | sweep, training, JTOL e procedure |
-| `/ws` | WebSocket | stato, invalidazioni e progress live |
+| <code>/api/state</code> | GET | Configuration, presets, language metadata, RUN state |
+| <code>/api/config</code> | POST | Atomic patch of LinkConfig fields |
+| <code>/api/config/export</code> | GET | Versioned configuration export |
+| <code>/api/config/import</code> | POST | Versioned configuration restore |
+| <code>/api/preset</code> | POST | Load an educational or standard profile |
+| <code>/api/run</code> | POST | Start or stop acquisition |
+| <code>/api/reset</code> | POST | Reset bench state |
+| <code>/api/s2p</code> | POST | Validate and apply Touchstone text |
+| <code>/api/panel/&lt;name&gt;</code> | GET | Build a panel payload |
+| <code>/api/experiment/&lt;name&gt;</code> | POST | Sweep, training, JTOL, traffic, and procedures |
+| <code>/ws</code> | WebSocket | State, invalidation, record, and progress updates |
 
-Esempio:
+Example:
 
-```bash
+~~~bash
 curl -s http://localhost:8640/api/state
 curl -s -X POST http://localhost:8640/api/config \
   -H 'Content-Type: application/json' \
   -d '{"channel_il_nyquist_db": 16.0, "fec_mode": "kp4"}'
-```
+~~~
 
-L'API è locale e non include autenticazione, multi-tenancy o garanzie di
-stabilità da prodotto pubblico.
+The API is local, unauthenticated, single-user, and does not promise the
+stability of a public product API.
 
-## Uso diretto del motore Python
+## Using the Python engine directly
 
-```python
+~~~python
 from dataclasses import replace
 
 from serdes_sim import LinkConfig, simulate, sweep
@@ -498,132 +591,140 @@ curve = sweep(
     values=[8.0, 12.0, 16.0, 20.0],
     seed=7,
 )
-```
+~~~
 
-Il risultato contiene record ai reference plane, metriche, metadati, ledger e
-checkpoint. Per il contratto esatto usare i type e i test del repository.
+The result contains physical-plane records, metrics, metadata, the signal
+ledger, and checkpoints. Source types and repository tests define the exact
+contract.
 
-## Struttura del repository
+## Repository layout
 
-```text
+~~~text
 simulatore/
-├── labpro/                  server Tornado e frontend Lab PRO
+├── labpro/                  Tornado server and Lab PRO frontend
 │   ├── server.py
-│   └── static/              HTML, CSS, JavaScript e Plotly locale
-├── serdes_sim/              motore fisico indipendente dalla GUI
-│   ├── blocks/              TX, channel, optics, RX, ADC, DSP, FEC, metriche
-│   ├── engine.py            simulate() e sweep()
-│   ├── procedures.py        DR4 e procedure versionate
-│   ├── config.py            LinkConfig, preset e profili standard
-│   ├── ami.py               loader IBIS-AMI e modello demo
-│   └── selftest.py          smoke test end-to-end
-├── tests/                   regressione numerica, API e contratti UI
+│   └── static/              HTML, CSS, JavaScript, local Plotly bundle
+├── serdes_sim/              GUI-independent physical engine
+│   ├── blocks/              TX, channel, optics, RX, ADC, DSP, FEC, metrics
+│   ├── engine.py            simulate() and sweep()
+│   ├── procedures.py        DR4 and versioned procedures
+│   ├── config.py            LinkConfig, presets, standard profiles
+│   ├── ami.py               IBIS-AMI loader and demo model
+│   └── selftest.py          end-to-end smoke test
+├── tests/                   numerical, API, UI-contract regression suite
 ├── tools/
 │   └── capture_readme_gifs.py
-├── docs/media/              sei tour GIF della UI reale
-├── app/                     Streamlit legacy, congelata
-├── HANDOFF_CODEX.md         registro tecnico delle iterazioni
-└── PROMPT_CODEX.md          stato operativo per manutenzione
-```
+├── docs/media/              seven real-UI animated tours
+├── app/                     frozen legacy Streamlit interface
+├── HANDOFF_CODEX.md         iteration-by-iteration engineering log
+└── PROMPT_CODEX.md          maintenance state and invariants
+~~~
 
-## Verifica e quality gate
+## Verification and quality gates
 
-Eseguire dalla directory `simulatore`:
+Run from the <code>simulatore</code> directory:
 
-```bash
+~~~bash
 python -m pytest tests -q
 python -m serdes_sim.selftest
 node --check labpro/static/app.js
 python -m compileall -q serdes_sim labpro
 git diff --check
-```
+~~~
 
-Stato validato dell'iterazione 36: **374/374 test PASS**, selftest fisico
-**13/13**, sintassi JavaScript, compileall e controllo whitespace puliti.
+Validated state after iteration 37: **375/375 tests pass**, physical self-test
+**13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
-L'audit browser aggiuntivo attraversa tutti i 32 pannelli in IT e EN, verifica
-singleton/tab attivo, quattro viste BERT, EYE/WAVE, propagazione dei controlli,
-upload Touchstone 2.x e reload rapidi. I test numerici preservano anche la
-baseline del notebook v7.
+The additional browser audit traverses all 32 panels in both IT and EN,
+verifies singleton and active-tab behavior, all four BERT views, DCA EYE/WAVE,
+control propagation, a real Touchstone 2.x upload, and rapid reloads. Numerical
+tests also preserve the frozen notebook-v7 baseline.
 
-## Rigenerare le GIF
+## Regenerating the GIFs
 
-Con il server in ascolto sulla porta 8640:
+With the server listening on port 8640:
 
-```bash
+~~~bash
 python tools/capture_readme_gifs.py --base http://127.0.0.1:8640
-```
+~~~
 
-Lo script:
+The script:
 
-1. usa Playwright sul browser disponibile;
-2. salva configurazione e stato RUN correnti, usando un profilo browser isolato;
-3. visita realmente le schede e acquisisce i frame a 1440×900;
-4. costruisce sei GIF ottimizzate a 1000×625 con ImageMagick;
-5. ripristina lo stato iniziale anche in caso di errore.
+1. launches Playwright using an available Chromium browser;
+2. saves the current configuration and RUN state in an isolated browser
+   profile;
+3. switches the UI to English;
+4. visits real tabs and captures 1440 by 900 frames;
+5. builds seven optimized 1000 by 625 GIFs with ImageMagick;
+6. restores the initial bench state even if capture fails.
 
-Opzioni:
+Options:
 
-```bash
+~~~bash
 python tools/capture_readme_gifs.py --help
-```
+~~~
 
-Non modificare manualmente le GIF senza aggiornare anche lo script: il tour
-deve restare riproducibile e fedele alla versione della UI.
+Do not edit generated GIFs without updating the script. The tour must remain
+reproducible and faithful to the current interface.
 
-## Risoluzione dei problemi
+## Troubleshooting
 
-### La pagina non si apre
+### The page does not open
 
-Verificare che la porta sia libera e che il processo sia attivo:
+Check that the process is running and the port is available:
 
-```bash
+~~~bash
 curl -s http://localhost:8640/api/state
-```
+~~~
 
-Se la porta 8640 è occupata, avviare con un'altra porta e usare lo stesso URL
-nel browser.
+If port 8640 is occupied, start the server on another port and use the
+matching browser URL.
 
-### Un pannello mostra dati vecchi
+### A panel shows stale data
 
-Controllare hash/config version nel footer, attendere la fine del record e
-ricaricare la pagina. Un cambio di parametro invalida intenzionalmente
-l'accumulo. Se il problema persiste, STOP → Reset → RUN.
+Check the configuration version/hash in the status bar, allow the current
+record to complete, and reload. A parameter change intentionally invalidates
+accumulation. If needed, use STOP, Reset, then RUN.
 
-### Il link è DOWN
+### The link is DOWN
 
-Aprire nell'ordine Catena, Checkpoint & ledger, Timing/CDR e Decisioni.
-Verificare output TX, occupancy ADC, clipping, pattern lock e lock CDR. BER,
-GMI o post-FEC assenti durante `DOWN` sono comportamento corretto.
+Open Signal chain, Checkpoints and signal ledger, Timing/CDR, and Decisions in
+that order. Verify TX output, ADC range utilization, clipping, pattern lock,
+and CDR lock.
 
-### Un Touchstone non viene accettato
+Missing BER, GMI, or post-FEC metrics while the link is down are correct
+behavior.
 
-Verificare estensione/numero porte, frequenze crescenti, formato RI/MA/DB,
-reference impedance uniforme e mappatura delle coppie S4P. Touchstone 2.x usa
-scikit-rf: controllare che sia installato nello stesso interprete del server.
+### A Touchstone file is rejected
 
-### Le GIF non si rigenerano
+Check the extension and port count, strictly increasing frequencies, RI/MA/DB
+format, uniform reference impedance, and S4P port-pair mapping. Touchstone 2.x
+uses scikit-rf, which must be installed in the same interpreter as the
+server.
 
-Installare Playwright e ImageMagick, oppure rendere disponibile un Chromium
-Playwright nella cache standard. Lo script stampa un errore esplicito se non
-trova `magick`.
+### GIF regeneration fails
 
-## Limiti noti
+Install Playwright and ImageMagick, and make a Playwright Chromium browser
+available in its standard cache. The script emits an explicit error if
+<code>magick</code> is unavailable.
 
-- non è uno strumento di conformità né sostituisce un golden instrument;
-- il modello è system-level e non transistor/layout-level;
-- COM e JTOL sono proxy educativi con perimetro dichiarato;
-- CMIS e traffic test sono subset funzionali;
-- la procedura DR4 non include uncertainty tracciabile, reflection e tutti gli
-  stress di polarizzazione;
-- IBIS-AMI dipende dal contratto e dalla libreria del vendor;
-- la UI Streamlit è legacy e non riceve nuove funzioni.
+## Known limitations
 
-Roadmap, decisioni e cronologia delle verifiche sono in
-[`HANDOFF_CODEX.md`](HANDOFF_CODEX.md).
+- This is not a compliance instrument and does not replace a golden
+  instrument.
+- The model is system-level rather than transistor- or layout-level.
+- COM and JTOL are educational proxies with declared boundaries.
+- CMIS and traffic tests are functional subsets.
+- DR4 does not include traceable uncertainty, reflection, or the complete
+  polarization-stress space.
+- IBIS-AMI behavior depends on each vendor library and contract.
+- The Streamlit UI is legacy and receives no new features.
 
-## Licenza e uso
+Roadmap, engineering decisions, and validation history are recorded in
+[HANDOFF_CODEX.md](HANDOFF_CODEX.md).
 
-Usare secondo la licenza e le policy del repository. Per decisioni di
-progetto, procurement o conformità, correlare sempre il modello con specifica
-applicabile, dati del componente e misura tracciabile.
+## License and intended use
+
+Use this project according to the repository license and policies. For design,
+procurement, or compliance decisions, always correlate the model with the
+applicable specification, component data, and traceable measurements.

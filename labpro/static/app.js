@@ -941,7 +941,7 @@ PANEL_DEFS.chain = {
     const jitOn = S.cfg.tx_rj_rms_fs > 0 || S.cfg.tx_pj_amp_ui > 0 || S.cfg.tx_dcd_pct > 0;
     const ethOn = S.cfg.pattern === "eth";
     const rows = [
-      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["err", "ERR ADD", "dg", "bertcheck"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FIR", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", "Canale", "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", "Fibra", copper ? "off" : "op", "optical"]],
+      [["stim", ethOn ? "PPG·ETH" : "PPG", "dg", "stimulus"], ["fenc", "FEC enc", fecOn ? "dg" : "off", "feclive"], ["err", "ERR ADD", "dg", "bertcheck"], ["map", "Mapper", "dg", "stimulus"], ["ser", "SER (MUX)", "dg", "serpll"], ["ffe", "TX FIR", "dg", "tx"], ["dac", "DAC", "el", "tx"], ["drv", "Driver P/N", "el", "serpll"], ["ch", L("Canale", "Channel"), "el", "channel"], ["mzm", (S.cfg.optical_modulator || "mzm").toUpperCase(), copper ? "off" : "op", "optical"], ["fib", L("Fibra", "Fiber"), copper ? "off" : "op", "optical"]],
       [["pd", "PD", copper ? "off" : "el", "pd"], ["tia", copper ? "AFE" : "TIA", "el", "tia"], ["agc", "AGC", "el", "agc"], ["ctle", "CTLE", "el", "ctle"], ["adc", "ADC", "dg", "adc"], ["cdr", "CDR·TED", "ck", "timing"], ["fse", "FSE", "dg", "eq"], ["dfe", "DFE", "dg", "eq"], ["slc", "Slicer", "dg", "decisions"], ["dmx", "DEMUX", "dg", "decisions"], ["fdec", ethOn ? "FEC·L2" : "FEC dec", fecOn || ethOn ? "dg" : "off", ethOn ? "l2" : "feclive"]],
     ];
     const W = 98, H = 42, G = 13, X0 = 18, Y = [42, 130];
@@ -1992,7 +1992,7 @@ PANEL_DEFS.channel = {
     mergeAxis(l1, "yaxis", { title: { text: "|S21| dB", font: { size: 10 } } });
     plot(p.plotS, [{ x: d.f_ghz, y: d.s21_db, line: { color: COL.el } }], l1);
     const lp = PL({ height: 210 });
-    mergeAxis(lp, "xaxis", { title: { text: "tempo rispetto al main cursor [UI]", font: { size: 10 } } });
+    mergeAxis(lp, "xaxis", { title: { text: L("tempo rispetto al main cursor [UI]", "time relative to main cursor [UI]"), font: { size: 10 } } });
     mergeAxis(lp, "yaxis", { title: { text: "pulse normalizzata", font: { size: 10 } } });
     plot(p.plotP, [
       { x: d.pulse_t_ui, y: d.pulse, name: L("solo canale", "channel only"), line: { color: COL.el, width: 1.6 } },
