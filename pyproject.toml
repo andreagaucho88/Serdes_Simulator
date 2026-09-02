@@ -43,7 +43,7 @@ Changelog = "https://github.com/andreagaucho88/Serdes_Simulator/blob/main/CHANGE
 dev = [
     "build==1.2.2.post1",
     "pytest==8.3.5",
-    "ruff==0.6.9",
+    "ruff==0.16.5",
     "setuptools>=77",
     "wheel",
 ]
