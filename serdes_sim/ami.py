@@ -24,11 +24,43 @@ al percorso principale: mostra impulse/waveform prima e dopo.
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+
+AMI_LIBRARY_SUFFIXES = frozenset({".dll", ".dylib", ".so"})
+
+
+def model_directory() -> Path:
+    """Return the trusted local directory from which AMI binaries may load."""
+    configured = os.environ.get("SERDES_AMI_MODEL_DIR")
+    root = Path(configured).expanduser() if configured else (
+        Path.home() / ".serdes_sim_ami_models"
+    )
+    return root.resolve()
+
+
+def discover_models(root: Path | None = None) -> dict[str, Path]:
+    """List regular shared libraries contained by the trusted model root."""
+    safe_root = (root or model_directory()).expanduser().resolve()
+    if not safe_root.is_dir():
+        return {}
+    found = {}
+    for entry in safe_root.iterdir():
+        if entry.suffix.lower() not in AMI_LIBRARY_SUFFIXES:
+            continue
+        try:
+            resolved = entry.resolve(strict=True)
+            resolved.relative_to(safe_root)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_file():
+            found[entry.name] = resolved
+    return dict(sorted(found.items()))
 
 
 # ---------------------------------------------------------------------------

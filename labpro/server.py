@@ -34,7 +34,8 @@ from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                rx_sensitivity_search, stressed_eye_calibrate,
                                traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e  # noqa: E402
-from serdes_sim.livebench import LiveBench   # noqa: E402
+from serdes_sim.livebench import (BertNotRunning, InjectionInProgress,  # noqa: E402
+                                  LiveBench)
 from labpro import paneldata                 # noqa: E402
 from labpro.action_help import ACTION_HELP   # noqa: E402
 from labpro.control_help import CONTROL_HELP  # noqa: E402
@@ -54,6 +55,12 @@ CHAMBER_KEYS = ("on", "mode", "t_min", "t_max", "period_s", "tau_s")
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
 MAX_TOUCHSTONE_TEXT_BYTES = 8 * 1024 * 1024
+HTTP_ERROR_MESSAGES = {
+    400: "Bad request",
+    403: "Request rejected by the local security policy",
+    404: "Not found",
+    413: "Request body too large",
+}
 
 
 def _is_loopback_endpoint(value: str) -> bool:
@@ -76,6 +83,14 @@ def _is_same_loopback_origin(origin: str, protocol: str, host: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def _json_payload(obj) -> bytes:
+    """Encode JSON without literal HTML delimiters, safe even if embedded."""
+    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    payload = payload.replace("&", "\\u0026")
+    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")
+    return payload.encode("utf-8")
 
 
 def config_from_dict(cfg_d: dict):
@@ -272,6 +287,7 @@ BENCH.on_record = on_record
 class Base(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header("Cache-Control", "no-store")
+        self.set_header("X-Content-Type-Options", "nosniff")
 
     def prepare(self):
         if not _is_loopback_endpoint(self.request.host):
@@ -286,8 +302,8 @@ class Base(tornado.web.RequestHandler):
                 raise tornado.web.HTTPError(403, "cross-origin mutation rejected")
 
     def write_json(self, obj):
-        self.set_header("Content-Type", "application/json")
-        self.write(json.dumps(obj))
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
+        self.finish(_json_payload(obj))
 
     def body_json(self):
         try:
@@ -298,16 +314,12 @@ class Base(tornado.web.RequestHandler):
     def write_error(self, status_code, **kwargs):
         # contratto d'errore UNIFORME: sempre {"error": ...} — la pagina HTML
         # 500 di Tornado rompeva GET() lato client ("Unexpected token '<'")
-        err = f"HTTP {status_code}"
         exc_info = kwargs.get("exc_info")
-        if exc_info and exc_info[1] is not None:
-            exc = exc_info[1]
-            if isinstance(exc, tornado.web.HTTPError):
-                err = exc.log_message or f"HTTP {status_code}"
-            else:
-                err = f"{type(exc).__name__}: {exc}"
-        self.set_header("Content-Type", "application/json")
-        self.finish(json.dumps({"error": err}))
+        if status_code >= 500 and exc_info:
+            log.error("Unhandled HTTP request failure", exc_info=exc_info)
+        err = HTTP_ERROR_MESSAGES.get(status_code, "Internal server error")
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
+        self.finish(_json_payload({"error": err}))
 
 
 class NotFound(Base):
@@ -360,9 +372,9 @@ class ApiSweep(Base):
                 self, "sweep",
                 lambda evt: sweep(cfg, field, np.linspace(lo, hi, n),
                                   cancel=evt))
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "parametri sweep non validi"})
         if not ok:
             return
         self.write_json({"ok": True, "field": field,
@@ -406,9 +418,9 @@ class ApiConfig(Base):
                 if name in updates:
                     updates[name] = tuple(float(v) for v in updates[name])
             new = cfg.with_updates(**updates)
-        except TypeError as exc:
+        except TypeError:
             self.set_status(400)
-            return self.write_json({"error": f"campo sconosciuto: {exc}"})
+            return self.write_json({"error": "campo sconosciuto o valore non valido"})
         problems = new.validate()
         if problems:
             self.set_status(400)
@@ -446,9 +458,9 @@ class ApiConfigImport(Base):
                           "dal banco (⤓ CFG)"})
         try:
             new, dropped = config_from_dict(cfg_d)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
             self.set_status(400)
-            return self.write_json({"error": f"config non valida: {exc}"})
+            return self.write_json({"error": "config non valida"})
         problems = new.validate()
         if problems:
             self.set_status(400)
@@ -528,9 +540,10 @@ class ApiS2P(Base):
             else:
                 from serdes_sim.blocks.channel import sparameter_diagnostics
                 diag = {"tipo": "s2p"} | sparameter_diagnostics(f, S).to_dict()
-        except Exception as exc:
+        except Exception:
+            log.info("Touchstone input rejected", exc_info=True)
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "Touchstone non valido o non supportato"})
         if body.get("apply"):
             updates = dict(s2p_text=text, s2p_name=body.get("name", "upload"),
                            use_s2p_channel=True)
@@ -556,9 +569,9 @@ class ApiJtf(Base):
                 lambda evt: jitter_transfer(
                     cfg, freqs, amp_ui=float(body.get("amp_ui", 0.04)),
                     cancel=evt))
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "parametri JTF non validi"})
         if not ok:
             return
         self.write_json({"ok": True, "points": paneldata.J(points),
@@ -653,12 +666,15 @@ class ApiInject(Base):
         try:
             request = BENCH.inject_errors(
                 n, burst=bool(body.get("burst", False)), target=target)
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
-        except RuntimeError as exc:
+            return self.write_json({"error": "richiesta di inserimento non valida"})
+        except BertNotRunning:
             self.set_status(409)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "BERT non in RUN"})
+        except InjectionInProgress:
+            self.set_status(409)
+            return self.write_json({"error": "inserimento errori già in corso"})
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
         self.write_json({"ok": True, "request": request,
                          "bits": request["bits"], "target": request["target"]})
@@ -709,9 +725,9 @@ class ApiTraffic(Base):
             rows, ok = await run_experiment(
                 self, "traffic",
                 lambda evt: traffic_sweep(cfg, sizes, cancel=evt))
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "frame_sizes contiene valori non validi"})
         if not ok:
             return
         self.write_json({"ok": True, "kind": "PHY frame-size benchmark",
@@ -747,18 +763,18 @@ class ApiSensitivity(Base):
             target = float(target) if target is not None else None
             if target is not None and not 0 < target < 0.5:
                 raise ValueError("target_ber fuori range (0, 0.5)")
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
             self.set_status(400)
-            return self.write_json({"error": f"target_ber non valido: {exc}"})
+            return self.write_json({"error": "target_ber non valido"})
         cfg = BENCH.cfg
         try:
             report, ok = await run_experiment(
                 self, "RX sensitivity",
                 lambda evt: rx_sensitivity_search(cfg, target_ber=target,
                                                   cancel=evt))
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
+            return self.write_json({"error": "ricerca sensitivity non valida"})
         if not ok:
             return
         self.write_json({"ok": True, **paneldata.J(report)})
@@ -771,9 +787,9 @@ class ApiStressCal(Base):
             target_q = float(body.get("target_q", 3.0))
             if not 0.3 <= target_q <= 10.0:
                 raise ValueError("target_q fuori range [0.3, 10]")
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
             self.set_status(400)
-            return self.write_json({"error": f"target_q non valido: {exc}"})
+            return self.write_json({"error": "target_q non valido"})
         cfg = BENCH.cfg
         report, ok = await run_experiment(
             self, "stressed-eye cal",
@@ -850,12 +866,13 @@ class ApiPanel(Base):
         try:
             payload = await tornado.ioloop.IOLoop.current().run_in_executor(
                 REF_POOL, work)
-        except ValueError as exc:
+        except ValueError:
             self.set_status(400)
-            return self.write_json({"error": str(exc)})
-        except Exception as exc:
+            return self.write_json({"error": "parametri pannello non validi"})
+        except Exception:
+            log.exception("Panel builder failed")
             self.set_status(500)
-            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+            return self.write_json({"error": "errore interno del pannello"})
         self.write_json(payload)
 
 
@@ -905,9 +922,10 @@ class ApiScope(Base):
             sim, source_used, channels = await (
                 tornado.ioloop.IOLoop.current().run_in_executor(REF_POOL,
                                                                 work))
-        except Exception as exc:
+        except Exception:
+            log.exception("Scope acquisition failed")
             self.set_status(400)
-            return self.write_json({"error": f"{type(exc).__name__}: {exc}"})
+            return self.write_json({"error": "acquisizione Scope non valida"})
         self.write_json({
             "channels": channels,
             "coherent": True,

@@ -69,17 +69,26 @@ def page_realism():
     cfg = get_cfg()
     sim = run_sim()
 
+    model_root = ami.model_directory()
+    models = ami.discover_models(model_root)
+    preferred = st.session_state.pop("ami_model_name", None)
+    if preferred in models:
+        st.session_state["ami_model_selection"] = preferred
+    elif st.session_state.get("ami_model_selection") not in models:
+        st.session_state["ami_model_selection"] = None
     col1, col2 = st.columns([1.2, 1])
     with col1:
-        lib_path = st.text_input(
-            "Percorso libreria AMI (.dylib / .so / .dll)",
-            value=st.session_state.get("ami_lib_path", ""),
-            placeholder="/percorso/del/modello_tx.dylib")
+        selected = st.selectbox(
+            "Modello AMI fidato",
+            options=list(models),
+            index=None,
+            key="ami_model_selection",
+            placeholder="Copia una libreria nella directory fidata")
+        st.caption(f"Directory modelli: `{model_root}`")
         if st.button("Compila e usa il modello demo (richiede cc/clang)"):
             try:
-                demo_dir = str(Path.home() / ".serdes_sim_ami_demo")
-                built = ami.build_demo_model(demo_dir)
-                st.session_state["ami_lib_path"] = built
+                built = ami.build_demo_model(str(model_root))
+                st.session_state["ami_model_name"] = Path(built).name
                 st.rerun()
             except Exception as exc:
                 st.error(f"Compilazione demo fallita: {exc}")
@@ -87,19 +96,18 @@ def page_realism():
         ami_text = st.text_area("Parametri AMI_parameters_in (formato .ami)",
                                 value="(model)", height=68)
 
-    lib_path = st.session_state.get("ami_lib_path", "") or lib_path
-    if not lib_path:
-        st.info("Indica una libreria AMI oppure compila il modello demo per "
-                "provare il flusso Init/GetWave.")
-        return
-    if not Path(lib_path).exists():
-        st.error(f"File non trovato: {lib_path}")
+    lib_path = models.get(selected)
+    if lib_path is None:
+        st.info("Copia una libreria AMI fidata nella directory indicata oppure "
+                "compila il modello demo per provare Init/GetWave. I percorsi "
+                "forniti dalla UI non vengono mai caricati direttamente.")
         return
 
     try:
-        model = ami.AmiModel(lib_path)
-    except OSError as exc:
-        st.error(f"Libreria non caricabile: {exc}")
+        model = ami.AmiModel(str(lib_path))
+    except OSError:
+        st.error("Libreria non caricabile. Controlla architettura e dipendenze "
+                 "nel terminale che ha avviato l'applicazione.")
         return
 
     st.caption(f"Caricata: `{lib_path}` · AMI_GetWave "

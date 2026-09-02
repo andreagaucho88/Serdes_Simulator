@@ -133,7 +133,7 @@ class ApiContractTest(AsyncHTTPTestCase):
             body=json.dumps({"updates": {}}),
         )
         assert resp.code == 403
-        assert "cross-origin" in json.loads(resp.body)["error"]
+        assert "security policy" in json.loads(resp.body)["error"]
 
     def test_loopback_origin_reaches_normal_api_validation(self):
         resp = self.fetch(
@@ -148,7 +148,7 @@ class ApiContractTest(AsyncHTTPTestCase):
     def test_non_loopback_host_is_rejected(self):
         resp = self.fetch("/api/state", headers={"Host": "attacker.example"})
         assert resp.code == 403
-        assert "non-loopback" in json.loads(resp.body)["error"]
+        assert "security policy" in json.loads(resp.body)["error"]
 
     def test_oversized_request_body_is_rejected(self):
         with patch.object(server, "MAX_REQUEST_BODY_BYTES", 32):
@@ -158,7 +158,7 @@ class ApiContractTest(AsyncHTTPTestCase):
                 body=json.dumps({"updates": {"padding": "x" * 64}}),
             )
         assert resp.code == 413
-        assert "16 MiB" in json.loads(resp.body)["error"]
+        assert json.loads(resp.body)["error"] == "Request body too large"
 
     def test_oversized_touchstone_upload_is_rejected(self):
         with patch.object(server, "MAX_TOUCHSTONE_TEXT_BYTES", 16):
@@ -169,3 +169,24 @@ class ApiContractTest(AsyncHTTPTestCase):
             )
         assert resp.code == 413
         assert "8 MiB" in json.loads(resp.body)["error"]
+
+    def test_json_transport_escapes_html_delimiters(self):
+        def payload(_sim, _cfg):
+            return {"value": "<script>alert('x')</script>"}
+
+        with patch.dict(server.paneldata.PANEL_BUILDERS, {"education": payload}):
+            resp = self.fetch("/api/panel/education")
+        assert resp.code == 200
+        assert b"<script>" not in resp.body
+        assert "<script>" in json.loads(resp.body)["value"]
+
+    def test_panel_failure_does_not_expose_exception_details(self):
+        def fail(_sim, _cfg):
+            raise RuntimeError("private /server/path and implementation detail")
+
+        with patch.dict(server.paneldata.PANEL_BUILDERS, {"education": fail}):
+            resp = self.fetch("/api/panel/education")
+        assert resp.code == 500
+        body = json.loads(resp.body)
+        assert body["error"] == "errore interno del pannello"
+        assert b"/server/path" not in resp.body

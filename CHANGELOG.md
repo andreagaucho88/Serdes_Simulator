@@ -2,6 +2,14 @@
 
 All notable public changes are documented here.
 
+## 0.1.2 — 2026-09-02
+
+- Closed the first CodeQL findings by HTML-safely encoding JSON responses,
+  returning generic public errors while retaining server-side diagnostics,
+  and restricting executable AMI discovery to a trusted local model folder.
+- Limited push CI to `main` so tags and Dependabot pull requests do not run
+  duplicate test jobs.
+
 ## 0.1.1 — 2026-09-02
 
 - GitHub Actions uses an isolated package build and Node 24-based actions.

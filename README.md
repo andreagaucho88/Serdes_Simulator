@@ -53,7 +53,7 @@ that same record.
 | 🧩 | **One complete datapath** | Electrical, optical, timing, DSP, and coding effects propagate end to end |
 | 🧪 | **Measured-channel support** | Touchstone 1.x/2.x S2P and mixed-mode S4P can replace the analytical channel |
 | 🎓 | **Explainable controls** | 123 bilingual controls document physics, observables, experiments, and model boundaries |
-| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 383 automated tests |
+| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 386 automated tests |
 
 ### What you can investigate
 
@@ -393,7 +393,7 @@ python -m compileall -q serdes_sim labpro
 git diff --check
 ~~~
 
-Current validated state: **383/383 tests pass**, physical self-test
+Current validated state: **386/386 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -472,6 +472,13 @@ Install Playwright and ImageMagick, and make a Playwright Chromium browser
 available in its standard cache. The script emits an explicit error if
 <code>magick</code> is unavailable.
 
+### A vendor AMI model does not appear in the legacy workbench
+
+For safety, the Streamlit reference UI discovers executable AMI libraries
+only in <code>~/.serdes_sim_ami_models</code>. Copy the trusted `.so`, `.dylib`,
+or `.dll` there, or set <code>SERDES_AMI_MODEL_DIR</code> before starting the
+process. Symlinks that resolve outside that directory are ignored.
+
 ## Known limitations
 
 - This is not a compliance instrument and does not replace a golden
@@ -482,7 +489,8 @@ available in its standard cache. The script emits an explicit error if
 - DR4 does not include traceable uncertainty, reflection, or the complete
   polarization-stress space.
 - IBIS-AMI behavior depends on each vendor library and contract.
-- The Streamlit UI is legacy and receives no new features.
+- The Streamlit UI is legacy and receives security maintenance but no new
+  features.
 
 Use [GitHub Issues](https://github.com/andreagaucho88/Serdes_Simulator/issues)
 for public bug reports, feature requests, and roadmap discussions.

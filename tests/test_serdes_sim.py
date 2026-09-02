@@ -1490,7 +1490,7 @@ def test_public_package_metadata_and_cli_contract():
     root = Path(__file__).resolve().parent.parent
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     project = metadata["project"]
-    assert project["version"] == "0.1.1"
+    assert project["version"] == "0.1.2"
     assert project["requires-python"] == ">=3.12"
     assert project["license"] == "MIT"
     assert "THIRD_PARTY_NOTICES.md" in project["license-files"]
@@ -1507,6 +1507,21 @@ def test_public_package_metadata_and_cli_contract():
     assert (root / "labpro/static/fonts/OFL-IBM-Plex.txt").is_file()
     assert (root / "labpro/static/fonts/OFL-Space-Grotesk.txt").is_file()
     assert "Python 3.10" not in (root / "README.md").read_text()
+
+
+def test_ami_discovery_stays_inside_trusted_model_directory(tmp_path):
+    from serdes_sim.ami import discover_models
+
+    root = tmp_path / "models"
+    root.mkdir()
+    safe = root / "trusted.so"
+    safe.write_bytes(b"not loaded by this discovery test")
+    (root / "notes.txt").write_text("not a library")
+    outside = tmp_path / "outside.so"
+    outside.write_bytes(b"outside trusted root")
+    (root / "escape.so").symlink_to(outside)
+
+    assert discover_models(root) == {"trusted.so": safe.resolve()}
 
 
 def test_public_markdown_local_links_resolve():

@@ -22,6 +22,14 @@ from .engine import simulate
 log = logging.getLogger("serdes_sim.livebench")
 
 
+class BertNotRunning(RuntimeError):
+    """Raised when an injection is requested without a live receiver."""
+
+
+class InjectionInProgress(RuntimeError):
+    """Raised when the single-flight injection slot is already occupied."""
+
+
 class LiveBench:
     def __init__(self, cfg: LinkConfig = None, seed0: int = 500_000):
         self._lock = threading.RLock()
@@ -195,9 +203,9 @@ class LiveBench:
             raise ValueError("target deve essere random/msb/lsb/rs_symbol")
         with self._lock:
             if not self._running:
-                raise RuntimeError("BERT non in RUN: nessun RX fisico acquisisce")
+                raise BertNotRunning("BERT non in RUN: nessun RX fisico acquisisce")
             if self._inject_pending is not None or self._inject_active is not None:
-                raise RuntimeError("error injection già in corso")
+                raise InjectionInProgress("error injection già in corso")
             self._inject_seq += 1
             request = {
                 "id": self._inject_seq,

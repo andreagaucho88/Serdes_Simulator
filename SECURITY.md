@@ -23,7 +23,15 @@ multi-tenant isolation, or public-service resource quotas.
 The local server binds only to `127.0.0.1`, rejects non-loopback Host headers
 and cross-origin state mutations, limits all request bodies to 16 MiB, and
 limits Touchstone text to 8 MiB. WebSocket origins are restricted to loopback
-hosts as well.
+same-origin pages. JSON responses escape HTML delimiters, and unexpected
+exceptions are logged server-side without exposing implementation details to
+the client.
+
+The legacy Streamlit AMI workbench intentionally executes trusted vendor
+code. It discovers shared libraries only from
+`~/.serdes_sim_ami_models`, or the directory explicitly selected by the
+process owner through `SERDES_AMI_MODEL_DIR`; symlinks escaping that root are
+ignored.
 
 Do not expose the current server directly to an untrusted network. A hosted
 deployment must add, at minimum:
