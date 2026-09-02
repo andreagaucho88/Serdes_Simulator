@@ -817,6 +817,15 @@ class ApiScope(Base):
         source = self.get_argument("source", "auto")
         rf = self.get_argument("rf", "")
         n_traces = min(int(self.get_argument("n", "600")), 800)
+        # vista FlexDCA: eye (default) oppure wave = Oscilloscope mode,
+        # finestra continua del record navigabile con start/span [UI]
+        view = self.get_argument("view", "eye")
+        try:
+            start_ui = float(self.get_argument("start", "100"))
+            span_ui = float(self.get_argument("span", "64"))
+        except ValueError:
+            self.set_status(400)
+            return self.write_json({"error": "start/span devono essere numeri"})
 
         def work():
             sim = live_sim if source in ("auto", "live") else None
@@ -824,9 +833,17 @@ class ApiScope(Base):
             if not cfg_matches_live(sim, cfg):
                 sim = paneldata.ref_sim(cfg)
                 source_used = "reference"
-            channels = [paneldata.eye_panel(sim, cfg, node=n,
-                                            n_traces=n_traces, ref_filter=rf)
-                        for n in requested]
+            if view == "wave":
+                channels = [paneldata.wave_panel(sim, cfg, node=n,
+                                                 start_ui=start_ui,
+                                                 span_ui=span_ui,
+                                                 ref_filter=rf)
+                            for n in requested]
+            else:
+                channels = [paneldata.eye_panel(sim, cfg, node=n,
+                                                n_traces=n_traces,
+                                                ref_filter=rf)
+                            for n in requested]
             return sim, source_used, channels
 
         try:

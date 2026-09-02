@@ -644,6 +644,27 @@ def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
     return (np.arange(a, b, sub) / cfg.analog_sps, x[::sub])
 
 
+def wave_panel(sim, cfg, node="vctle", start_ui=100.0, span_ui=64.0,
+               ref_filter="", max_points=2600):
+    """Vista Oscilloscope stile FlexDCA/N1000A: finestra della waveform
+    CONTINUA del nodo — non ripiegata sull'occhio — dallo stesso record
+    coerente dello Scope, con lo stesso ricevitore di riferimento BT4
+    opzionale usato dalle misure. start/span navigano il record."""
+    wave = get_wave(sim, node)
+    label, _domain, unit, _side = NODES[node]
+    wave, rf_note = _bt4_reference(wave, cfg, ref_filter)
+    n_ui = len(wave) / cfg.analog_sps
+    span_ui = float(min(max(span_ui, 4.0), 512.0))
+    start_ui = float(min(max(start_ui, 0.0), max(n_ui - span_ui, 0.0)))
+    t, v = _wave_window(wave, cfg, start_ui=start_ui, span_ui=span_ui,
+                        max_points=max_points)
+    return J({"node": node, "label": label, "unit": unit,
+              "domain": _domain, "ref_note": rf_note,
+              "t_ui": t, "v": np.round(np.asarray(v, float), 5),
+              "start_ui": start_ui, "span_ui": span_ui,
+              "record_ui": n_ui})
+
+
 def pd_panel(sim, cfg):
     if sim.optical is None:
         return {"inactive": True,

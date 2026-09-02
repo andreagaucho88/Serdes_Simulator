@@ -1051,6 +1051,8 @@ PANEL_DEFS.scope = {
     p.node = "vctle"; p.persist = 8; p.rate = 12; p.idx = 0; p.count = 0; p.paused = false;
     p.auxNodes = ["", "", ""]; p.auxData = [];
     p.mode = "densità"; p.cursorUi = null; p.maskOn = false; p.maskW = 30; p.maskH = 40;
+    // vista FlexDCA: eye (default) o wave = Oscilloscope mode del N1000A
+    p.view = "eye"; p.waveData = null; p.waveSpan = 64; p.waveStart = 100;
     p.headSel = nodeSelect(p, () => { p.node = p.headSel.value; refreshDcaProbes(); this.refetch(p); });
     p.body.innerHTML = "";
     p.canvas = CE("canvas", "scope"); p.canvas.width = 1000; p.canvas.height = 380;
@@ -1059,6 +1061,9 @@ PANEL_DEFS.scope = {
     const bar = CE("div", "scope-bar");
     bar.innerHTML = `
       <b class="sec-tag">${L("ACQUISIZIONE · MISURA", "ACQUIRE · MEASURE")}</b>
+      <select data-k="view"><option value="eye">EYE / MASK</option><option value="wave">WAVE (oscilloscope)</option></select>
+      <select data-k="wspan" hidden><option>16</option><option>32</option><option selected>64</option><option>128</option><option>256</option></select>
+      <input type="number" data-k="wstart" value="100" min="0" step="16" style="width:74px" hidden>
       <select data-k="mode"><option>densità</option><option>fosforo</option></select>
       <span>persist <input type="range" min="1" max="30" value="8" data-k="persist"></span>
       <span>rate <input type="range" min="1" max="40" value="12" data-k="rate"></span>
@@ -1073,6 +1078,9 @@ PANEL_DEFS.scope = {
       <span data-k="readout"></span>`;
     const q = k => bar.querySelector(`[data-k=${k}]`);
     const scopeHelp = {
+      view: TT("EYE ripiega le tracce su 2 UI (eye/mask mode); WAVE mostra la forma d'onda continua del record come l'Oscilloscope mode di un N1000A", "EYE folds traces onto 2 UI (eye/mask mode); WAVE shows the record's continuous waveform like an N1000A's Oscilloscope mode"),
+      wspan: TT("ampiezza della finestra temporale in UI (10 divisioni orizzontali)", "time window span in UI (10 horizontal divisions)"),
+      wstart: TT("posizione di inizio della finestra nel record [UI]", "window start position within the record [UI]"),
       mode: TT("sceglie color-grade a densità o persistenza fosforo", "selects density color-grade or phosphor persistence"),
       persist: TT("costante di decadimento dell'accumulo visuale; non cambia i dati acquisiti", "visual accumulation decay; does not change acquired data"),
       rate: TT("waveform disegnate per frame browser; non cambia il rate del simulatore", "waveforms drawn per browser frame; does not change simulation rate"),
@@ -1086,6 +1094,18 @@ PANEL_DEFS.scope = {
       maskh: TT("altezza verticale della mask rispetto alla separazione dei livelli", "vertical mask height relative to level separation"),
     };
     for (const [k, title] of Object.entries(scopeHelp)) q(k).title = title;
+    q("view").onchange = e => {
+      p.view = e.target.value;
+      const w = p.view === "wave";
+      q("wspan").hidden = q("wstart").hidden = !w;
+      // i controlli dell'occhio non hanno senso in waveform mode
+      for (const k of ["mode", "persist", "cursor", "curpos", "mask", "maskw", "maskh", "overlay"]) q(k).disabled = w;
+      p.measHost.hidden = w;      // le misure sono dell'eye mode
+      p.acc.fill(0); p._waveDirty = true;
+      this.refetch(p);
+    };
+    q("wspan").onchange = e => { p.waveSpan = +e.target.value; this.refetch(p); };
+    q("wstart").onchange = e => { p.waveStart = Math.max(0, +e.target.value || 0); this.refetch(p); };
     q("mode").onchange = e => { p.mode = e.target.value; p.acc.fill(0); };
     q("persist").oninput = e => p.persist = +e.target.value;
     q("rate").oninput = e => p.rate = +e.target.value;
@@ -1200,12 +1220,60 @@ PANEL_DEFS.scope = {
         px = x; py = y;
       }
     };
+    // Oscilloscope mode (WAVE): forma d'onda continua del record, disegnata
+    // solo quando i dati cambiano — è un'immagine statica fra un refetch e
+    // l'altro, niente lavoro per frame come il fosforo
+    const drawWave = (ctx, W, H) => {
+      ctx.fillStyle = "#04070A"; ctx.fillRect(0, 0, W, H);
+      drawGrid(ctx, W, H);
+      const chans = p.waveData || [];
+      const colors = [p.color || COL.el, COL.op, COL.dg, COL.am];
+      const adjs = [p.chAdj, ...(p.auxAdj || [])];
+      const info = [];
+      chans.forEach((ch, ci) => {
+        if (!ch || !ch.v || ch.v.length < 2) return;
+        let lo = Infinity, hi = -Infinity;
+        for (const v of ch.v) { if (v < lo) lo = v; if (v > hi) hi = v; }
+        if (hi - lo < 1e-12) hi = lo + 1;
+        const pad = 0.1 * (hi - lo);
+        const [vmin, vmax] = chAdjRange([lo - pad, hi + pad], adjs[ci] || {});
+        const t0 = ch.t_ui[0], t1 = ch.t_ui[ch.t_ui.length - 1];
+        const sk = (adjs[ci] && adjs[ci].skew) || 0;
+        ctx.strokeStyle = colors[ci]; ctx.lineWidth = ci ? 1.1 : 1.5;
+        ctx.globalAlpha = ci ? 0.75 : 1;
+        ctx.beginPath();
+        for (let i = 0; i < ch.v.length; i++) {
+          const x = W * (ch.t_ui[i] + sk - t0) / (t1 - t0);
+          const y = H - (ch.v[i] - vmin) / (vmax - vmin) * H;
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.font = "10px IBM Plex Mono"; ctx.fillStyle = colors[ci];
+        ctx.fillText(`CH${String.fromCharCode(65 + ci)} ${tr(ch.label)} [${ch.unit}]${ch.ref_note ? " · " + ch.ref_note : ""}`, 8, 16 + ci * 13);
+        info.push(`CH${String.fromCharCode(65 + ci)} ${fix((vmax - vmin) / 8, 3)} ${ch.unit}/div`);
+      });
+      const c0 = chans[0];
+      if (c0) {
+        // barra di scala stile FlexDCA: timebase + posizione nel record
+        ctx.fillStyle = COL.muted; ctx.font = "10px IBM Plex Mono";
+        ctx.fillText(`${fix(c0.span_ui / 10, 1)} UI/div · start ${fix(c0.start_ui, 0)} UI · record ${fix(c0.record_ui, 0)} UI`, 8, H - 8);
+        p.readoutEl.textContent = `WAVE · ${info.join(" · ")}${p.acqText ? " · " + p.acqText : ""}`;
+      }
+    };
     const frame = () => {
       if (!p.el.isConnected) return;
       // 30 fps: il fosforo a 60 fps saturava il main thread (UX: pagina
       // che non risponde); ogni 2° frame basta e avanza per l'occhio umano
       p._f = (p._f || 0) + 1;
       if (p._f & 1) { requestAnimationFrame(frame); return; }
+      if (p.view === "wave") {
+        if (p._waveDirty && p.waveData && !document.hidden) {
+          const ctx = p.canvas.getContext("2d");
+          drawWave(ctx, p.canvas.width, p.canvas.height);
+          p._waveDirty = false;
+        }
+        requestAnimationFrame(frame); return;
+      }
       // niente lavoro se il canvas è fuori viewport o il tab è nascosto
       if (document.hidden) { requestAnimationFrame(frame); return; }
       if (p._f % 30 === 2) {
@@ -1353,6 +1421,17 @@ PANEL_DEFS.scope = {
       const requestSeq = (p.fetchSeq || 0) + 1; p.fetchSeq = requestSeq;
       if (p.headSel && p.headSel._refill) { p.headSel._refill(); p.node = p.headSel.value; }
       const nodes = [p.node, ...(p.auxNodes || []).filter(Boolean)];
+      if (p.view === "wave") {
+        // Oscilloscope mode: finestra continua coerente, stessi canali
+        const pack = await GET(`/api/scope?view=wave&nodes=${encodeURIComponent(nodes.join(","))}&start=${p.waveStart}&span=${p.waveSpan}&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}`);
+        if (requestSeq !== p.fetchSeq || !p.el.isConnected || p.view !== "wave") return;
+        const aq2 = pack._acquisition || {};
+        p.acqText = `${aq2.source || "—"} #${aq2.records ?? "—"} seed ${aq2.seed ?? "—"}`;
+        p.color = DOMC[pack.channels[0] && pack.channels[0].domain] || COL.el;
+        p.waveData = pack.channels;
+        p._waveDirty = true;
+        return;
+      }
       const pack = await GET(`/api/scope?nodes=${encodeURIComponent(nodes.join(","))}&n=600&source=${S.running ? "live" : "auto"}&rf=${p.refFilter || ""}&_=${Date.now()}`);
       if (requestSeq !== p.fetchSeq || !p.el.isConnected) return;
       const d = pack.channels[0], aq = pack._acquisition || {};

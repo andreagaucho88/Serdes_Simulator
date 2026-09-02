@@ -62,3 +62,20 @@ def test_eye_panel_every_node(node, ref):
     payload = paneldata.eye_panel(ref, CFG, node=node, n_traces=24)
     json.dumps(paneldata.J(payload))
     assert payload["traces"], f"nodo {node}: nessuna traccia"
+
+
+@pytest.mark.parametrize("node", ["vctle", "vp", "pfiber"])
+def test_wave_panel_oscilloscope_window(node, ref):
+    # vista WAVE stile N1000A: finestra continua coerente, non ripiegata
+    w = paneldata.wave_panel(ref, CFG, node=node, start_ui=200, span_ui=64)
+    json.dumps(w)
+    assert len(w["v"]) == len(w["t_ui"]) > 100
+    assert w["t_ui"][0] == pytest.approx(200, abs=0.1)
+    assert w["t_ui"][-1] - w["t_ui"][0] == pytest.approx(64, abs=1)
+
+
+def test_wave_panel_clamps_to_record(ref):
+    w = paneldata.wave_panel(ref, CFG, node="vctle", start_ui=1e9,
+                             span_ui=9999)
+    assert w["span_ui"] == 512.0
+    assert w["start_ui"] + w["span_ui"] <= w["record_ui"] + 1
