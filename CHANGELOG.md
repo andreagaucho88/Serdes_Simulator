@@ -2,6 +2,10 @@
 
 All notable public changes are documented here.
 
+## Unreleased
+
+- GitHub Actions uses an isolated package build and Node 24-based actions.
+
 ## 0.1.0 — 2026-09-02
 
 First public alpha release.

@@ -18,7 +18,7 @@ Run the reproducible gate with:
 python -m pytest tests -q
 python -m serdes_sim.selftest
 node --check labpro/static/app.js
-python -m build --no-isolation
+python -m build
 git diff --check
 ~~~
 
