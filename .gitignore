@@ -12,5 +12,5 @@ labpro/.labpro_session.json
 labpro/.labpro_session.tmp
 # Local agent notes and engineering handoffs (never publish)
 CLAUDE.md
-HANDOFF_*.md
+HANDOFF*.md
 PROMPT_CODEX.md

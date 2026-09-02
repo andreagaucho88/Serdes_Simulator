@@ -144,6 +144,7 @@ class ApiContractTest(AsyncHTTPTestCase):
         assert d["api_version"] == 1
         assert d["version"]
         assert set(d["persistence"]) == {"status", "restored"}
+        assert set(d["scpi"]) == {"status", "port"}
         assert str(server.PERSIST).encode() not in resp.body
 
     def test_health_reports_persistence_failure_as_degraded(self):
@@ -153,6 +154,12 @@ class ApiContractTest(AsyncHTTPTestCase):
         d = json.loads(resp.body)
         assert d["status"] == "degraded"
         assert d["persistence"]["status"] == "error"
+
+    def test_health_reports_scpi_startup_failure_as_degraded(self):
+        with patch.dict(server.SCPI_SETTINGS, {"status": "error"}):
+            resp = self.fetch("/api/health")
+        assert resp.code == 200
+        assert json.loads(resp.body)["status"] == "degraded"
 
     def test_malformed_json_is_rejected_without_mutating_config(self):
         before = server.BENCH.cfg
@@ -242,6 +249,22 @@ class ApiContractTest(AsyncHTTPTestCase):
             )
         assert resp.code == 413
         assert "8 MiB" in json.loads(resp.body)["error"]
+
+    def test_oversized_fixture_and_flexdca_uploads_are_rejected(self):
+        with patch.object(server, "MAX_TOUCHSTONE_TEXT_BYTES", 16):
+            resp = self.fetch(
+                "/api/scope/fixture", method="POST",
+                body=json.dumps({"text": "x" * 17}),
+            )
+        assert resp.code == 413
+        assert "8 MiB" in json.loads(resp.body)["error"]
+        with patch.object(server, "MAX_FLEXDCA_TEXT_BYTES", 16):
+            resp = self.fetch(
+                "/api/golden", method="POST",
+                body=json.dumps({"flexdca_csv": "x" * 17}),
+            )
+        assert resp.code == 413
+        assert "15 MiB" in json.loads(resp.body)["error"]
 
     def test_json_transport_escapes_html_delimiters(self):
         def payload(_sim, _cfg):

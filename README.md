@@ -10,9 +10,11 @@ electrical and electro-optical SerDes links up to the 224G class.</strong></p>
 <p>
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white">
   <a href="https://github.com/andreagaucho88/Serdes_Simulator/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/andreagaucho88/Serdes_Simulator/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://pypi.org/project/serdes-optical-lab/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/serdes-optical-lab?style=for-the-badge&color=2F7DBD"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-F5C518?style=for-the-badge"></a>
   <img alt="32 instruments" src="https://img.shields.io/badge/instruments-32-00A6D6?style=for-the-badge">
-  <img alt="123 physical controls" src="https://img.shields.io/badge/physical%20controls-123-7B61FF?style=for-the-badge">
+  <img alt="136 physical controls" src="https://img.shields.io/badge/physical%20controls-136-7B61FF?style=for-the-badge">
+  <img alt="502 tests" src="https://img.shields.io/badge/tests-502%20passing-2EA44F?style=for-the-badge">
 </p>
 
 <p>
@@ -20,7 +22,8 @@ electrical and electro-optical SerDes links up to the 224G class.</strong></p>
   <a href="#visual-tour">Visual tour</a> ·
   <a href="#32-instrument-panels">32-panel reference</a> ·
   <a href="#local-api">API</a> ·
-  <a href="#verification-and-quality-gates">Verification</a>
+  <a href="#verification-and-quality-gates">Verification</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 </div>
@@ -52,8 +55,17 @@ that same record.
 | ⚡ | **Live acquisition** | Fresh noise per record, accumulating counters, confidence intervals, and explicit lock state |
 | 🧩 | **One complete datapath** | Electrical, optical, timing, DSP, and coding effects propagate end to end |
 | 🧪 | **Measured-channel support** | Touchstone 1.x/2.x S2P and mixed-mode S4P can replace the analytical channel |
-| 🎓 | **Explainable controls** | 123 bilingual controls document physics, observables, experiments, and model boundaries |
-| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 392 automated tests |
+| 🎓 | **Explainable controls** | 136 bilingual controls document physics, observables, experiments, and model boundaries |
+| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 502 automated tests |
+
+### What is new in 0.2.0
+
+| Instrument capability | Evidence now available |
+| --- | --- |
+| **Golden correlation** | Six measured IEEE P802.3bs SMF waveforms, software pattern lock, provenance, reference bandwidth, and per-capture TDECQ deltas |
+| **Traffic qualification** | PHY/L1/L2 accounting, RFC 2544, ITU-T Y.1564, MP1900A-style PAM4 error analysis, and exportable reports |
+| **Optical stress** | DR4 eight-case stress space, reflection/MPI, source RIN, SECQ calibration, and stressed-receiver BER |
+| **Automation** | PyVISA-compatible SCPI, atomic JSON sessions, explicit readiness health, and the same experiment lock/cancel contract as the web bench |
 
 ### What you can investigate
 
@@ -106,9 +118,8 @@ in <code>app/</code> is preserved as a frozen reference.
 
 ## Visual tour
 
-Every GIF below is a reproducible recording of the real application. Each tab
-change requests live bench data; none of the screens use mocked plots or
-precomputed screenshots.
+Every GIF and screenshot below comes from the real application. Each tab
+change requests bench data; none of the screens use mocked plots.
 
 ### 1. Workspace, signal chain, Academy, and standards
 
@@ -256,23 +267,22 @@ lane, no packet DUT, losses from the PHY bit errors.
 
 ## Quick start
 
-The fastest way, once the 0.2.0 release is on PyPI:
+Install the published package in an isolated application environment:
 
 ~~~bash
 pipx install serdes-optical-lab      # or: pip install serdes-optical-lab
 serdes-lab                           # opens the bench on http://localhost:8640
 ~~~
 
-The same command also starts the SCPI server on `127.0.0.1:5025` for
+The same command starts the SCPI server on `127.0.0.1:5025` for
 PyVISA scripts (see [SCPI remote control](docs/SCPI.md)).
 
 ### Requirements
 
 - Python 3.12;
-- NumPy, SciPy, pandas, Tornado, Plotly, and pytest;
-- scikit-rf for Touchstone 2.x;
+- NumPy, SciPy, pandas, Tornado, Plotly, and scikit-rf are installed with the package;
 - a modern web browser;
-- optional: Playwright and ImageMagick to regenerate the GIFs.
+- optional development tools: pytest, Ruff, Playwright, and ImageMagick.
 
 Clone, create an isolated environment, and install the Lab PRO package:
 
@@ -317,8 +327,9 @@ SERDES_LAB_STATE_FILE=./private-session.json serdes-lab
 
 The read-only [health endpoint](http://localhost:8640/api/health) reports the
 service/package version, API version, acquisition state, active experiment,
-and persistence health without disclosing the local state-file path. The
-macOS launcher waits for this endpoint instead of relying on a fixed delay.
+persistence health, and actual SCPI readiness without disclosing the local
+state-file path. The macOS launcher waits for this endpoint instead of relying
+on a fixed delay.
 
 ## Using the workbench
 
@@ -406,10 +417,11 @@ CEI-56G/112G/224G; and P802.3dj contexts. They are not certification presets.
 
 ## Persistence and coherence
 
-- <code>LinkConfig</code> is an immutable dataclass with 123 serializable
+- <code>LinkConfig</code> is an immutable dataclass with 136 serializable
   fields.
-- The server saves configuration, preset, chamber state, and RUN state in the
-  laboratory session file.
+- The server atomically saves configuration, the active standards profile,
+  and chamber settings in the laboratory session file. Acquisition always
+  follows the explicit startup flag instead of silently resuming RUN.
 - The browser saves layout, language, active tab, and plot camera locally.
 - Every response carries configuration version/hash and record identity.
 - Long-running workers are tied to the version that started them.
@@ -427,6 +439,7 @@ automation:
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
+| <code>/api/health</code> | GET | Package/API version, persistence, acquisition, experiment, and SCPI readiness |
 | <code>/api/state</code> | GET | Configuration, presets, language metadata, RUN state |
 | <code>/api/config</code> | POST | Atomic patch of LinkConfig fields |
 | <code>/api/config/export</code> | GET | Versioned configuration export |
@@ -434,6 +447,7 @@ automation:
 | <code>/api/preset</code> | POST | Load an educational or standard profile |
 | <code>/api/run</code> | POST | Start or stop acquisition |
 | <code>/api/reset</code> | POST | Reset bench state |
+| <code>/api/chamber</code> | POST | Validated climate-chamber cycle, ramp, or soak settings |
 | <code>/api/s2p</code> | POST | Validate and apply Touchstone text |
 | <code>/api/panel/&lt;name&gt;</code> | GET | Build a panel payload |
 | <code>/api/experiment/&lt;name&gt;</code> | POST | Sweep, training, JTOL, traffic, ONT, stressed-eye and procedures |
@@ -512,7 +526,7 @@ simulatore/
 │   ├── PANELS.md            complete 32-instrument reference
 │   ├── QUICK_DEMO.md        guided three-minute product tour
 │   ├── VALIDATION.md        verified claims and test evidence
-│   └── media/               seven real-UI animated tours
+│   └── media/               seven real-UI GIFs and eight feature screenshots
 ├── app/                     frozen legacy Streamlit interface
 ├── CONTRIBUTING.md          development and pull-request workflow
 ├── ROADMAP.md               planned product evolution
@@ -536,7 +550,7 @@ This also makes <code>python -m build --no-isolation</code> valid after the
 development install; without that extra, prefer the isolated command shown
 above so the build frontend can provision <code>setuptools&gt;=77</code>.
 
-Current validated state: **494/494 tests pass**, physical self-test
+Current validated state: **502/502 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -640,8 +654,8 @@ process. Symlinks that resolve outside that directory are ignored.
   a block budget plus the measured analog delay.
 - The SCPI server mirrors instrument mnemonics without their full grammars
   and is unauthenticated on the loopback interface.
-- Traffic is one serial lane without switch, queues or congestion; no header
-  modifiers, payload timestamps, RFC 2544 or Y.1564.
+- Traffic is one serial lane without a switch, queues or congestion; there
+  are no header modifiers or payload-timestamp latency measurements.
 - RIN at the source and the receiver noise-current model are alternatives
   selected by a declared flag; the frozen baseline keeps the receiver model.
 - IBIS-AMI behavior depends on each vendor library and contract.

@@ -14,7 +14,7 @@ lab.timeout = 120000                          # procedures block until they fini
 
 print(lab.query("*IDN?"))                     # SerDes Optical Lab PRO,LabPro,LABPRO-1,0.2.0
 lab.write('CONFigure:PROFile "IEEE 802.3bs — 400GBASE-DR4 · 100G/λ ottico 500 m"')
-lab.write("SOURce:PATTern:TYPE SSPRQ; ACQuire:RUN")
+lab.write("SOURce:PATTern:TYPE SSPRQ; ACQuire:SINGle")
 print(lab.query("MEASure:EYE:TDEQ? OPTICAL"))  # TDECQ at the optical plane, dB
 print(lab.query('CALCulate:DATA:EALarm? "CURRent:ER:TOTal"'))
 lab.write("TRAFfic:ENABle ON; TRAFfic:WORKload ai_training")
@@ -38,6 +38,11 @@ returns when it has finished, so `*OPC?` always answers `1`. Errors are
 queued (`SYSTem:ERRor?` returns `code,"message"`); a failed query sends no
 response, as on a real instrument, so set a client timeout. Structured
 answers are one-line JSON. `SYSTem:HELP?` lists every command.
+
+`ACQuire:SINGle` waits for one fresh simulation record and then restores the
+previous RUN/STOP state. Long SCPI procedures use the same single-flight lock
+and cancellation token as the web API, so an HTTP and a SCPI experiment
+cannot silently run over each other.
 
 ## Command tree
 

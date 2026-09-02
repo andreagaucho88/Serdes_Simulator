@@ -41,6 +41,11 @@ DR4_PROFILE_NAME = "IEEE 802.3bs — 400GBASE-DR4 · 100G/λ ottico 500 m"
 
 
 def validate_dataset(d) -> list[str]:
+    def finite_number(value) -> bool:
+        return (isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value)))
+
     problems = []
     if not isinstance(d, dict):
         return ["il dataset deve essere un oggetto JSON"]
@@ -55,22 +60,57 @@ def validate_dataset(d) -> list[str]:
     except (TypeError, ValueError):
         problems.append("symbol_rate_hz mancante o non numerico")
     sps = d.get("samples_per_ui")
-    if not isinstance(sps, int) or not 4 <= sps <= 64:
+    if type(sps) is not int or not 4 <= sps <= 64:
         problems.append("samples_per_ui deve essere un intero in [4, 64]")
+    modulation = d.get("modulation", "PAM4")
+    mapping = d.get("mapping", "gray")
+    if modulation != "PAM4" or mapping not in ("gray", "binary"):
+        problems.append("modulation/mapping deve essere PAM4 gray o binary")
     sym = d.get("symbols")
     wave = d.get("waveform_w")
     if not isinstance(sym, list) or len(sym) < 512:
         problems.append("symbols: servono almeno 512 simboli")
     if not isinstance(wave, list) or len(wave) < 512 * 4:
         problems.append("waveform_w: servono almeno 512 UI di campioni")
-    if isinstance(sym, list) and isinstance(wave, list) and isinstance(sps, int):
+    if isinstance(sym, list):
+        if any(type(v) is not int or v < 0 or v > 3 for v in sym):
+            problems.append("symbols deve contenere indici di livello 0..3")
+    if isinstance(wave, list):
+        if any(not finite_number(v) or float(v) < 0.0 for v in wave):
+            problems.append("waveform_w deve contenere potenze finite e non negative")
+    if (isinstance(sym, list) and isinstance(wave, list)
+            and type(sps) is int):
         if len(wave) != len(sym) * sps:
             problems.append("waveform_w deve avere len(symbols) × samples_per_ui campioni")
-        if any((not isinstance(v, int)) or v < 0 or v > 3 for v in sym[:64]):
-            problems.append("symbols deve contenere indici di livello 0..3")
     ref = d.get("reference")
-    if not isinstance(ref, dict) or not any(k in ref for k in ("tdecq_db", "oma_outer_dbm", "er_db")):
-        problems.append("reference deve contenere almeno tdecq_db, oma_outer_dbm o er_db")
+    metrics = ("tdecq_db", "oma_outer_dbm", "er_db")
+    rng = ref.get("tdecq_range_db") if isinstance(ref, dict) else None
+    valid_rng = (isinstance(rng, (list, tuple)) and len(rng) == 2
+                 and all(finite_number(v) for v in rng)
+                 and float(rng[0]) <= float(rng[1]))
+    if (not isinstance(ref, dict)
+            or not (valid_rng or any(finite_number(ref.get(k)) for k in metrics))):
+        problems.append("reference deve contenere almeno tdecq_db, tdecq_range_db, "
+                        "oma_outer_dbm o er_db")
+    if isinstance(ref, dict):
+        for key in metrics:
+            if key in ref and ref[key] is not None and not finite_number(ref[key]):
+                problems.append(f"reference.{key} deve essere finito")
+        tol = ref.get("tolerance_db", DEFAULT_TOLERANCE_DB)
+        if not finite_number(tol) or not 0.0 < float(tol) <= 20.0:
+            problems.append("reference.tolerance_db deve essere in (0, 20]")
+        if rng is not None and not valid_rng:
+            problems.append("reference.tdecq_range_db deve essere [min, max] finito")
+        bw = ref.get("rx_bw_fraction")
+        if bw is not None and (not finite_number(bw)
+                               or not 0.05 <= float(bw) <= 1.0):
+            problems.append("reference.rx_bw_fraction deve essere in [0.05, 1.0]")
+    sigma_s = d.get("sigma_s_w", 0.0)
+    if sigma_s is not None and (not finite_number(sigma_s)
+                                or float(sigma_s) < 0.0):
+        problems.append("sigma_s_w deve essere finito e non negativo")
+    if d.get("optimize", "min_tdecq") not in ("mmse", "min_tdecq"):
+        problems.append("optimize deve essere mmse o min_tdecq")
     return problems
 
 
@@ -530,7 +570,7 @@ def load_library_dataset(library: str, waveform_id: str) -> dict:
     w = next((x for x in lib["waveforms"] if x["id"] == waveform_id), None)
     if w is None:
         raise KeyError(f"waveform {waveform_id!r} non presente in {library!r}")
-    npz = np.load(lib_dir / w["file"])
+    npz = np.load(lib_dir / w["file"], allow_pickle=False)
     P = np.asarray(npz["waveform_w"], dtype=float)
     sps = int(lib["samples_per_ui"])
     n_sym = len(P) // sps

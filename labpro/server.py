@@ -21,7 +21,6 @@ import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -41,7 +40,7 @@ from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                rx_sensitivity_search, stressed_eye_calibrate,
                                traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e, run_stressed_receiver  # noqa: E402
-from labpro import scpi  # noqa: E402
+from labpro import __version__ as LABPRO_VERSION, scpi  # noqa: E402
 from serdes_sim.instrument_procedures import (bert_pam4_result,  # noqa: E402
                                               rfc2544_report, y1564_report)
 from serdes_sim.golden import (correlate_golden, correlate_library,  # noqa: E402
@@ -88,7 +87,8 @@ LAST_GOLDEN = {"result": None, "dataset_meta": None}
 LAST_GOLDEN_LIBRARY = {"report": None}
 LAST_RFC2544 = {"report": None}
 LAST_FIXTURE = {"sparams": None, "meta": None}
-SCPI_SETTINGS = {"enabled": True, "port": scpi.DEFAULT_PORT}
+SCPI_SETTINGS = {"enabled": True, "port": scpi.DEFAULT_PORT,
+                 "status": "starting"}
 LAST_Y1564 = {"report": None}
 LAST_STRESSED = {"report": None}
 CLIENTS: set = set()
@@ -103,6 +103,8 @@ CHAMBER_KEYS = ("on", "mode", "t_min", "t_max", "period_s", "tau_s")
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
 MAX_TOUCHSTONE_TEXT_BYTES = 8 * 1024 * 1024
+MAX_FLEXDCA_TEXT_BYTES = 15 * 1024 * 1024
+MAX_SESSION_FILE_BYTES = 64 * 1024 * 1024
 HTTP_ERROR_MESSAGES = {
     400: "Bad request",
     403: "Request rejected by the local security policy",
@@ -210,6 +212,57 @@ def as_number(value, name, lo=None, hi=None, integer=False, default=None):
     return v
 
 
+def parse_session_version(value) -> int:
+    """Accept integer JSON/string versions, never truncate fractional ones."""
+    if isinstance(value, bool):
+        raise ValueError("session version must be an integer")
+    try:
+        numeric = float(value)
+        parsed = int(numeric)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("session version must be an integer") from None
+    if not math.isfinite(numeric) or numeric != parsed:
+        raise ValueError("session version must be an integer")
+    return parsed
+
+
+def normalized_chamber(updates, current=None) -> dict:
+    """Validate and merge chamber settings before mutating the LiveBench."""
+    if not isinstance(updates, dict):
+        raise BadParam("chamber deve essere un oggetto JSON",
+                       "chamber must be a JSON object")
+    unknown = sorted(set(updates) - set(CHAMBER_KEYS))
+    if unknown:
+        fields = ", ".join(unknown)
+        raise BadParam(f"campi chamber sconosciuti: {fields}",
+                       f"unknown chamber fields: {fields}")
+    out = dict(current or BENCH.chamber_settings())
+    if "on" in updates:
+        if not isinstance(updates["on"], bool):
+            raise BadParam("chamber.on deve essere booleano",
+                           "chamber.on must be a boolean")
+        out["on"] = updates["on"]
+    if "mode" in updates:
+        mode = updates["mode"]
+        if mode not in {"cycle", "ramp", "soak"}:
+            raise BadParam("chamber.mode deve essere cycle, ramp o soak",
+                           "chamber.mode must be cycle, ramp, or soak")
+        out["mode"] = mode
+    ranges = {
+        "t_min": (-40.0, 125.0),
+        "t_max": (-40.0, 125.0),
+        "period_s": (10.0, 86400.0),
+        "tau_s": (1.0, 86400.0),
+    }
+    for name, (lo, hi) in ranges.items():
+        if name in updates:
+            out[name] = as_number(updates[name], f"chamber.{name}", lo, hi)
+    if out["t_min"] > out["t_max"]:
+        raise BadParam("chamber.t_min deve essere <= chamber.t_max",
+                       "chamber.t_min must be <= chamber.t_max")
+    return out
+
+
 def persistence_status() -> dict:
     """Public persistence state without exposing the user's filesystem path."""
     if PERSIST is None:
@@ -234,22 +287,27 @@ def load_persisted():
     if not source.exists():
         return False
     try:
-        d = json.loads(source.read_text(encoding="utf-8"))
+        if source.stat().st_size > MAX_SESSION_FILE_BYTES:
+            raise ValueError("session payload exceeds 64 MiB")
+        d = json.loads(source.read_text(encoding="utf-8"),
+                       parse_constant=_reject_json_constant)
         if not isinstance(d, dict) or not isinstance(d.get("cfg", {}), dict):
             raise ValueError("session payload must be a JSON object")
-        if int(d.get("version", SESSION_VERSION)) != SESSION_VERSION:
+        if parse_session_version(d.get("version", SESSION_VERSION)) != SESSION_VERSION:
             raise ValueError("unsupported session version")
         cfg, dropped = config_from_dict(d.get("cfg", {}))
         problems = cfg.validate()
         if problems:
             raise ValueError("persisted config invalid: " + "; ".join(problems))
+        chamber = (normalized_chamber(d["chamber"])
+                   if "chamber" in d else BENCH.chamber_settings())
+        profile = (d.get("profile")
+                   if d.get("profile") in STANDARD_PROFILES else None)
+        # Commit only after every section has been validated. A corrupt
+        # chamber must not partially restore config/profile.
         BENCH.set_config(cfg)
-        PROFILE["name"] = (d.get("profile")
-                           if d.get("profile") in STANDARD_PROFILES else None)
-        chamber = d.get("chamber")
-        if isinstance(chamber, dict):
-            BENCH.set_chamber(**{k: v for k, v in chamber.items()
-                                 if k in CHAMBER_KEYS})
+        BENCH.set_chamber(**chamber)
+        PROFILE["name"] = profile
         if dropped:
             log.warning("sessione ripristinata ignorando campi non più esistenti: %s",
                         ", ".join(dropped))
@@ -521,26 +579,23 @@ class Index(Base):
         self.write((STATIC_DIR / "index.html").read_text())
 
 
-def _package_version() -> str:
-    try:
-        return distribution_version("serdes-optical-lab")
-    except PackageNotFoundError:
-        return "development"
-
-
 class ApiHealth(Base):
     """Cheap readiness/support endpoint; never starts a simulation."""
 
     def get(self):
         persistence = persistence_status()
+        scpi_state = {k: SCPI_SETTINGS[k] for k in ("status", "port")}
+        degraded = (persistence["status"] == "error"
+                    or SCPI_SETTINGS["status"] == "error")
         self.write_json({
-            "status": "degraded" if persistence["status"] == "error" else "ok",
+            "status": "degraded" if degraded else "ok",
             "service": "serdes-optical-lab-pro",
-            "version": _package_version(),
+            "version": LABPRO_VERSION,
             "api_version": 1,
             "running": BENCH.running,
             "experiment": EXPERIMENT.current,
             "persistence": persistence,
+            "scpi": scpi_state,
         })
 
 
@@ -642,7 +697,19 @@ class ApiJtol(Base):
 
 class ApiConfig(Base):
     def post(self):
-        updates = self.body_json().get("updates", {})
+        body = self.body_json()
+        if "updates" in body:
+            if set(body) != {"updates"}:
+                return self.write_bad(
+                    "payload ambiguo: usare campi diretti oppure solo 'updates'",
+                    "ambiguous payload: use direct fields or only 'updates'")
+            updates = body["updates"]
+        else:
+            updates = body
+        if not isinstance(updates, dict):
+            return self.write_bad("updates deve essere un oggetto JSON",
+                                  "updates must be a JSON object")
+        updates = dict(updates)
         cfg = BENCH.cfg
         try:
             if "tx_ffe_taps" in updates:
@@ -651,7 +718,7 @@ class ApiConfig(Base):
                 if name in updates:
                     updates[name] = tuple(float(v) for v in updates[name])
             new = cfg.with_updates(**updates)
-        except TypeError:
+        except (TypeError, ValueError):
             return self.write_bad("campo sconosciuto o valore non valido",
                                   "unknown field or invalid value")
         try:
@@ -697,11 +764,16 @@ class ApiConfigImport(Base):
         file_version = body.get("version")
         if file_version is not None:
             try:
-                if int(file_version) > SESSION_VERSION:
+                file_version = parse_session_version(file_version)
+                if file_version > SESSION_VERSION:
                     return self.write_bad(
                         f"file di versione {file_version}: più recente di questo LabPro ({SESSION_VERSION})",
                         f"file version {file_version}: newer than this LabPro ({SESSION_VERSION})")
-            except (TypeError, ValueError):
+                if file_version != SESSION_VERSION:
+                    return self.write_bad(
+                        f"file di versione {file_version}: non supportato",
+                        f"file version {file_version}: unsupported")
+            except ValueError:
                 return self.write_bad("campo version non valido", "invalid version field")
         try:
             new, dropped = config_from_dict(cfg_d)
@@ -713,13 +785,21 @@ class ApiConfigImport(Base):
             problems = ["valore di tipo non valido"]
         if problems:
             return self.write_bad("; ".join(problems), "; ".join(problems))
+        try:
+            chamber = (normalized_chamber(body["chamber"])
+                       if "chamber" in body else BENCH.chamber_settings())
+        except BadParam as exc:
+            return self.write_bad(exc.it, exc.en)
+        raw_profile = body.get("profile")
+        if raw_profile is not None and raw_profile not in STANDARD_PROFILES:
+            return self.write_bad("profilo standard sconosciuto",
+                                  "unknown standards profile")
+        profile = raw_profile
+        # Transactional commit: cfg/profile/chamber change together only
+        # after all imported sections have passed validation.
         BENCH.set_config(new)
-        PROFILE["name"] = (body.get("profile")
-                           if body.get("profile") in STANDARD_PROFILES else None)
-        chamber = body.get("chamber")
-        if isinstance(chamber, dict):
-            BENCH.set_chamber(**{k: v for k, v in chamber.items()
-                                 if k in CHAMBER_KEYS})
+        BENCH.set_chamber(**chamber)
+        PROFILE["name"] = profile
         persist()
         broadcast({"type": "config", "cfg": public_cfg(new),
                    "profile": profile_state()})
@@ -894,12 +974,11 @@ class ApiDisrupt(Base):
 
 class ApiChamber(Base):
     def post(self):
-        body = self.body_json()
-        BENCH.set_chamber(**{k: v for k, v in body.items()
-                             if k in CHAMBER_KEYS})
+        chamber = normalized_chamber(self.body_json())
+        BENCH.set_chamber(**chamber)
         persist()   # la camera sopravvive al riavvio, come la config
         broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
-        self.write_json({"ok": True, "chamber": BENCH.chamber})
+        self.write_json({"ok": True, "chamber": BENCH.chamber_settings()})
 
 
 class ApiInject(Base):
@@ -1064,14 +1143,19 @@ class ApiGolden(Base):
             try:
                 dataset = await loop.run_in_executor(
                     REF_POOL, load_library_dataset, lib, wid)
-            except (KeyError, FileNotFoundError) as exc:
-                return self.write_bad(f"libreria golden: {exc}", f"golden library: {exc}")
+            except (KeyError, FileNotFoundError):
+                log.info("Golden library selection rejected", exc_info=True)
+                return self.write_bad("libreria o waveform golden non disponibile",
+                                      "golden library or waveform unavailable")
         elif body.get("flexdca_csv"):
             # export FlexDCA (WaveformXYValues / WaveformPattern) + riferimenti
             text = body.get("flexdca_csv")
-            if not isinstance(text, str) or len(text) > 64 * 1024 * 1024:
-                return self.write_bad("flexdca_csv deve essere testo (< 64 MB)",
-                                      "flexdca_csv must be text (< 64 MB)")
+            if not isinstance(text, str):
+                return self.write_bad("flexdca_csv deve essere testo",
+                                      "flexdca_csv must be text")
+            if len(text.encode("utf-8")) > MAX_FLEXDCA_TEXT_BYTES:
+                self.set_status(413)
+                return self.write_json({"error": "FlexDCA CSV upload exceeds 15 MiB"})
             rate = (as_number(body.get("symbol_rate_hz"), "symbol_rate_hz", 1e9, 400e9)
                     if body.get("symbol_rate_hz") is not None else None)
             reference = body.get("reference") if isinstance(body.get("reference"), dict) else {}
@@ -1426,8 +1510,9 @@ class ApiScopeFixture(Base):
             name = fx["id"]
         elif isinstance(body.get("text"), str):
             text = body["text"]
-            if len(text) > 32 * 1024 * 1024:
-                return self.write_bad("Touchstone troppo grande (> 32 MB)", "Touchstone too large (> 32 MB)")
+            if len(text.encode("utf-8")) > MAX_TOUCHSTONE_TEXT_BYTES:
+                self.set_status(413)
+                return self.write_json({"error": "Touchstone upload exceeds 8 MiB"})
             name = str(body.get("name") or "upload")
         else:
             return self.write_bad("serve 'text' (Touchstone) o 'bundled'", "need 'text' (Touchstone) or 'bundled'")
@@ -1625,21 +1710,33 @@ def make_app():
 
 def _serve_until_stopped(loop, bench):
     """Esegue il loop e chiude il LiveBench anche su SIGINT da terminale."""
+    scpi_server = {"value": None}
     try:
         if SCPI_SETTINGS["enabled"] and callable(getattr(loop, "add_callback", None)):
+            SCPI_SETTINGS["status"] = "starting"
+
             async def _start_scpi():
                 port = SCPI_SETTINGS["port"]
                 try:
-                    await scpi.start_server(ScpiContext(), "127.0.0.1", port)
+                    scpi_server["value"] = await scpi.start_server(
+                        ScpiContext(), "127.0.0.1", port)
+                    SCPI_SETTINGS["status"] = "ready"
                     print(f"SCPI server on 127.0.0.1:{port} "
                           f"(PyVISA: TCPIP::127.0.0.1::{port}::SOCKET)", flush=True)
                 except OSError as exc:
+                    SCPI_SETTINGS["status"] = "error"
                     print(f"SCPI server not started: {exc}", flush=True)
             loop.add_callback(_start_scpi)
+        elif not SCPI_SETTINGS["enabled"]:
+            SCPI_SETTINGS["status"] = "disabled"
         loop.start()
     except KeyboardInterrupt:
         print("\nSerDes Optical Lab Pro arrestato.")
     finally:
+        if scpi_server["value"] is not None:
+            scpi_server["value"].close()
+        if SCPI_SETTINGS["status"] != "error" and SCPI_SETTINGS["enabled"]:
+            SCPI_SETTINGS["status"] = "stopped"
         bench.stop()
 
 
@@ -1732,11 +1829,11 @@ class ScpiContext:
         broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg), "profile": profile_state()})
 
     # --- acquisizione --------------------------------------------------------
-    def run(self, on):
+    async def run(self, on):
         if on:
             BENCH.start()
         else:
-            BENCH.stop()
+            await tornado.ioloop.IOLoop.current().run_in_executor(None, BENCH.stop)
         broadcast({"type": "run", "running": BENCH.running})
 
     def running(self):
@@ -1752,8 +1849,22 @@ class ScpiContext:
         return self._offload(lambda: self._single())
 
     def _single(self):
-        cfg, sim, records, _ = BENCH.capture()
-        return int(records or 0)
+        _, _, before, was_running = BENCH.capture()
+        if not was_running:
+            BENCH.start()
+        try:
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                _, sim, records, running = BENCH.capture()
+                if sim is not None and records > before:
+                    return int(records)
+                if not running:
+                    break
+                time.sleep(0.02)
+        finally:
+            if not was_running:
+                BENCH.stop()
+        raise scpi.ScpiError(-230, "Data corrupt or stale; acquisition failed")
 
     def _sim(self):
         cfg, sim, records, _ = BENCH.capture()
@@ -1866,27 +1977,42 @@ class ScpiContext:
     async def experiment(self, name, arg):
         cfg = BENCH.cfg
         profile = PROFILE["name"]
+        evt = EXPERIMENT.begin(f"SCPI {name}")
+        if evt is None:
+            raise scpi.ScpiError(
+                -221, f"Settings conflict; experiment already running: {EXPERIMENT.current}")
         if name == "rfc2544":
-            fn = lambda: rfc2544_report(cfg, frame_sizes=arg or (64, 256, 512, 1024), profile=profile)  # noqa: E731
+            fn = lambda: rfc2544_report(  # noqa: E731
+                cfg, frame_sizes=arg or (64, 256, 512, 1024),
+                profile=profile, cancel=evt)
         elif name == "y1564":
-            fn = lambda: y1564_report(cfg, profile=profile)  # noqa: E731
+            fn = lambda: y1564_report(cfg, profile=profile, cancel=evt)  # noqa: E731
         elif name == "dr4":
-            fn = lambda: run_dr4_tdecq_e2e(seed=int(arg or 500283), golden=LAST_GOLDEN["result"])  # noqa: E731
+            fn = lambda: run_dr4_tdecq_e2e(  # noqa: E731
+                seed=int(arg or 500283), golden=LAST_GOLDEN["result"], cancel=evt)
         elif name == "stressed_rx":
             fn = lambda: run_stressed_receiver(cfg, profile=profile,  # noqa: E731
-                                               target_secq_db=(float(arg) if arg is not None else None))
+                                               target_secq_db=(float(arg) if arg is not None else None),
+                                               cancel=evt)
         elif name == "golden_library":
-            fn = lambda: correlate_library("ieee_802_3bs_smf_2017", optimize=str(arg or "min_tdecq"))  # noqa: E731
+            fn = lambda: correlate_library(  # noqa: E731
+                "ieee_802_3bs_smf_2017", optimize=str(arg or "min_tdecq"), cancel=evt)
         else:
+            EXPERIMENT.end()
             raise scpi.ScpiError(-224, f"Illegal parameter value; {name}")
         was_running = BENCH.running
-        if was_running:
-            await tornado.ioloop.IOLoop.current().run_in_executor(None, BENCH.stop)
+        broadcast({"type": "experiment", "name": f"SCPI {name}", "state": "start"})
         try:
+            if was_running:
+                await tornado.ioloop.IOLoop.current().run_in_executor(None, BENCH.stop)
             report = await tornado.ioloop.IOLoop.current().run_in_executor(EXPERIMENT_POOL, fn)
+        except ExperimentCancelled as exc:
+            raise scpi.ScpiError(-200, "Execution error; experiment cancelled") from exc
         finally:
+            EXPERIMENT.end()
             if was_running:
                 BENCH.start()
+            broadcast({"type": "experiment", "name": f"SCPI {name}", "state": "end"})
         store = {"rfc2544": LAST_RFC2544, "y1564": LAST_Y1564, "stressed_rx": LAST_STRESSED,
                  "golden_library": LAST_GOLDEN_LIBRARY}
         if name in store:
@@ -1951,6 +2077,7 @@ def main():
         parser.error("--scpi-port must be between 1 and 65535")
     SCPI_SETTINGS["enabled"] = not args.no_scpi
     SCPI_SETTINGS["port"] = args.scpi_port
+    SCPI_SETTINGS["status"] = "disabled" if args.no_scpi else "starting"
     if args.no_persist:
         PERSIST = None
     elif args.state_file is not None:

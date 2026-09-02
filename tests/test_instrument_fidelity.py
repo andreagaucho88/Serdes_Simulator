@@ -253,6 +253,18 @@ def test_golden_correlation_verdicts_and_validation():
     probs = validate_dataset(broken)
     assert any("schema" in p for p in probs) and any("symbols" in p for p in probs)
     assert correlate_golden({"schema": "x"})["ok"] is False
+    # Validation covers the complete payload, not only a short prefix.
+    late_bad_symbol = dict(ds, symbols=list(ds["symbols"]))
+    late_bad_symbol["symbols"][-1] = 4
+    assert any("0..3" in p for p in validate_dataset(late_bad_symbol))
+    assert correlate_golden(late_bad_symbol)["ok"] is False
+    bad_wave = dict(ds, waveform_w=list(ds["waveform_w"]))
+    bad_wave["waveform_w"][-1] = float("nan")
+    assert any("finite" in p for p in validate_dataset(bad_wave))
+    bad_ref = dict(ds, reference={"tdecq_db": 3.0, "tolerance_db": -0.1})
+    assert any("tolerance" in p for p in validate_dataset(bad_ref))
+    bad_opt = dict(ds, optimize="not-an-equalizer")
+    assert any("optimize" in p for p in validate_dataset(bad_opt))
 
 
 # ---------------------------------------------------------------- stressed RX

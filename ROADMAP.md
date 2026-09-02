@@ -1,6 +1,6 @@
 # Public roadmap
 
-## 0.1.x — release hardening
+## 0.2.0 — released foundation
 
 - [x] Installable package and <code>serdes-lab</code> CLI
 - [x] Reproducible CI and package build
@@ -13,7 +13,7 @@
 - [x] PyPI trusted publishing (`pipx install serdes-optical-lab`)
 - [ ] Automated accessibility and browser-performance checks
 
-## 0.2 — comparison and reporting
+## Next — comparison and reporting
 
 - Side-by-side A/B configurations with a shared seed
 - Exportable HTML/PDF experiment report (JSON/Markdown compliance report shipped)

@@ -2,7 +2,24 @@
 
 All notable public changes are documented here.
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-09-02
+
+- Completed a release-hardening review across HTTP, persistence, SCPI,
+  golden-data validation, packaging, CI, and public documentation. Session and
+  config imports now validate configuration/profile/chamber atomically;
+  chamber types, modes, ranges, ordering, and unknown fields return structured
+  400 errors without partial mutation.
+- Aligned request limits with the 16 MiB server envelope (8 MiB Touchstone,
+  15 MiB FlexDCA CSV), validate sizes in UTF-8 bytes, bound restored session
+  files, reject non-finite golden arrays and references across the complete
+  payload, and load bundled NPZ data with pickle disabled.
+- Fixed the documented flat `/api/config` patch contract while preserving the
+  legacy `{ "updates": ... }` form. SCPI `ACQuire:SINGle` now acquires a fresh
+  record, HTTP and SCPI share the experiment lock/cancel token, and health
+  reports actual SCPI readiness.
+- Expanded the public gate to 502 tests, added Linux/macOS/Windows package
+  smoke jobs, and made tagged releases fail before publishing when the Git tag
+  and package version disagree.
 
 - Golden-instrument correlation with real data: the six 53.125 GBd PAM4
   optical waveforms of the IEEE P802.3bs SMF ad hoc contribution (Cisco TX,

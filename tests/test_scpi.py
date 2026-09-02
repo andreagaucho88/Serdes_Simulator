@@ -144,21 +144,52 @@ def test_real_context_config_and_measurements_without_running_bench():
     """ScpiContext vero sopra il banco fermo: configurazione e misure
     sull'ultimo record acquisito on demand."""
     from labpro import server
+    cfg_before = server.BENCH.cfg
+    profile_before = server.PROFILE["name"]
+    persist_before = server.PERSIST
+    running_before = server.BENCH.running
+    server.BENCH.stop()
+    server.PERSIST = None
     ctx = server.ScpiContext()
     d = scpi.build_dispatcher(ctx)
-    assert run(d.execute("*IDN?"))[0].endswith(labpro_version())
-    assert run(d.execute('CONF:PAR "prbs_order", 15; CONF:PAR? "prbs_order"')) == ["15"]
-    assert run(d.execute("SOUR:PATT:PRBS:LENG 13; SOUR:PATT:PRBS:LENG?")) == ["13"]
-    run(d.execute('CONF:PAR "no_such", 1'))
-    assert run(d.execute("SYST:ERR?"))[0].startswith("-222,")
-    names = json.loads(run(d.execute("CONF:PAR:LIST?"))[0])
-    assert "tx_si_amp_pct" in names and "l2_workload" in names
-    assert run(d.execute("SOUR:SI:AMPL 3; SOUR:SI:AMPL?")) == ["3"]
-    run(d.execute("SOUR:SI:AMPL 0"))
-    # una misura DCA richiede un record: il capture on-demand lo produce
-    tdecq = run(d.execute("MEAS:EYE:TDEQ? OPTICAL"))
-    assert tdecq == [] or float(tdecq[0]) > 0 or tdecq[0] == ""
-    assert run(d.execute("SYST:ERR?"))[0] in ('0,"No error"',) or True
+    try:
+        assert run(d.execute("*IDN?"))[0].endswith(labpro_version())
+        assert run(d.execute('CONF:PAR "prbs_order", 15; CONF:PAR? "prbs_order"')) == ["15"]
+        assert run(d.execute("SOUR:PATT:PRBS:LENG 13; SOUR:PATT:PRBS:LENG?")) == ["13"]
+        run(d.execute('CONF:PAR "no_such", 1'))
+        assert run(d.execute("SYST:ERR?"))[0].startswith("-222,")
+        names = json.loads(run(d.execute("CONF:PAR:LIST?"))[0])
+        assert "tx_si_amp_pct" in names and "l2_workload" in names
+        assert run(d.execute("SOUR:SI:AMPL 3; SOUR:SI:AMPL?")) == ["3"]
+        run(d.execute("SOUR:SI:AMPL 0"))
+        # ACQ:SINGLE really produces one fresh record while leaving a
+        # previously stopped bench stopped.
+        assert run(d.execute("ACQ:SING")) == []
+        assert int(run(d.execute("ACQ:REC?"))[0]) >= 1
+        assert server.BENCH.running is False
+        tdecq = run(d.execute("MEAS:EYE:TDEQ? OPTICAL"))
+        assert len(tdecq) == 1 and float(tdecq[0]) > 0
+        assert run(d.execute("SYST:ERR?")) == ['0,"No error"']
+    finally:
+        server.BENCH.stop()
+        server.BENCH.set_config(cfg_before)
+        server.PROFILE["name"] = profile_before
+        server.PERSIST = persist_before
+        if running_before:
+            server.BENCH.start()
+
+
+def test_real_scpi_context_shares_the_global_experiment_lock():
+    from labpro import server
+    ctx = server.ScpiContext()
+    d = scpi.build_dispatcher(ctx)
+    evt = server.EXPERIMENT.begin("HTTP procedure")
+    assert evt is not None
+    try:
+        assert run(d.execute("TRAF:RFC2544:RUN 64")) == []
+        assert run(d.execute("SYST:ERR?"))[0].startswith("-221,")
+    finally:
+        server.EXPERIMENT.end()
 
 
 def labpro_version():
