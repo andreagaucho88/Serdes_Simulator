@@ -167,5 +167,5 @@ def page_realism():
     st.markdown(T.note(
         "Questo è un <b>banco separato</b>: il modello AMI non viene inserito "
         "nel percorso principale della catena. Integrarlo (sostituendo TX FFE + "
-        "driver con il modello vendor) è l'estensione naturale — vedi "
-        "HANDOFF_CODEX.md."), unsafe_allow_html=True)
+        "driver con il modello vendor) è una possibile estensione futura."),
+        unsafe_allow_html=True)

@@ -1463,7 +1463,9 @@ def test_public_text_assets_do_not_embed_local_home_paths():
     offenders = []
     for path in root.rglob("*"):
         if (not path.is_file() or path.suffix.lower() not in text_suffixes
-                or ".git" in path.parts or "__pycache__" in path.parts):
+                or ".git" in path.parts or "__pycache__" in path.parts
+                or path.name in {"CLAUDE.md", "PROMPT_CODEX.md"}
+                or path.name.startswith("HANDOFF_")):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         if any(marker in text for marker in blocked):

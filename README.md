@@ -1,34 +1,98 @@
-# SerDes Optical Lab PRO
+<div align="center">
 
-An interactive bilingual laboratory for studying, measuring, and stressing an
-electrical or electro-optical SerDes chain up to the 224G class.
+<h1>SerDes Optical Lab PRO</h1>
+
+<h3>From bits to eye diagrams, from channel loss to corrected codewords</h3>
+
+<p><strong>A physics-backed virtual instrument bench for exploring complete
+electrical and electro-optical SerDes links up to the 224G class.</strong></p>
+
+<p>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="376 tests passing" src="https://img.shields.io/badge/tests-376%20passing-2EA44F?style=for-the-badge">
+  <img alt="32 instruments" src="https://img.shields.io/badge/instruments-32-00A6D6?style=for-the-badge">
+  <img alt="123 physical controls" src="https://img.shields.io/badge/physical%20controls-123-7B61FF?style=for-the-badge">
+</p>
+
+<p>
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#visual-tour">Visual tour</a> ·
+  <a href="#complete-reference-for-all-32-panels">32-panel reference</a> ·
+  <a href="#local-api">API</a> ·
+  <a href="#verification-and-quality-gates">Verification</a>
+</p>
+
+</div>
+
+<p align="center">
+  <img src="docs/media/00-instruments-hero.gif"
+       alt="DCA eye diagram, live BER, and live FEC instrument tour"
+       width="100%">
+</p>
+
+<p align="center">
+  <em>Persistent DCA eye → synchronized waveform → accumulated BER → in-path
+  KP4/KR4 FEC codeword analysis.</em>
+</p>
+
+---
+
+## Why Lab PRO
+
+Most link simulators stop at a waveform or a final BER number. Lab PRO keeps
+the **whole evidence chain** visible. One versioned record travels from the
+traffic source through TX, channel, optics, receiver, timing recovery, DSP,
+decisions, and FEC. Every instrument observes a declared reference plane from
+that same record.
+
+| | Product capability | What it gives you |
+| --- | --- | --- |
+| 🔭 | **Instrument-style analysis** | Coherent DCA, BERT, TIE, spectrum, BER, FEC, traffic, sweep, and JTOL views |
+| ⚡ | **Live acquisition** | Fresh noise per record, accumulating counters, confidence intervals, and explicit lock state |
+| 🧩 | **One complete datapath** | Electrical, optical, timing, DSP, and coding effects propagate end to end |
+| 🧪 | **Measured-channel support** | Touchstone 1.x/2.x S2P and mixed-mode S4P can replace the analytical channel |
+| 🎓 | **Explainable controls** | 123 bilingual controls document physics, observables, experiments, and model boundaries |
+| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 376 automated tests |
+
+### What you can investigate
+
+- Trace a signal from PRBS or Ethernet frames to pre/post-FEC error counters.
+- Compare up to four coherent DCA reference planes on the same acquisition.
+- Inject RJ, PJ, DCD, BUJ, SSC, differential noise, and targeted bit errors.
+- Move between copper and MZM, EML, DML, or VCSEL optical architectures.
+- Separate sensitivity, overload, bandwidth, timing, equalization, and FEC
+  limitations instead of reducing them to one score.
+- Run parameter sweeps, JTOL-lite, link training, AN/LT, traffic procedures,
+  DR4 analysis, and physics invariants from one workspace.
+
+### One bench, one datapath
 
 ~~~text
-bits / frames → PRBS or Ethernet → TX FEC → NRZ/PAM4 mapper → TX FIR
-→ DAC → P/N driver → S-parameter channel → modulator / fiber
-→ PD → TIA / AFE → AGC → CTLE → ADC → CDR → FSE → DFE
-→ slicer → RX FEC → BER, GMI, L2 traffic, and checkpoints
+PRBS / SSPRQ / Ethernet
+          │
+          ▼
+FEC TX → NRZ/PAM4 → TX FIR → DAC → P/N driver → S-parameter channel
+                                                       │
+                      ┌────────────────────────────────┘
+                      ▼
+              modulator → fiber → PD → TIA/AFE → AGC → CTLE → ADC
+                                                                  │
+                      ┌───────────────────────────────────────────┘
+                      ▼
+              CDR → FSE → DFE → slicer → FEC RX
+                      │                    │
+                      └──── eye / TIE ─────┴── BER / GMI / L2 / FEC
 ~~~
 
-The maintained interface is **Lab PRO** in <code>labpro/</code>: a custom
-Tornado and WebSocket workbench with 32 instrument panels. The numerical
-engine in <code>serdes_sim/</code> is independent from the GUI. The former
-Streamlit interface in <code>app/</code> is preserved as a reference but is
-frozen.
+The maintained application lives in <code>labpro/</code> and uses a custom
+Tornado/WebSocket frontend. The numerical engine in
+<code>serdes_sim/</code> is GUI-independent. The former Streamlit interface
+in <code>app/</code> is preserved as a frozen reference.
 
-> **Scope and validity.** This is a system-level educational framework for
+> **Honest scope.** Lab PRO is a system-level educational framework for
 > learning, debugging, and sensitivity analysis. IEEE/OIF procedures and
-> profiles explicitly identify their assumptions and unsupported portions.
-> A <code>MODEL PASS/FAIL</code> result is never presented as certified
-> compliance.
-
-## Instrument hero: DCA eye, live BER, and live FEC
-
-![DCA eye diagram, live BER, and live FEC tour](docs/media/00-instruments-hero.gif)
-
-This short tour puts the most instrument-like views first: a persistent DCA
-eye, accumulated BER with confidence information, and real in-path FEC
-codeword counters.
+> profiles identify assumptions and unsupported portions explicitly.
+> <code>MODEL PASS/FAIL</code> is never presented as certified compliance.
 
 ## Visual tour
 
@@ -615,9 +679,7 @@ simulatore/
 ├── tools/
 │   └── capture_readme_gifs.py
 ├── docs/media/              seven real-UI animated tours
-├── app/                     frozen legacy Streamlit interface
-├── HANDOFF_CODEX.md         iteration-by-iteration engineering log
-└── PROMPT_CODEX.md          maintenance state and invariants
+└── app/                     frozen legacy Streamlit interface
 ~~~
 
 ## Verification and quality gates
@@ -632,7 +694,7 @@ python -m compileall -q serdes_sim labpro
 git diff --check
 ~~~
 
-Validated state after iteration 38: **376/376 tests pass**, physical self-test
+Current validated state: **376/376 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -720,8 +782,8 @@ available in its standard cache. The script emits an explicit error if
 - IBIS-AMI behavior depends on each vendor library and contract.
 - The Streamlit UI is legacy and receives no new features.
 
-Roadmap, engineering decisions, and validation history are recorded in
-[HANDOFF_CODEX.md](HANDOFF_CODEX.md).
+Use [GitHub Issues](https://github.com/andreagaucho88/Serdes_Simulator/issues)
+for public bug reports, feature requests, and roadmap discussions.
 
 ## License and intended use
 
