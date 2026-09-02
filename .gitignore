@@ -1,13 +1,15 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
 .DS_Store
 .last_session.json
 .last_session.tmp
 labpro/.labpro_session.json
 labpro/.labpro_session.tmp
-labpro/static/plotly.min.js
-
 # Local agent notes and engineering handoffs (never publish)
 CLAUDE.md
 HANDOFF_*.md

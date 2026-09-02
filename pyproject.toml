@@ -1,14 +1,62 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "serdes-optical-lab"
 version = "0.1.0"
-description = "Simulatore didattico della catena SerDes elettro-ottica 112G PAM4 con banco strumenti web (Lab PRO)"
+description = "Physics-backed virtual instrument bench for electrical and optical SerDes links"
+readme = "README.md"
 requires-python = ">=3.12"
+license = {file = "LICENSE"}
+dependencies = [
+    "numpy==1.26.4",
+    "scipy==1.13.1",
+    "pandas==2.2.3",
+    "tornado==6.4.1",
+    "plotly==5.24.1",
+    "scikit-rf==2.1.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/andreagaucho88/Serdes_Simulator"
+Repository = "https://github.com/andreagaucho88/Serdes_Simulator.git"
+Issues = "https://github.com/andreagaucho88/Serdes_Simulator/issues"
+Changelog = "https://github.com/andreagaucho88/Serdes_Simulator/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "build==1.2.2.post1",
+    "pytest==8.3.5",
+    "ruff==0.6.9",
+]
+legacy = ["streamlit==1.45.0"]
+reference = ["serdespy==1.0"]
+
+[project.scripts]
+serdes-lab = "labpro.server:main"
+
+[tool.setuptools.packages.find]
+include = ["labpro*", "serdes_sim*"]
+
+[tool.setuptools.package-data]
+labpro = ["static/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
-# la suite completa è ~5 min: i marker permettono un giro rapido locale
-# (pytest -m "not slow") mantenendo tutto in CI
+# The complete suite takes about five minutes. Markers enable a fast local run
+# while retaining full coverage in CI: pytest -m "not slow".
 markers = [
     "slow: test che eseguono simulazioni full-depth o procedure lunghe",
 ]

@@ -1,0 +1,31 @@
+# Changelog
+
+All notable public changes are documented here.
+
+## 0.1.0 — 2026-09-02
+
+First public alpha release.
+
+### Product
+
+- 32-panel Lab PRO workbench with grouped, persistent, lazy tabs.
+- Complete electrical/optical SerDes path through TX, channel, optics, RX,
+  ADC, CDR, FSE/DFE, slicer, and in-path KP4/KR4 FEC.
+- Coherent multichannel DCA, BERT, jitter/TIE, spectrum, live BER/FEC,
+  Ethernet traffic, CMIS-lite, sweep, JTOL, training, AN/LT, and DR4 views.
+- 123 bilingual physical controls with contextual help.
+- Seven real-UI animated tours and a product-oriented README.
+
+### Engineering
+
+- Touchstone 1.x/2.x S2P and mixed-mode S4P support.
+- Versioned configuration, cancellable experiment workers, WebSocket live
+  acquisition, and clean shutdown.
+- Installable Python package with the <code>serdes-lab</code> command.
+- 378-test regression suite plus 13-checkpoint physical self-test.
+- MIT license and public contribution/security documentation.
+
+### Boundaries
+
+This release is an educational system-level model. It does not claim
+standards compliance or replace a traceable instrument.

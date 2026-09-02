@@ -1473,6 +1473,49 @@ def test_public_text_assets_do_not_embed_local_home_paths():
     assert not offenders, offenders
 
 
+def test_public_package_metadata_and_cli_contract():
+    """The advertised install path must be encoded in package metadata."""
+    import tomllib
+
+    root = Path(__file__).resolve().parent.parent
+    metadata = tomllib.loads((root / "pyproject.toml").read_text())
+    project = metadata["project"]
+    assert project["requires-python"] == ">=3.12"
+    assert project["license"]["file"] == "LICENSE"
+    assert metadata["project"]["scripts"]["serdes-lab"] == "labpro.server:main"
+    assert metadata["build-system"]["build-backend"] == "setuptools.build_meta"
+    assert "static/fonts/*" in metadata["tool"]["setuptools"]["package-data"]["labpro"]
+    assert {"numpy==1.26.4", "scipy==1.13.1", "tornado==6.4.1",
+            "plotly==5.24.1", "scikit-rf==2.1.0"} <= set(
+                project["dependencies"])
+    assert (root / "LICENSE").read_text().startswith("MIT License")
+    assert "Python 3.10" not in (root / "README.md").read_text()
+
+
+def test_public_markdown_local_links_resolve():
+    """Public documentation must not ship broken relative links."""
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    private = {"CLAUDE.md", "PROMPT_CODEX.md"}
+    markdown = [
+        path for path in root.rglob("*.md")
+        if ".git" not in path.parts
+        and path.name not in private
+        and not path.name.startswith("HANDOFF_")
+    ]
+    broken = []
+    for path in markdown:
+        text = path.read_text(encoding="utf-8")
+        for raw in re.findall(r"!?\[[^\]]*\]\(([^)]+)\)", text):
+            target = raw.strip().strip("<>").split("#", 1)[0]
+            if not target or "://" in target or target.startswith("mailto:"):
+                continue
+            if not (path.parent / target).resolve().exists():
+                broken.append(f"{path.relative_to(root)} -> {raw}")
+    assert not broken, broken
+
+
 def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
     """PPG, serializer/stress ed ED vivono nella sola console BERT, mentre
     il cambio profilo attende un riscontro fisico con BER contata."""

@@ -1,17 +1,22 @@
-# Python 3.12 — versioni PINNATE: la baseline di regressione numerica
+# Reproducible development environment. For ordinary Lab PRO use,
+# install the package with: python -m pip install -e .
+#
+# Python 3.12 — pinned versions preserve the numerical regression baseline.
 # (BER 2.026e-2 ±2%, metriche congelate per seed) dipende da numpy/scipy;
 # un bump non vincolato può spostarla in silenzio. Aggiorna CONSAPEVOLMENTE
 # (esegui suite + selftest e dichiara l'eventuale ricalibrazione nell'handoff).
 numpy==1.26.4
 scipy==1.13.1
 pandas==2.2.3
-streamlit==1.45.0    # UI didattica legacy (porta anche tornado)
-tornado==6.4.1       # server Lab PRO (labpro/)
-plotly==5.24.1       # >=6 non spedisce più package_data/plotly.min.js
+streamlit==1.45.0    # frozen legacy UI
+tornado==6.4.1       # Lab PRO server
+plotly==5.24.1       # >=6 no longer ships package_data/plotly.min.js
 
 # Sviluppo/test
 pytest==8.3.5
+ruff==0.6.9
+build==1.2.2.post1
 
-# Opzionali (pagina canale / riferimenti, non usati dal motore)
+# Optional channel/reference integrations
 scikit-rf==2.1.0
 serdespy==1.0

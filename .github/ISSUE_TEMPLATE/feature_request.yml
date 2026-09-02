@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a focused product or physical-model improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user or engineering outcome, not only the UI element.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: planes
+    attributes:
+      label: Physical planes and observables
+      description: Which upstream/downstream records and metrics should change?
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reference or validation approach
+      description: Public specification, paper, golden vector, or paired experiment.
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Model boundary
+      description: What should remain explicitly unsupported or non-normative?
