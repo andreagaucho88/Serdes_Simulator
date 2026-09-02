@@ -394,12 +394,15 @@ setInterval(() => {
 // restano alla cadenza lenta originale (nessun lavoro inutile)
 let _inflight = 0;
 function throttled(p, ms) {
+  // La workspace a tab mantiene aperti molti strumenti ma soltanto quello
+  // visibile deve acquisire: un tab nascosto non consuma rete/main thread.
+  if (_activePanelId != null && p.id !== _activePanelId) return false;
   const now = Date.now();
   // Cadenza adattiva: con pochi pannelli si segue il record (~0.9 s), con
   // un banco pieno l'intervallo cresce col numero di pannelli — 20 pannelli
   // che rifetchano tutti insieme a 1 Hz saturavano il main thread (pagina
   // inchiodata). Jitter per de-sincronizzare + budget di fetch in volo.
-  const n = S.panels.length;
+  const n = 1;
   if (!p._jit) p._jit = Math.random() * 700;
   const lim = S.running
     ? Math.max(900, Math.min(ms, 900) + Math.max(0, n - 6) * 350) + p._jit
@@ -455,8 +458,9 @@ function _runCfgPass() {
   const now = Date.now(), batch = [];
   for (const p of _cfgDirty) {
     if (!S.panels.includes(p)) { _cfgDirty.delete(p); continue; }
+    if (!p._mounted || p.id !== _activePanelId) { _cfgDirty.delete(p); continue; }
     if (now - (p._cfgLast || 0) < 600) continue;   // resta dirty → passata di coda
-    _cfgDirty.delete(p); p._cfgLast = now; batch.push(p);
+    _cfgDirty.delete(p); p._cfgLast = now; p._needsConfig = false; batch.push(p);
   }
   let i = 0;
   const step = () => {
@@ -474,11 +478,12 @@ function _runCfgPass() {
 function notify(kind) {
   if (kind === "config") {
     for (const p of S.panels) if (p.def.onConfig) {
-      _cfgDirty.add(p);
+      p._needsConfig = true;
+      if (p.id === _activePanelId && p._mounted) _cfgDirty.add(p);
       // Le card mantengono volutamente l'ultimo grafico durante il calcolo,
       // ma ora lo dichiarano come stale invece di farlo passare per il
       // risultato della nuova configurazione.
-      if (p.def.refetch) {
+      if (p.id === _activePanelId && p._mounted && p.def.refetch) {
         p._cfgVersion = (p._cfgVersion || 0) + 1;
         panelLoading(p, true);
       }
@@ -486,10 +491,9 @@ function notify(kind) {
     _scheduleCfgPass();
     return;
   }
-  for (const p of S.panels) {
-    try { if (p.def.onTick) p.def.onTick(p); }
-    catch (e) { console.warn("panel", p.type, e); }
-  }
+  const p = S.panels.find(x => x.id === _activePanelId);
+  if (p && p._mounted) try { if (p.def.onTick) p.def.onTick(p); }
+  catch (e) { console.warn("panel", p.type, e); }
 }
 
 /* ---------------- parametri ---------------- */
@@ -891,7 +895,12 @@ function activeDcaProbes() {
   return out;
 }
 function refreshDcaProbes() {
-  for (const p of S.panels.filter(p => p.type === "chain")) PANEL_DEFS.chain.onConfig(p);
+  for (const p of S.panels.filter(p => p.type === "chain")) {
+    p._needsConfig = true;
+    if (p._mounted && p.id === _activePanelId) {
+      p._needsConfig = false; PANEL_DEFS.chain.onConfig(p);
+    }
+  }
 }
 function nodeSelect(panel, cb, def = "vctle") {
   const sel = CE("select");
@@ -1048,12 +1057,12 @@ function hexToRgb(hex) { return [parseInt(hex.slice(1, 3), 16), parseInt(hex.sli
 PANEL_DEFS.scope = {
   title: "Scope · DCA", size: "s8", multi: true,
   make(p) {
-    p.node = "vctle"; p.persist = 8; p.rate = 12; p.idx = 0; p.count = 0; p.paused = false;
+    p.node = p.initialNode || "vctle"; p.persist = 8; p.rate = 12; p.idx = 0; p.count = 0; p.paused = false;
     p.auxNodes = ["", "", ""]; p.auxData = [];
     p.mode = "densità"; p.cursorUi = null; p.maskOn = false; p.maskW = 30; p.maskH = 40;
     // vista FlexDCA: eye (default) o wave = Oscilloscope mode del N1000A
     p.view = "eye"; p.waveData = null; p.waveSpan = 64; p.waveStart = 100;
-    p.headSel = nodeSelect(p, () => { p.node = p.headSel.value; refreshDcaProbes(); this.refetch(p); });
+    p.headSel = nodeSelect(p, () => { p.node = p.headSel.value; refreshDcaProbes(); this.refetch(p); }, p.node);
     p.body.innerHTML = "";
     p.canvas = CE("canvas", "scope"); p.canvas.width = 1000; p.canvas.height = 380;
     p.body.appendChild(p.canvas);
@@ -1262,6 +1271,7 @@ PANEL_DEFS.scope = {
     };
     const frame = () => {
       if (!p.el.isConnected) return;
+      if (p.id !== _activePanelId) { requestAnimationFrame(frame); return; }
       // 30 fps: il fosforo a 60 fps saturava il main thread (UX: pagina
       // che non risponde); ogni 2° frame basta e avanza per l'occhio umano
       p._f = (p._f || 0) + 1;
@@ -3513,6 +3523,7 @@ PANEL_DEFS.jtol = {
 const GROUPS = [L("PANORAMICA", "OVERVIEW"), L("SORGENTE · TX", "SOURCE · TX"),
   L("CANALE · OTTICA", "CHANNEL · OPTICS"), "RX · DSP",
   L("STRUMENTI · ANALISI LIVE", "INSTRUMENTS · LIVE ANALYSIS")];
+const GROUP_COLORS = [COL.muted, COL.dg, COL.el, COL.op, COL.am];
 // [tipo, nome, dominio, gruppo, ordine nel gruppo]
 const PALETTE = [
   ["chain", L("Catena del segnale", "Signal chain"), null, 0, 0],
@@ -3589,8 +3600,13 @@ let PANEL_SEQ = 0;
 let _layoutPersistence = true;
 let _buildingLayout = false;
 let _layoutGeneration = 0;
+let _activePanelId = null;
+let _dragPanelId = null;
+let _dragGroupId = null;
+let _tabGroups = [];
 const CUSTOM_VIEW = "__custom__";
-const SIZES = ["s4", "s6", "s8", "s12"];
+const WORKSPACE_KEY = "labpro_workspace4";
+const LEGACY_WORKSPACE_KEY = "labpro_workspace3";
 // Compatibilità di navigazione senza card duplicate: Academy, vecchi layout
 // e URL ?panels=stimulus/serpll aprono una vista della SOLA console BERT.
 const PANEL_ALIASES = {
@@ -3600,83 +3616,201 @@ const PANEL_ALIASES = {
   bertproc: { type: "bert", tab: "procedures" },
 };
 
-function groupGrid(gi) {
-  let g = $(`#wb-group-${gi} .wb-grid`);
-  if (!g) {
-    const sec = CE("div", "wb-group");
-    sec.id = `wb-group-${gi}`;
-    sec.innerHTML = `<h2 class="wb-title">${GROUPS[gi]}</h2>`;
-    g = CE("div", "wb-grid");
-    sec.appendChild(g);
-    // inserisci la sezione nella posizione giusta rispetto alle altre
-    const next = [...document.querySelectorAll(".wb-group")]
-      .find(s => +s.id.split("-")[2] > gi);
-    $("#workbench").insertBefore(sec, next || null);
-  }
-  return g;
+function workspacePanel(id) { return S.panels.find(p => p.id === id); }
+function tabGroup(id) { return _tabGroups.find(g => g.id === id); }
+function syncTabGroup(g) {
+  const count = S.panels.filter(p => p.group === g.id).length;
+  g.el.classList.toggle("collapsed", g.collapsed);
+  g.el.classList.toggle("empty", count === 0);
+  g.el.classList.toggle("has-active", S.panels.some(p => p.group === g.id && p.id === _activePanelId));
+  g.label.setAttribute("aria-expanded", g.collapsed ? "false" : "true");
+  g.count.textContent = String(count);
+  // I gruppi vuoti restano drop-target visibili finché esiste almeno un tab:
+  // altrimenti, spostato l'ultimo tab, non ci sarebbe modo di rimetterlo.
+  g.el.hidden = S.panels.length === 0;
 }
-
-function addPanel(type, size) {
-  const alias = PANEL_ALIASES[type];
-  const requestedBertTab = alias ? alias.tab : null;
-  if (alias) type = alias.type;
-  const def = PANEL_DEFS[type]; if (!def) return;
-  const existing = S.panels.filter(p => p.type === type);
-  // i pannelli "multi" (Scope) possono avere più istanze: canale A/B per
-  // confrontare due nodi fianco a fianco
-  if (existing.length && !def.multi) {
-    if (requestedBertTab && def.showTab) def.showTab(existing[0], requestedBertTab);
-    existing[0].el.scrollIntoView({ behavior: "smooth", block: "center" });
-    flash(existing[0].el); return existing[0];
+function moveGroupToIndex(g, target) {
+  const from = _tabGroups.indexOf(g); if (from < 0) return;
+  target = Math.max(0, Math.min(target, _tabGroups.length - 1));
+  if (from === target) return;
+  _tabGroups.splice(from, 1); _tabGroups.splice(target, 0, g);
+  syncPanelOrder(); saveLayout();
+}
+function moveGroupRelative(g, targetGroup, before) {
+  const from = _tabGroups.indexOf(g), target = _tabGroups.indexOf(targetGroup);
+  if (from < 0 || target < 0 || g === targetGroup) return;
+  let insert = target + (before ? 0 : 1);
+  _tabGroups.splice(from, 1); if (from < insert) insert--;
+  _tabGroups.splice(Math.max(0, Math.min(insert, _tabGroups.length)), 0, g);
+  syncPanelOrder(); saveLayout();
+}
+function movePanelToGroupEnd(p, group) {
+  const from = S.panels.indexOf(p); if (from < 0 || !group) return;
+  S.panels.splice(from, 1); p.group = group.id;
+  let at = S.panels.length;
+  for (let i = S.panels.length - 1; i >= 0; i--) {
+    if (S.panels[i].group === group.id) { at = i + 1; break; }
   }
-  if (def.multi && existing.length >= 2) { flash(existing[0].el); return existing[0]; }
-  const pal = PALETTE.find(x => x[0] === type);
-  const p = { id: ++PANEL_SEQ, type, def, size: size || def.size || "s6",
-    group: pal ? pal[3] : 4, order: (pal ? pal[4] : 99) + existing.length * 0.1 };
-  p.requestedBertTab = requestedBertTab;
-  p.el = CE("section", "panel " + p.size);
-  p.el.dataset.order = p.order;
-  p.head = CE("div", "panel-head");
-  const dot = pal && pal[2] ? `<span class="dom-dot" style="background:${DOMC[pal[2]]}"></span>` : "";
-  const chLabel = def.multi && existing.length ? ` · CH${existing.length + 1}` : (def.multi ? " · CH1" : "");
-  p.head.innerHTML = `${dot}<span class="t">${L(def.title, PANEL_EN[type])}${chLabel}</span><span class="spacer"></span>`;
-  if (PANEL_LEARN[type]) {
-    const learn = CE("button", "icon-btn", "?");
-    learn.title = L("spiega blocco, formula, misura ed esperimento", "explain block, formula, measurement, and experiment");
-    learn.setAttribute("aria-label", L("apri Academy per questo blocco", "open Academy for this block"));
-    learn.onclick = () => openEducation(PANEL_LEARN[type]);
-    p.head.appendChild(learn);
+  S.panels.splice(at, 0, p); group.collapsed = false;
+  syncPanelOrder(); activatePanel(p, true); saveLayout();
+}
+function ensureTabGroups(state = null) {
+  if (_tabGroups.length) return;
+  const byId = new Map((state || []).filter(x => Number.isInteger(x.id)).map(x => [x.id, x]));
+  const ordered = [...byId.keys()].filter(id => id >= 0 && id < GROUPS.length);
+  for (let id = 0; id < GROUPS.length; id++) if (!ordered.includes(id)) ordered.push(id);
+  const list = $("#workspace-tab-list");
+  for (const id of ordered) {
+    const saved = byId.get(id) || {};
+    const g = { id, collapsed: !!saved.collapsed };
+    g.el = CE("div", "workspace-tab-group"); g.el.dataset.groupId = id;
+    g.el.style.setProperty("--group-color", GROUP_COLORS[id]);
+    g.label = CE("button", "tab-group-label"); g.label.type = "button";
+    g.label.draggable = true;
+    g.label.append(document.createTextNode(GROUPS[id]), g.count = CE("span", "tab-group-count", "0"));
+    g.label.title = `${GROUPS[id]} — ` + TT("clic = comprimi; trascina = riordina gruppo; rilascia qui un tab = spostalo nel gruppo", "click = collapse; drag = reorder group; drop a tab here = move it into the group");
+    g.label.onclick = () => { if (_dragGroupId != null) return; g.collapsed = !g.collapsed; syncTabGroup(g); saveLayout(); };
+    g.label.onkeydown = e => {
+      if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && e.shiftKey) {
+        e.preventDefault(); moveGroupToIndex(g, _tabGroups.indexOf(g) + (e.key === "ArrowLeft" ? -1 : 1)); g.label.focus();
+      }
+    };
+    g.label.ondragstart = e => {
+      _dragGroupId = g.id; g.el.classList.add("group-dragging");
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", `group:${g.id}`); }
+    };
+    g.label.ondragover = e => {
+      if (_dragGroupId == null && _dragPanelId == null) return;
+      e.preventDefault(); clearDropHints(); const r = g.el.getBoundingClientRect();
+      if (_dragGroupId != null && _dragGroupId !== g.id)
+        g.el.classList.add(e.clientX < r.left + r.width / 2 ? "group-drop-before" : "group-drop-after");
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    };
+    g.label.ondrop = e => {
+      e.preventDefault();
+      if (_dragGroupId != null) {
+        const dragged = tabGroup(_dragGroupId), r = g.el.getBoundingClientRect();
+        if (dragged) moveGroupRelative(dragged, g, e.clientX < r.left + r.width / 2);
+      } else if (_dragPanelId != null) movePanelToGroupEnd(workspacePanel(_dragPanelId), g);
+      clearDropHints();
+    };
+    g.label.ondragend = () => { g.el.classList.remove("group-dragging"); clearDropHints(); _dragGroupId = null; };
+    g.tabsEl = CE("div", "tab-group-tabs");
+    g.tabsEl.ondragover = e => { if (_dragPanelId != null) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; } };
+    g.tabsEl.ondrop = e => { if (_dragPanelId != null) { e.preventDefault(); movePanelToGroupEnd(workspacePanel(_dragPanelId), g); } };
+    g.el.append(g.label, g.tabsEl); list.appendChild(g.el); _tabGroups.push(g);
   }
-  const btnExp = CE("button", "icon-btn", "⤓");
-  btnExp.dataset.action = "panel_export";
-  btnExp.setAttribute("aria-label", L("esporta card (PNG/CSV)", "export card (PNG/CSV)"));
-  const hExp = S.actionHelp && S.actionHelp.panel_export;
-  if (hExp) btnExp.title = TT(hExp.it, hExp.en);
-  btnExp.onclick = () => exportPanel(p);
-  const btnSize = CE("button", "icon-btn", "◱"); btnSize.title = TT("ridimensiona la card senza cambiare il banco", "resizes the card without changing the bench");
-  btnSize.setAttribute("aria-label", L("ridimensiona pannello", "resize panel"));
-  btnSize.onclick = () => { const i = SIZES.indexOf(p.size); p.el.classList.remove(p.size); p.size = SIZES[(i + 1) % SIZES.length]; p.el.classList.add(p.size); saveLayout(); };
-  const btnClose = CE("button", "icon-btn", "×"); btnClose.title = TT("chiude la card senza spegnere il blocco", "closes the card without disabling the block");
-  btnClose.setAttribute("aria-label", L("chiudi pannello", "close panel"));
-  btnClose.onclick = () => {
-    const grid = p.el.parentElement;
-    destroyPanel(p); S.panels = S.panels.filter(x => x !== p);
-    if (p.type === "scope") refreshDcaProbes();
-    if (grid && !grid.children.length) grid.parentElement.remove();
-    saveLayout();
+}
+function clearDropHints() {
+  document.querySelectorAll(".workspace-tab.drop-before,.workspace-tab.drop-after")
+    .forEach(el => el.classList.remove("drop-before", "drop-after"));
+  document.querySelectorAll(".workspace-tab-group.group-drop-before,.workspace-tab-group.group-drop-after")
+    .forEach(el => el.classList.remove("group-drop-before", "group-drop-after"));
+}
+function syncWorkspaceEmpty() {
+  const empty = $("#workspace-empty");
+  if (empty) empty.hidden = S.panels.length !== 0;
+}
+function syncPanelOrder() {
+  ensureTabGroups();
+  const list = $("#workspace-tab-list"), stage = $("#workbench");
+  const known = new Set(_tabGroups.map(g => g.id));
+  for (const p of S.panels) if (!known.has(p.group)) p.group = 4;
+  S.panels = _tabGroups.flatMap(g => S.panels.filter(p => p.group === g.id));
+  for (const g of _tabGroups) {
+    list.appendChild(g.el);
+    for (const p of S.panels.filter(p => p.group === g.id)) g.tabsEl.appendChild(p.tabEl);
+    syncTabGroup(g);
+  }
+  for (const p of S.panels) stage.appendChild(p.el);
+}
+function movePanelToIndex(p, target) {
+  const from = S.panels.indexOf(p);
+  if (from < 0) return;
+  target = Math.max(0, Math.min(target, S.panels.length - 1));
+  if (from === target) return;
+  const neighbor = S.panels[target]; if (neighbor) p.group = neighbor.group;
+  S.panels.splice(from, 1);
+  S.panels.splice(target, 0, p);
+  syncPanelOrder();
+  p.tabEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  saveLayout();
+}
+function movePanelRelative(p, targetPanel, before) {
+  const from = S.panels.indexOf(p), target = S.panels.indexOf(targetPanel);
+  if (from < 0 || target < 0 || p === targetPanel) return;
+  let insert = target + (before ? 0 : 1);
+  S.panels.splice(from, 1); p.group = targetPanel.group;
+  if (from < insert) insert--;
+  S.panels.splice(Math.max(0, Math.min(insert, S.panels.length)), 0, p);
+  syncPanelOrder();
+  saveLayout();
+}
+function createWorkspaceTab(p, dot, label) {
+  ensureTabGroups();
+  const tab = CE("div", "workspace-tab");
+  tab.draggable = true; tab.dataset.panelId = p.id;
+  tab.style.setProperty("--tab-color", (dot && DOMC[dot]) || COL.muted);
+  const main = CE("button", "workspace-tab-main");
+  main.type = "button"; main.id = `workspace-tab-${p.id}`;
+  main.setAttribute("role", "tab"); main.setAttribute("aria-controls", `workspace-panel-${p.id}`);
+  main.setAttribute("aria-selected", "false"); main.tabIndex = -1;
+  if (dot) main.appendChild(CE("span", "dom-dot", ""));
+  const dotEl = main.querySelector(".dom-dot");
+  if (dotEl) dotEl.style.background = DOMC[dot];
+  main.appendChild(CE("span", "workspace-tab-label", label));
+  main.title = TT("seleziona; frecce = cambia tab, Maiusc+frecce = riordina", "select; arrows = switch tab, Shift+arrows = reorder");
+  main.onclick = () => activatePanel(p);
+  main.onkeydown = e => {
+    const i = S.panels.indexOf(p);
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault(); const d = e.key === "ArrowLeft" ? -1 : 1;
+      if (e.shiftKey) { movePanelToIndex(p, i + d); p.tabButton.focus(); }
+      else {
+        const q = S.panels[(i + d + S.panels.length) % S.panels.length];
+        if (q) activatePanel(q, true);
+      }
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault(); const q = S.panels[e.key === "Home" ? 0 : S.panels.length - 1];
+      if (q) activatePanel(q, true);
+    } else if (e.key === "Delete") { e.preventDefault(); closePanel(p); }
   };
-  p.head.append(btnExp, btnSize, btnClose);
-  p.body = CE("div", "panel-body");
-  p.el.append(p.head, p.body);
-  // inserimento ordinato per flusso del segnale dentro il suo gruppo
-  const grid = groupGrid(p.group);
-  const next = [...grid.children].find(el => +el.dataset.order > p.order);
-  grid.insertBefore(p.el, next || null);
-  S.panels.push(p);
-  try { def.make(p); decorateControls(p.body); }
+  const close = CE("button", "workspace-tab-close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", L(`chiudi ${label}`, `close ${label}`));
+  close.title = TT("chiude il pannello senza modificare il banco", "closes the panel without changing the bench");
+  close.onclick = e => { e.stopPropagation(); closePanel(p); };
+  tab.append(main, close);
+  tab.ondragstart = e => {
+    _dragPanelId = p.id; tab.classList.add("dragging");
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(p.id)); }
+  };
+  tab.ondragover = e => {
+    if (_dragPanelId == null || _dragPanelId === p.id) return;
+    e.preventDefault(); clearDropHints();
+    const r = tab.getBoundingClientRect();
+    tab.classList.add(e.clientX < r.left + r.width / 2 ? "drop-before" : "drop-after");
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  };
+  tab.ondrop = e => {
+    e.preventDefault();
+    const dragged = workspacePanel(_dragPanelId);
+    const r = tab.getBoundingClientRect();
+    if (dragged) movePanelRelative(dragged, p, e.clientX < r.left + r.width / 2);
+    clearDropHints();
+  };
+  tab.ondragend = () => {
+    tab.classList.remove("dragging"); clearDropHints(); _dragPanelId = null;
+  };
+  p.tabEl = tab; p.tabButton = main;
+  (tabGroup(p.group) || tabGroup(4)).tabsEl.appendChild(tab);
+}
+function mountPanel(p) {
+  if (p._mounted) return;
+  p._mounted = true; p._needsConfig = false;
+  try { p.def.make(p); decorateControls(p.body); }
   catch (e) { p.body.innerHTML = `<div class="note w">${e.message}</div>`; console.error(e); }
-  if (type === "scope") refreshDcaProbes();
-  // reset ai default: appare solo nei pannelli con manopole
+  // Il reset compare solo dopo il mount lazy, quando le manopole esistono.
   if (p.body.querySelector(".param, [data-ffe]")) {
     const btnReset = CE("button", "icon-btn", "↺");
     btnReset.title = L("riporta le manopole di questo pannello ai valori default", "reset this panel's knobs to their defaults");
@@ -3691,8 +3825,106 @@ function addPanel(type, size) {
         updates.tx_ffe_taps = S.defaults.tx_ffe_taps;
       if (Object.keys(updates).length) postConfig(updates);
     };
-    p.head.insertBefore(btnReset, btnSize);
+    p.head.insertBefore(btnReset, p.btnExport);
   }
+  if (p.type === "scope") refreshDcaProbes();
+}
+function activatePanel(p, focusTab = false) {
+  if (!p || !S.panels.includes(p)) return;
+  _activePanelId = p.id;
+  const group = tabGroup(p.group); if (group) group.collapsed = false;
+  for (const q of S.panels) {
+    const active = q === p;
+    q.el.hidden = !active; q.el.classList.toggle("active", active);
+    q.tabEl.classList.toggle("active", active);
+    q.tabButton.setAttribute("aria-selected", active ? "true" : "false");
+    q.tabButton.tabIndex = active ? 0 : -1;
+  }
+  for (const g of _tabGroups) syncTabGroup(g);
+  const wasMounted = p._mounted;
+  mountPanel(p);
+  if (p._needsConfig && p.def.onConfig) {
+    p._needsConfig = false; _cfgDirty.delete(p);
+    try { p.def.onConfig(p); } catch (e) { panelError(p, e); }
+  } else if (wasMounted && p.def.onTick) {
+    try { p.lastFetch = 0; p.def.onTick(p); } catch (e) { panelError(p, e); }
+  }
+  const stage = $("#workbench"); if (stage) stage.scrollTop = 0;
+  p.tabEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  if (focusTab) p.tabButton.focus();
+  if (window.Plotly) requestAnimationFrame(() => {
+    for (const gd of p.el.querySelectorAll(".js-plotly-plot")) try { Plotly.Plots.resize(gd); } catch (e) { }
+  });
+  syncWorkspaceEmpty(); saveLayout(false);
+}
+function closePanel(p) {
+  const idx = S.panels.indexOf(p); if (idx < 0) return;
+  const wasActive = p.id === _activePanelId;
+  destroyPanel(p); S.panels.splice(idx, 1);
+  if (p.type === "scope") refreshDcaProbes();
+  if (wasActive) {
+    _activePanelId = null;
+    const next = S.panels[Math.min(idx, S.panels.length - 1)];
+    if (next) activatePanel(next, true);
+  }
+  syncPanelOrder();
+  syncWorkspaceEmpty(); saveLayout();
+}
+
+function addPanel(type, size, groupOverride) {
+  const alias = PANEL_ALIASES[type];
+  const requestedBertTab = alias ? alias.tab : null;
+  if (alias) type = alias.type;
+  const def = PANEL_DEFS[type]; if (!def) return;
+  const existing = S.panels.filter(p => p.type === type);
+  // i pannelli "multi" (Scope) possono avere più istanze: canale A/B per
+  // confrontare due nodi fianco a fianco
+  if (existing.length && !def.multi) {
+    activatePanel(existing[0], true);
+    if (requestedBertTab && def.showTab) def.showTab(existing[0], requestedBertTab);
+    flash(existing[0].el); return existing[0];
+  }
+  if (def.multi && existing.length >= 2) { activatePanel(existing[0], true); flash(existing[0].el); return existing[0]; }
+  const pal = PALETTE.find(x => x[0] === type);
+  const p = { id: ++PANEL_SEQ, type, def, size: size || def.size || "s6",
+    group: Number.isInteger(groupOverride) && groupOverride >= 0 && groupOverride < GROUPS.length
+      ? groupOverride : (pal ? pal[3] : 4),
+    order: (pal ? pal[4] : 99) + existing.length * 0.1 };
+  p.requestedBertTab = requestedBertTab;
+  p.el = CE("section", "panel " + p.size);
+  p.el.id = `workspace-panel-${p.id}`; p.el.hidden = true;
+  p.el.setAttribute("role", "tabpanel"); p.el.tabIndex = -1;
+  p.head = CE("div", "panel-head");
+  const dot = pal && pal[2] ? `<span class="dom-dot" style="background:${DOMC[pal[2]]}"></span>` : "";
+  const instanceNo = def.multi ? (existing.length ? Math.max(...existing.map(x => x.instanceNo || 1)) + 1 : 1) : 0;
+  p.instanceNo = instanceNo;
+  const chLabel = def.multi ? ` · CH${instanceNo}` : "";
+  const fullLabel = L(def.title, PANEL_EN[type]) + chLabel;
+  p.head.innerHTML = `${dot}<span class="t">${L(def.title, PANEL_EN[type])}${chLabel}</span><span class="spacer"></span>`;
+  if (PANEL_LEARN[type]) {
+    const learn = CE("button", "icon-btn", "?");
+    learn.title = L("spiega blocco, formula, misura ed esperimento", "explain block, formula, measurement, and experiment");
+    learn.setAttribute("aria-label", L("apri Academy per questo blocco", "open Academy for this block"));
+    learn.onclick = () => openEducation(PANEL_LEARN[type]);
+    p.head.appendChild(learn);
+  }
+  const btnExp = CE("button", "icon-btn", "⤓");
+  btnExp.dataset.action = "panel_export";
+  btnExp.setAttribute("aria-label", L("esporta card (PNG/CSV)", "export card (PNG/CSV)"));
+  const hExp = S.actionHelp && S.actionHelp.panel_export;
+  if (hExp) btnExp.title = TT(hExp.it, hExp.en);
+  btnExp.onclick = () => exportPanel(p);
+  p.btnExport = btnExp;
+  p.head.append(btnExp);
+  p.body = CE("div", "panel-body");
+  p.el.append(p.head, p.body);
+  $("#workbench").appendChild(p.el);
+  createWorkspaceTab(p, pal && pal[2], fullLabel);
+  p.el.setAttribute("aria-labelledby", p.tabButton.id);
+  S.panels.push(p);
+  syncPanelOrder();
+  syncWorkspaceEmpty();
+  if (!_buildingLayout) activatePanel(p, true);
   saveLayout();
   return p;
 }
@@ -3708,6 +3940,7 @@ function destroyPanel(p) {
     }
   }
   _cfgDirty.delete(p);
+  if (p.tabEl) p.tabEl.remove();
   p.el.remove();
 }
 // export della card: ogni grafico Plotly in PNG (2×), il canvas Scope in
@@ -3743,28 +3976,33 @@ function exportPanel(p) {
                   "no exportable plot or table in this card"));
 }
 function applyView(name) {
+  ensureTabGroups();
   _buildingLayout = true;
   for (const p of [...S.panels]) { destroyPanel(p); }
-  for (const sec of document.querySelectorAll(".wb-group")) sec.remove();
-  S.panels = [];
+  S.panels = []; _activePanelId = null; syncPanelOrder(); syncWorkspaceEmpty();
   addPanelsStaggered(VIEWS[name] || VIEWS["Banco completo"], () => {
-    // Gli scope vengono creati in modo scaglionato: il quick-set P/N deve
-    // quindi partire soltanto quando entrambe le card esistono davvero.
+    // I tab sono creati in modo lazy: Scope P/N riceve il piano iniziale
+    // prima del primo mount, quindi non serve montare card nascoste.
     if (name === "Scope P/N") {
       const scopes = S.panels.filter(p => p.type === "scope");
-      [[scopes[0], "vp"], [scopes[1], "vn"]].forEach(([p, node]) => {
-        if (p && p.headSel) { p.headSel.value = node; p.node = node; PANEL_DEFS.scope.refetch(p); }
-      });
-      refreshDcaProbes();
+      if (scopes[0]) scopes[0].initialNode = "vp";
+      if (scopes[1]) scopes[1].initialNode = "vn";
     }
     _buildingLayout = false;
+    if (S.panels[0]) activatePanel(S.panels[0]);
     const vs = $("#view-select"); if (vs) vs.value = name;
     saveLayout(false);
   });
 }
 function saveLayout(markCustom = true) {
   if (!_layoutPersistence || _buildingLayout) return;
-  localStorage.setItem("labpro_layout2", JSON.stringify(S.panels.map(p => [p.type, p.size])));
+  const panels = S.panels.map(p => [p.type, p.size, p.group]);
+  const groups = _tabGroups.map(g => ({ id: g.id, collapsed: g.collapsed }));
+  const activeIndex = Math.max(0, S.panels.findIndex(p => p.id === _activePanelId));
+  // layout2 resta come mirror di downgrade; workspace4 aggiunge gruppi,
+  // ordine tab, collapse e tab attivo senza perdere i vecchi layout.
+  localStorage.setItem("labpro_layout2", JSON.stringify(panels.map(x => x.slice(0, 2))));
+  localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ version: 4, activeIndex, groups, panels }));
   if (markCustom) {
     const vs = $("#view-select"); if (vs) vs.value = CUSTOM_VIEW;
   }
@@ -3780,9 +4018,9 @@ function addPanelsStaggered(list, done) {
   const step = () => {
     if (generation !== _layoutGeneration) return;
     if (i >= list.length) { if (done) done(); return; }
-    const [t, sz] = Array.isArray(list[i]) ? list[i] : [list[i], undefined];
+    const [t, sz, group] = Array.isArray(list[i]) ? list[i] : [list[i], undefined, undefined];
     i++;
-    try { addPanel(t, sz); } catch (e) { console.warn("panel", t, e); }
+    try { addPanel(t, sz, group); } catch (e) { console.warn("panel", t, e); }
     setTimeout(() => requestAnimationFrame(step), 60);
   };
   step();
@@ -3799,14 +4037,34 @@ function loadLayout() {
   if (q.has("panels")) {
     _layoutPersistence = false;
     $("#view-select").value = CUSTOM_VIEW;
-    addPanelsStaggered(q.get("panels").split(",")); return;
+    _buildingLayout = true;
+    addPanelsStaggered(q.get("panels").split(","), () => {
+      _buildingLayout = false;
+      if (S.panels[0]) activatePanel(S.panels[0]);
+    });
+    return;
   }
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem("labpro_layout2")); } catch (e) { }
+  let saved = null, activeIndex = 0, groupState = null;
+  try {
+    const ws = JSON.parse(localStorage.getItem(WORKSPACE_KEY));
+    if (ws && ws.version === 4 && Array.isArray(ws.panels)) {
+      saved = ws.panels; groupState = Array.isArray(ws.groups) ? ws.groups : null;
+      activeIndex = Number.isInteger(ws.activeIndex) ? ws.activeIndex : 0;
+    }
+  } catch (e) { }
+  if (!saved) try {
+    const ws3 = JSON.parse(localStorage.getItem(LEGACY_WORKSPACE_KEY));
+    if (ws3 && ws3.version === 3 && Array.isArray(ws3.panels)) {
+      saved = ws3.panels; activeIndex = Number.isInteger(ws3.activeIndex) ? ws3.activeIndex : 0;
+    }
+  } catch (e) { }
+  if (!saved) try { saved = JSON.parse(localStorage.getItem("labpro_layout2")); } catch (e) { }
+  ensureTabGroups(groupState);
   if (saved && saved.length) {
     _buildingLayout = true;
     addPanelsStaggered(saved, () => {
       _buildingLayout = false;
+      activatePanel(S.panels[Math.max(0, Math.min(activeIndex, S.panels.length - 1))] || S.panels[0]);
       $("#view-select").value = CUSTOM_VIEW;
       saveLayout(false);
     });
@@ -3949,6 +4207,10 @@ async function boot() {
     }
   };
   document.documentElement.lang = LANG;   // screen reader: fonetica giusta anche in EN
+  $("#workspace-tabs").setAttribute("aria-label", L("Pannelli strumenti aperti", "Open instrument panels"));
+  $("#workspace-empty").textContent = L(
+    "Nessun pannello aperto — usa ＋ Pannello per aggiungere uno strumento.",
+    "No open panels — use ＋ Panel to add an instrument.");
   $("#btn-lang").textContent = LANG === "it" ? "EN" : "IT";
   $("#btn-lang").onclick = () => { localStorage.setItem("labpro_lang", LANG === "it" ? "en" : "it"); location.reload(); };
   $("#preset-select").title = TT("carica una configurazione didattica completa", "loads a complete educational configuration");

@@ -6,7 +6,7 @@
 <title>SerDes Optical Lab Pro</title>
 <!-- font locali: l'app funziona anche senza rete (come plotly.min.js) -->
 <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=22">
+<link rel="stylesheet" href="/static/style.css?v=27">
 <script src="/static/plotly.min.js"></script>
 </head>
 <body>
@@ -48,7 +48,14 @@
 </header>
 
 <div id="conn-banner" class="hidden" role="alert">connessione al server persa — riconnessione…</div>
-<main id="workbench"></main>
+<nav id="workspace-tabs" class="workspace-tabs" aria-label="Pannelli strumenti aperti">
+  <div id="workspace-tab-list" class="workspace-tab-list" role="tablist"></div>
+</nav>
+<main id="workbench" class="workspace-stage">
+  <div id="workspace-empty" class="workspace-empty" hidden>
+    Nessun pannello aperto — usa ＋ Pannello per aggiungere uno strumento.
+  </div>
+</main>
 
 <footer id="statusbar">
   <span id="sb-note" role="status" aria-live="polite">Laboratorio didattico con proxy dichiarati — Gardner/MM
@@ -56,6 +63,6 @@
   <span id="sb-cfg-hash"></span>
 </footer>
 
-<script src="/static/app.js?v=48"></script>
+<script src="/static/app.js?v=52"></script>
 </body>
 </html>

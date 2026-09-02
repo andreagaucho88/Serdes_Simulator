@@ -1330,11 +1330,50 @@ def test_diagnostic_layout_never_overwrites_user_layout_and_stagger_is_cancelled
     assert "const generation = ++_layoutGeneration;" in source
     assert "if (generation !== _layoutGeneration) return;" in source
     assert 'addPanelsStaggered(VIEWS[name] || VIEWS["Banco completo"], () =>' in source
-    # Scope P/N viene configurato nel callback, quando le due card esistono.
+    # Scope P/N assegna i nodi alle shell lazy prima del primo mount.
     callback = source[source.index("function applyView(name)"):
                       source.index("function saveLayout(")]
     assert callback.index("addPanelsStaggered") < callback.index(
-        '[[scopes[0], "vp"], [scopes[1], "vn"]]')
+        'scopes[0].initialNode = "vp"')
+    assert 'scopes[1].initialNode = "vn"' in callback
+
+
+def test_workspace_has_accessible_reorderable_lazy_tab_groups():
+    """I pannelli sono tab orizzontali raggruppati e riordinabili: una sola
+    card visibile, gruppi/collapse/tab attivo persistiti, zero polling hidden."""
+    root = Path(__file__).resolve().parent.parent
+    source = (root / "labpro/static/app.js").read_text(encoding="utf-8")
+    html = (root / "labpro/static/index.html").read_text(encoding="utf-8")
+    css = (root / "labpro/static/style.css").read_text(encoding="utf-8")
+    assert 'id="workspace-tab-list"' in html and 'role="tablist"' in html
+    assert 'id="workspace-empty"' in html
+    assert 'main id="workbench" class="workspace-stage"' in html
+    assert 'main.setAttribute("role", "tab")' in source
+    assert 'main.setAttribute("aria-controls", `workspace-panel-${p.id}`)' in source
+    assert 'p.el.setAttribute("role", "tabpanel")' in source
+    assert 'tab.draggable = true' in source
+    assert 'g.label.draggable = true' in source
+    assert 'class="workspace-tab-group"' not in html  # creati dalla UI/persistenza
+    assert 'function movePanelToGroupEnd(p, group)' in source
+    assert 'function moveGroupRelative(g, targetGroup, before)' in source
+    assert 'g.label.setAttribute("aria-expanded"' in source
+    assert 'g.el.hidden = S.panels.length === 0;' in source
+    assert 'e.key === "ArrowLeft" || e.key === "ArrowRight"' in source
+    assert 'if (e.shiftKey) { movePanelToIndex' in source
+    assert 'const WORKSPACE_KEY = "labpro_workspace4"' in source
+    assert 'version: 4, activeIndex, groups, panels' in source
+    assert 'const [t, sz, group]' in source
+    assert 'const wasMounted = p._mounted;' in source and 'mountPanel(p);' in source
+    assert 'if (!_buildingLayout) activatePanel(p, true);' in source
+    assert 'if (_activePanelId != null && p.id !== _activePanelId) return false;' in source
+    assert 'const p = S.panels.find(x => x.id === _activePanelId);' in source
+    assert '.workspace-tab-list { display: flex' in css
+    assert '.workspace-tab-group { --group-color:' in css
+    assert '.workspace-tab-group.collapsed .tab-group-tabs { display: none; }' in css
+    assert '.workspace-tab-group.empty .tab-group-label' in css
+    assert '.workspace-stage { flex: 1 1 auto' in css
+    assert '.workspace-stage > .panel[hidden] { display: none; }' in css
+    assert '@media (max-width: 1100px)' in css and '#topbar { display: grid;' in css
 
 
 def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
