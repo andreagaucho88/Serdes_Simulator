@@ -91,6 +91,9 @@ KNOBS = {
     "laser_type": None,
     "laser_dbm": (5.0, {}, {"pfib"}, {"driver"}),
     "laser_linewidth_mhz": (300.0, {"fiber_km": 10.0}, {"pfib"}, {"driver"}),
+    "optical_drive_vpp_v": (1.2, {"optical_modulator": "eml",
+                                       "laser_type": "dfb_eml_integrated"},
+                                  {"pfib"}, {"driver"}),
     "vpi_v": (2.5, {}, {"pfib"}, {"driver"}),
     "mzm_bias_rad": (1.9, {}, {"pfib"}, {"driver"}),
     "mzm_bw_hz": (25e9, {}, {"pfib"}, {"driver"}),
@@ -217,6 +220,54 @@ def test_optical_architecture_control_is_atomic_and_effective():
     changed = _changed(base, eml)
     assert "pfib" in changed
     assert "driver" not in changed
+
+
+@pytest.mark.parametrize("arch,laser,extra", [
+    ("eml", "dfb_eml_integrated", {}),
+    ("dml", "dfb_direct", {}),
+    ("vcsel", "vcsel_direct", {"fiber_type": "mmf",
+                                "wavelength_nm": 850.0,
+                                "dispersion_ps_nm_km": 0.0,
+                                "pmd_ps_sqrt_km": 0.0}),
+])
+def test_driver_swing_propagates_into_non_mzm_optical_oma(arch, laser, extra):
+    """La transfer EML/direct non puo rinormalizzare via il record: a
+    sensibilita fissa, abbassare il gain del driver deve ridurre l'OMA."""
+    common = dict(optical_modulator=arch, laser_type=laser, fiber_km=0.5,
+                  **extra)
+    low = simulate(LinkConfig(driver_gain_v_per_unit=0.25, **common),
+                   seed=732, depth="light")
+    nominal = simulate(LinkConfig(driver_gain_v_per_unit=0.65, **common),
+                       seed=732, depth="light")
+    oma_low = float(np.ptp(low.optical.P_mzm_w))
+    oma_nominal = float(np.ptp(nominal.optical.P_mzm_w))
+    assert oma_nominal > oma_low * 1.05, (arch, oma_low, oma_nominal)
+
+
+@pytest.mark.parametrize("arch,laser,extra", [
+    ("eml", "dfb_eml_integrated", {}),
+    ("dml", "dfb_direct", {}),
+    ("vcsel", "vcsel_direct", {"fiber_type": "mmf",
+                                "wavelength_nm": 850.0,
+                                "dispersion_ps_nm_km": 0.0,
+                                "pmd_ps_sqrt_km": 0.0}),
+])
+def test_linewidth_reaches_fiber_for_every_laser_architecture(arch, laser, extra):
+    """La fase Wiener attraversa anche EML/DML/VCSEL: a 0 km il PD non la
+    vede, dopo propagazione dispersiva o modale viene convertita in AM."""
+    common = dict(optical_modulator=arch, laser_type=laser, **extra)
+    b2b0 = simulate(LinkConfig(fiber_km=0.0, laser_linewidth_mhz=0.0,
+                               **common), seed=733, depth="light")
+    b2b = simulate(LinkConfig(fiber_km=0.0, laser_linewidth_mhz=300.0,
+                              **common), seed=733, depth="light")
+    assert np.allclose(b2b.optical.P_fiber_w, b2b0.optical.P_fiber_w,
+                       rtol=1e-10, atol=1e-15)
+    far0 = simulate(LinkConfig(fiber_km=5.0, laser_linewidth_mhz=0.0,
+                               **common), seed=733, depth="light")
+    far = simulate(LinkConfig(fiber_km=5.0, laser_linewidth_mhz=300.0,
+                              **common), seed=733, depth="light")
+    assert not np.allclose(far.optical.P_fiber_w, far0.optical.P_fiber_w,
+                           rtol=1e-5, atol=1e-12), arch
 
 
 @pytest.mark.parametrize("field", [k for k, v in KNOBS.items() if v is not None])

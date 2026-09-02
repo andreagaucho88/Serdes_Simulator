@@ -85,8 +85,11 @@ def run_optical(cfg, electrical_waveform_v, rng=None) -> OpticalResult:
         v_static, p_static = mzm_static_transfer(cfg)
         budget_label = "MZM output"
     else:
-        scale = float(np.percentile(np.abs(mzm_drive_v), 99.5))
-        u = np.clip(0.5 + 0.5 * mzm_drive_v / max(scale, 1e-12), 0.0, 1.0)
+        # Transfer calibrata su una sensibilita ELETTRICA fissa.  La vecchia
+        # implementazione divideva per il percentile del record stesso:
+        # qualunque cambio di gain/swing del driver veniva quindi cancellato
+        # e non poteva propagarsi all'OMA.  ±Vpp/2 mappa ora realmente 0..1.
+        u = np.clip(0.5 + mzm_drive_v / cfg.optical_drive_vpp_v, 0.0, 1.0)
         is_eml = cfg.optical_modulator == "eml"
         er_db = cfg.eml_er_db if is_eml else cfg.direct_laser_er_db
         chirp = (cfg.eml_chirp_alpha if is_eml
@@ -101,9 +104,19 @@ def run_optical(cfg, electrical_waveform_v, rng=None) -> OpticalResult:
         # la fase venga falsamente descritta con la transfer coseno del MZM.
         delta_phi_rad = 0.5 * chirp * np.log(
             np.maximum(p_eml, 1e-18) / max(float(np.mean(p_eml)), 1e-18))
-        E_mzm = np.sqrt(np.maximum(p_eml, 0.0)) * np.exp(1j * delta_phi_rad)
-        v_static = np.linspace(-1.0, 1.0, 1200)
-        us = np.clip(0.5 + 0.5 * v_static, 0.0, 1.0)
+        # Conserva anche la fase della sorgente: la linewidth era applicata
+        # soltanto al ramo MZM e veniva silenziosamente persa per EML/DML/
+        # VCSEL.  Il modulo unitario evita di duplicare laser_power_w.
+        source_phase = laser_field / max(np.sqrt(laser_power_w), 1e-30)
+        E_mzm = (np.sqrt(np.maximum(p_eml, 0.0)) * source_phase
+                 * np.exp(1j * delta_phi_rad))
+        # La curva statica e l'istogramma del pannello devono condividere lo
+        # stesso asse FISICO in volt.  Con l'asse normalizzato precedente la
+        # transfer e l'occupancy del drive venivano sovrapposte in domini
+        # diversi e nascondevano proprio la sensibilita appena resa esplicita.
+        v_static = np.linspace(-0.5 * cfg.optical_drive_vpp_v,
+                               0.5 * cfg.optical_drive_vpp_v, 1200)
+        us = np.clip(0.5 + v_static / cfg.optical_drive_vpp_v, 0.0, 1.0)
         p_static = p_min + (1.0 - p_min) * us
         budget_label = f"{cfg.optical_modulator.upper()} output"
     P_mzm_w = np.abs(E_mzm) ** 2

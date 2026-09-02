@@ -95,6 +95,11 @@ class LinkConfig:
     mzm_il_db: float = 4.5
     chirp_alpha: float = 0.4
     eml_bw_hz: float = 42e9
+    # Escursione elettrica picco-picco che porta la transfer normalizzata
+    # EML/DML/VCSEL da 0 a 1.  E una sensibilita di sistema esplicita: non
+    # va stimata dal record, altrimenti il gain del driver si cancella e
+    # l'OMA resta invariata anche cambiando realmente lo swing TX.
+    optical_drive_vpp_v: float = 0.55
     eml_er_db: float = 6.0
     eml_il_db: float = 3.0
     eml_chirp_alpha: float = 2.0
@@ -174,7 +179,8 @@ class LinkConfig:
     cdr_mode: str = "gardner"     # "gardner" | "mm" | "oracle"
     cdr_bw: float = 0.0015        # banda del loop normalizzata al baud rate
     cdr_damping: float = 1.0      # smorzamento zeta del loop PI
-    rx_ppm_offset: float = 0.0    # offset di frequenza clock RX vs TX [ppm]
+    # (f_RX-f_TX)/f_TX in ppm: positivo = clock RX fisicamente piu veloce.
+    rx_ppm_offset: float = 0.0
 
     # DSP
     fse_taps: int = 17
@@ -280,7 +286,8 @@ class LinkConfig:
             problems.append("fse_taps deve essere dispari (finestra simmetrica)")
         positive_fields = (
             "symbol_rate_hz", "dac_bw_hz", "driver_bw_hz", "mzm_bw_hz",
-            "eml_bw_hz", "direct_laser_bw_hz", "mmf_modal_bw_mhz_km",
+            "eml_bw_hz", "optical_drive_vpp_v", "direct_laser_bw_hz",
+            "mmf_modal_bw_mhz_km",
             "pd_bw_hz", "tia_bw_hz", "vpi_v", "dac_full_scale_vpp",
             "adc_full_scale_vpp", "tia_transimpedance_ohm",
             "pd_responsivity_a_w", "agc_target_rms_v")
@@ -542,10 +549,12 @@ STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
                    optical_modulator="eml", laser_type="dfb_eml_integrated",
                    electrical_drive_mode="single_ended_p",
                    eml_bw_hz=42e9, eml_er_db=5.0,
+                   optical_drive_vpp_v=0.50,
                    wavelength_nm=1310.0, dispersion_ps_nm_km=1.5,
                    fiber_km=0.5, fiber_loss_db_km=0.35,
                    channel_il_nyquist_db=8.0, laser_dbm=3.0),
-        "4 × 53.125 GBd PAM4 · SMF 500 m · RS(544,514) — pubblicato."),
+        "4 × 53.125 GBd PAM4 · SMF 500 m · EML 0.50 Vpp full-scale "
+        "dichiarato · RS(544,514) — pubblicato."),
     "IEEE 802.3cu — 100GBASE-FR1 · PMD ottico 2 km": (
         LinkConfig(symbol_rate_hz=53.125e9, fec_mode="kp4",
                    optical_modulator="eml", laser_type="dfb_eml_integrated",
@@ -621,9 +630,10 @@ STANDARD_PROFILES: dict[str, tuple[LinkConfig, str]] = {
                    link_medium="copper", channel_il_nyquist_db=12.0,
                    dac_bw_hz=55e9, driver_bw_hz=60e9, tia_bw_hz=55e9,
                    pd_bw_hz=70e9, mzm_bw_hz=60e9, ctle_pole_hz=40e9,
-                   ctle_hf_pole_hz=80e9),
+                   ctle_hf_pole_hz=80e9, adc_full_scale_vpp=1.8),
         "106.25 GBd PAM4 · PROGETTO IN CORSO: FEC concatenato draft non "
-        "modellato, numeri non definitivi."),
+        "modellato; ADC 1.8 Vpp per conservare headroom col CTLE 106G, "
+        "numeri non definitivi."),
 }
 
 

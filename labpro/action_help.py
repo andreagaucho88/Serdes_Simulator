@@ -103,9 +103,9 @@ _a("bert_stress_cal", "Stressed-eye calibration", "Stressed-eye calibration",
    "report; tx_pj_amp_ui when 'apply recipe' is checked")
 _a("config_export", "Esporta configurazione", "Export configuration",
    "Bench", "LinkConfig snapshot",
-   "Scarica un file JSON versionato con tutti i 122 campi del banco e le "
+   "Scarica un file JSON versionato con tutti i campi del banco e le "
    "impostazioni della camera climatica.",
-   "Downloads a versioned JSON file with all 122 bench fields and the "
+   "Downloads a versioned JSON file with all bench fields and the "
    "climate-chamber settings.",
    "Il file deve contenere version, cfg completa e chamber; rimportandolo "
    "il banco torna identico.",

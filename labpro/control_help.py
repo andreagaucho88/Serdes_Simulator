@@ -893,6 +893,21 @@ _add("laser_linewidth_mhz", "Laser", "optical field phase",
      "raise the linewidth and watch the floor rise; at 0 km the effect "
      "vanishes — the conversion requires dispersion.",
      "PM→AM via dispersione")
+_add("optical_drive_vpp_v", "EML / laser direct", "electrical-to-optical transfer",
+     "escursione elettrica picco-picco che porta la transfer normalizzata "
+     "di EML, DML o VCSEL da minimo a massimo: e la sensibilita FISSA del "
+     "modulatore, non una normalizzazione ricavata dal record. Ridurla a "
+     "swing driver costante aumenta OMA fino alla saturazione; aumentarla "
+     "riduce la profondita di modulazione. Sul banco: dimezzala con EML "
+     "attivo e osserva drive, OMA, PD e BER cambiare lungo tutta la catena.",
+     "the peak-to-peak electrical excursion that moves the normalized EML, "
+     "DML, or VCSEL transfer from minimum to maximum: it is the modulator's "
+     "FIXED sensitivity, not a normalization inferred from each record. "
+     "Reducing it at constant driver swing increases OMA up to saturation; "
+     "increasing it reduces modulation depth. On the bench: halve it with "
+     "EML active and watch drive, OMA, PD, and BER change down the chain.",
+     "u=clip(1/2+Vdrive/Vpp, 0, 1)",
+     "optical_modulator=eml/dml/vcsel")
 _add("vpi_v", "MZM", "modulator transfer",
      "tensione di mezz'onda del Mach-Zehnder: quanta tensione serve per "
      "spostare la trasmissione di π. Fissa la profondità di modulazione "
@@ -1786,17 +1801,19 @@ _add("rx_ppm_offset", "CDR", "recovered sampling clock",
      "Ethernet, quindi fino a ±200 di delta). Il loop lo assorbe nel "
      "registro di FREQUENZA (l'integratore del PI): senza integratore "
      "la fase scapperebbe di un UI ogni 1/ppm simboli. Sul banco: "
+     "il segno e (f_RX−f_TX)/f_TX: positivo significa RX piu veloce. "
      "±100 ppm → nel pannello Timing il registro di frequenza si "
-     "assesta esattamente sul valore impostato (linea tratteggiata di "
+     "assesta sul valore impostato (linea tratteggiata di "
      "verifica).",
      "the RX-vs-TX clock frequency offset in ppm: the two references "
      "are DIFFERENT oscillators (±100 ppm each per Ethernet "
      "standards, so up to ±200 delta). The loop absorbs it in its "
      "FREQUENCY register (the PI integrator): without the integrator, "
      "phase would run away one UI every 1/ppm symbols. On the bench: "
-     "set ±100 ppm → the Timing panel's frequency register settles "
-     "exactly on the set value (dashed verification line).",
-     "f̂ → −ppm_set a regime")
+     "the sign is (f_RX−f_TX)/f_TX: positive means a faster RX clock. "
+     "Set ±100 ppm → the Timing panel's frequency register settles "
+     "on the set value (dashed verification line).",
+     "t_RX=n/[f_TX·(1+ppm·10⁻⁶)]; f̂ → ppm_set")
 
 # ============================================================== RX DSP
 _add("fse_taps", "RX DSP", "post-ADC equalization",

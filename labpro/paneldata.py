@@ -758,6 +758,8 @@ def optical_panel(sim, cfg):
         "v_static": o.v_static, "p_static": o.p_static,
         "drive_peak_v": float(np.max(np.abs(o.mzm_drive_v))),
         "vpi": cfg.vpi_v if o.modulator == "mzm" else None,
+        "drive_vpp_v": (cfg.optical_drive_vpp_v
+                        if o.modulator != "mzm" else None),
         "er_set_db": (cfg.eml_er_db if o.modulator == "eml" else
                       cfg.direct_laser_er_db if o.modulator in ("dml", "vcsel")
                       else None),

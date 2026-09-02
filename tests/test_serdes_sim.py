@@ -55,11 +55,16 @@ def test_link_down_gates_metrics():
                if c["status"] == "FAIL")
 
 
-def test_cdr_tracks_ppm_offset():
-    r = simulate(LinkConfig(rx_ppm_offset=-200.0), depth="light")
+@pytest.mark.parametrize("ppm", [-200.0, 200.0])
+def test_cdr_tracks_ppm_offset_with_physical_frequency_sign(ppm):
+    r = simulate(LinkConfig(rx_ppm_offset=ppm), depth="light")
     assert r.link_up
     f_tail = float(np.mean(r.cdr.freq_trace_ppm[-800:]))
-    assert f_tail == pytest.approx(200.0, abs=50.0)
+    assert f_tail == pytest.approx(ppm, abs=50.0)
+    # f_RX=(1+ppm)f_TX: positivo significa periodo dei campioni piu corto.
+    ideal_last = ((len(r.adc.adc_nominal_time_ui) - 1) / r.cfg.adc_sps)
+    actual_last = r.adc.adc_nominal_time_ui[-1] - r.cfg.adc_phase_ui
+    assert (actual_last < ideal_last if ppm > 0 else actual_last > ideal_last)
 
 
 def test_oracle_with_ppm_rejected():
@@ -629,6 +634,7 @@ def test_tdecq_on_real_chain_and_dispersion():
     from serdes_sim.blocks.metrics import tdecq_report
     from serdes_sim.config import STANDARD_PROFILES
     dr4 = [v[0] for k, v in STANDARD_PROFILES.items() if "DR4" in k][0]
+    assert dr4.optical_drive_vpp_v == pytest.approx(0.50)
     s0 = simulate(dr4, seed=42, depth="light")
     r0 = tdecq_report(s0.optical.P_fiber_w, s0.pam4_symbols, s0.spec,
                       dr4.analog_sps, dr4.symbol_rate_hz, dr4.fs_analog_hz)
@@ -931,6 +937,8 @@ def test_all_standard_profiles_represent_working_links():
     for name, (cfg, _desc) in STANDARD_PROFILES.items():
         r = simulate(cfg, seed=42, depth="light")
         assert r.link_up, f"{name}: LINK DOWN"
+        failed = [c for c in r.checks if c["status"] == "FAIL"]
+        assert failed == [], f"{name}: checkpoint fisici {failed}"
         # Lo Scope analogico e il detector sono piani diversi: i reach severi
         # possono avere vCTLE chiuso, ma FSE/DFE deve recuperare un occhio
         # numerico misurabile. Questa è la regressione del selettore standard.
@@ -952,6 +960,18 @@ def test_all_standard_profiles_represent_working_links():
     # Mantiene onesta la UI: il test deve includere davvero casi nei quali
     # l'occhio pre-DSP è chiuso e viene recuperato, non solo link facili.
     assert recovered_pre_eq >= 6
+
+
+def test_all_standard_profiles_keep_analog_headroom_across_seeds():
+    """Un profilo selezionabile come standard non puo essere verde mentre
+    un blocco analogico e oltre rail. Copre la variabilita del noise seed."""
+    from serdes_sim.config import STANDARD_PROFILES
+    for name, (cfg, _desc) in STANDARD_PROFILES.items():
+        for seed in (7, 99, 731):
+            r = simulate(cfg, seed=seed, depth="light")
+            assert r.tx.driver_clip_fraction < 0.01, (name, seed, "driver")
+            assert r.receiver.tia_clip_fraction < 1e-3, (name, seed, "TIA/AFE")
+            assert r.adc.adc_clip_fraction < 0.01, (name, seed, "ADC")
 
 
 def test_vga_tia_no_level_crush_at_high_power():
@@ -1076,6 +1096,7 @@ def test_standard_catalog_is_consistent_and_honest():
     assert not any("802.3by — 25GBASE-LR" in name for name in STANDARD_PROFILES)
     dj = STANDARD_PROFILES["P802.3dj (draft) — 200G/lane · elettrico C2C"][0]
     assert dj.fec_mode == "none"
+    assert dj.adc_full_scale_vpp == pytest.approx(1.8)
     assert STANDARD_PROFILE_META[
         "P802.3dj (draft) — 200G/lane · elettrico C2C"]["status"] == "draft"
     assert all(not cfg.validate() for cfg, _ in STANDARD_PROFILES.values())

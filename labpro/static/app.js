@@ -167,8 +167,8 @@ const TR_FRAGMENTS = [
   ["ADC non dominato dal clipping", "ADC not clipping-dominated"],
   ["in lock", "locked"],
   ["Pattern lock (BERT-style)", "Pattern lock (BERT-style)"],
-  ["FSE migliora (o eguaglia) la BER di validation", "FSE improves (or matches) validation BER"],
-  ["DFE non degrada la BER di validation", "DFE does not degrade validation BER"],
+  ["FSE migliora entro la risoluzione statistica", "FSE improves within statistical resolution"],
+  ["DFE non degrada oltre la risoluzione statistica", "DFE does not degrade beyond statistical resolution"],
   ["GMI numericamente valida", "GMI numerically valid"],
   ["nel percorso: post-FEC ≤ pre-FEC", "in-path: post-FEC ≤ pre-FEC"],
   ["Analyzer L2: frame delineati", "L2 analyzer: frames delineated"],
@@ -532,6 +532,7 @@ const PARAMS = {
   mzm_bw_hz: { l: "Banda MZM", u: "GHz", min: 15, max: 60, step: 1, scale: 1e9 },
   mzm_il_db: { l: "IL MZM", u: "dB", min: 1, max: 9, step: 0.25 },
   chirp_alpha: { l: "Chirp α", min: -1.5, max: 1.5, step: 0.05 },
+  optical_drive_vpp_v: { l: "Drive ottico FS", u: "Vpp", min: 0.1, max: 2.0, step: 0.05 },
   eml_bw_hz: { l: "Banda EML", u: "GHz", min: 15, max: 80, step: 1, scale: 1e9 },
   eml_er_db: { l: "ER EML", u: "dB", min: 1, max: 15, step: 0.25 },
   eml_il_db: { l: "IL EML", u: "dB", min: 0, max: 10, step: 0.25 },
@@ -632,6 +633,7 @@ const PARAM_EN = {
   vpi_v: "Vpi", mzm_bias_rad: "MZM bias", mzm_bw_hz: "MZM bandwidth",
   mzm_il_db: "MZM IL", chirp_alpha: "Chirp alpha", coupling_il_db: "Coupling IL",
   eml_bw_hz: "EML bandwidth", eml_er_db: "EML ER", eml_il_db: "EML IL",
+  optical_drive_vpp_v: "EML/direct drive full scale",
   eml_chirp_alpha: "EML chirp alpha-Henry",
   direct_laser_bw_hz: "DML/VCSEL bandwidth", direct_laser_er_db: "DML/VCSEL ER",
   direct_laser_chirp_alpha: "Direct laser chirp alpha-Henry",
@@ -2075,7 +2077,7 @@ PANEL_DEFS.optical = {
   title: "Optical TX · fiber · levels", size: "s6",
   make(p) {
     p.body.innerHTML = "";
-    p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
+    p.body.appendChild(paramsBlock(["optical_modulator", "laser_type", "electrical_drive_mode", "laser_dbm", "laser_linewidth_mhz", "vpi_v", "mzm_bias_rad", "mzm_bw_hz", "mzm_il_db", "chirp_alpha", "optical_drive_vpp_v", "eml_bw_hz", "eml_er_db", "eml_il_db", "eml_chirp_alpha", "direct_laser_bw_hz", "direct_laser_er_db", "direct_laser_chirp_alpha", "coupling_il_db", "fiber_type", "fiber_km", "dispersion_ps_nm_km", "dispersion_slope_ps_nm2_km", "pmd_ps_sqrt_km", "pmd_power_split", "fiber_gamma_w_inv_km", "mmf_modal_bw_mhz_km", "wavelength_nm", "fiber_loss_db_km"]));
     p.ro = CE("div"); p.body.appendChild(p.ro);
     const grid = CE("div", "grid2");
     p.plot1 = CE("div", "plot"); p.plot2 = CE("div", "plot");
@@ -2090,7 +2092,7 @@ PANEL_DEFS.optical = {
     if (d.inactive) { p.ro.innerHTML = `<div class="note w">${d.reason}</div>`; p.plot1.innerHTML = p.plot2.innerHTML = p.plot3.innerHTML = p.plot4.innerHTML = ""; p.note.innerHTML = ""; return; }
     p.ro.innerHTML = "";
     p.ro.appendChild(readout([
-      { l: L("architettura", "architecture"), v: d.modulator.toUpperCase(), sub: `${d.laser_type} · ${S.cfg.electrical_drive_mode}` },
+      { l: L("architettura", "architecture"), v: d.modulator.toUpperCase(), sub: `${d.laser_type} · ${S.cfg.electrical_drive_mode}${d.drive_vpp_v ? " · FS " + fix(d.drive_vpp_v, 2) + " Vpp" : ""}` },
       { l: "P @ PD", v: fix(d.budget["PD input"], 2) + " dBm" },
       { l: L("drive picco", "peak drive"), v: fix(d.drive_peak_v, 2) + " V", sub: d.vpi ? fix(d.drive_peak_v / d.vpi, 2) + "·Vπ" : "ER set " + fix(d.er_set_db, 1) + " dB" },
       { l: "1º nullo IM/DD", v: d.f_null_ghz ? fix(d.f_null_ghz, 1) + " GHz" : "∞", cls: d.f_null_ghz && d.f_null_ghz < d.nyquist_ghz ? "fail" : "" },
@@ -2100,7 +2102,7 @@ PANEL_DEFS.optical = {
     ]));
     // 1) transfer del modulatore + istogramma di pilotaggio: DOVE lavora
     const l1 = PL({ height: 200 });
-    mergeAxis(l1, "xaxis", { title: { text: d.modulator === "mzm" ? L("drive [V]", "drive [V]") : L("drive normalizzato", "normalized drive"), font: { size: 9 } } });
+    mergeAxis(l1, "xaxis", { title: { text: L("drive [V]", "drive [V]"), font: { size: 9 } } });
     mergeAxis(l1, "yaxis", { title: { text: "P/P_in", font: { size: 9 } } });
     const tr1 = [{ x: d.v_static, y: d.p_static, name: "transfer", line: { color: COL.op, width: 2 } }];
     if (d.drive_hist) tr1.push({ x: d.drive_hist.x, y: d.drive_hist.h.map(v => v * Math.max(...d.p_static) * 0.5), name: L("dove pilota il segnale", "drive occupancy"), type: "bar", marker: { color: "rgba(86,200,232,0.35)" } });
@@ -2265,7 +2267,7 @@ PANEL_DEFS.timing = {
       mergeAxis(l1, "xaxis", { title: { text: "simbolo (×" + c.sub + ")", font: { size: 9 } } });
       mergeAxis(l1, "yaxis", { title: { text: "fase NCO [UI]", font: { size: 9 } } });
       plot(p.plot1, [{ y: c.tau, line: { color: COL.dg, width: 1.2 } }], l1);
-      const shapes = c.ppm_set ? [hline(-c.ppm_set, COL.ok, "dash")] : [];
+      const shapes = c.ppm_set ? [hline(c.ppm_set, COL.ok, "dash")] : [];
       const l2 = PL({ height: 170, showlegend: false, shapes });
       mergeAxis(l2, "xaxis", { title: { text: "simbolo (×" + c.sub + ")", font: { size: 9 } } });
       mergeAxis(l2, "yaxis", { title: { text: "registro freq [ppm]", font: { size: 9 } } });

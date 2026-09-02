@@ -87,10 +87,13 @@ def run_adc(cfg, v_ctle_v, rng) -> AdcResult:
     n_adc = cfg.n_symbols * cfg.adc_sps
     adc_n = np.arange(n_adc)
     adc_lane = adc_n % M
-    # rx_ppm_offset: il clock RX corre a (1+ppm) rispetto al TX, quindi le
-    # posizioni dei campioni (in UI del TX) scivolano — il CDR deve inseguirle
-    ppm_scale = 1.0 + getattr(cfg, "rx_ppm_offset", 0.0) * 1e-6
-    adc_nominal_time_ui = adc_n / cfg.adc_sps * ppm_scale + cfg.adc_phase_ui
+    # rx_ppm_offset=(f_RX-f_TX)/f_TX: se f_RX e maggiore, il PERIODO di
+    # campionamento e minore.  Moltiplicare per (1+ppm), come faceva la prima
+    # versione, modellava per errore un offset di periodo e invertiva il segno
+    # fisico mostrato dal registro di frequenza del CDR.
+    ppm_ratio = 1.0 + getattr(cfg, "rx_ppm_offset", 0.0) * 1e-6
+    adc_nominal_time_ui = (adc_n / cfg.adc_sps / ppm_ratio
+                           + cfg.adc_phase_ui)
     common_tie_ui = 0.012 * np.sin(2 * np.pi * adc_n / (1700 * cfg.adc_sps))
     aperture_jitter_ui = rng.normal(0, cfg.adc_jitter_rms_fs * 1e-15 / cfg.ui_s, n_adc)
     adc_actual_time_ui = (adc_nominal_time_ui + common_tie_ui + aperture_jitter_ui
