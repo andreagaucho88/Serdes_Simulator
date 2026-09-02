@@ -292,7 +292,7 @@ const hline = (y, color = COL.muted, dash = "dot") => ({ type: "line", y0: y, y1
 
 /* ---------------- stato globale ---------------- */
 const S = { cfg: null, acc: null, running: false, presets: [], ws: null,
-  panels: [], controlHelp: {}, actionHelp: {} };
+  panels: [], controlHelp: {}, actionHelp: {}, persistence: null };
 
 function cfgChips() {
   if (!S.cfg) return;
@@ -373,6 +373,10 @@ function connectWS() {
     if (m.type === "config") { S.cfg = m.cfg; cfgChips(); notify("config"); }
     if (m.type === "run") { S.running = m.running; tickTopbar(); }
     if (m.type === "experiment") expBadge(m);
+    if (m.type === "warning" && m.code === "session_persistence") {
+      toast(L("Sessione attiva, ma il salvataggio locale è fallito.",
+        "Session active, but local persistence failed."));
+    }
   };
   // riconnessione con backoff esponenziale (prima: retry fisso 1.5 s per sempre)
   ws.onclose = () => {
@@ -4139,6 +4143,12 @@ async function boot() {
   S.cfg = st.cfg; S.acc = st.acc; S.running = st.running; S.presets = st.presets;
   S.defaults = st.defaults || {}; S.sweepable = st.sweepable || {};
   S.controlHelp = st.control_help || {}; S.actionHelp = st.action_help || {};
+  S.persistence = st.persistence || null;
+  if (S.persistence && S.persistence.status === "error") {
+    setTimeout(() => toast(L(
+      "Sessione avviata con i default: il file locale non è ripristinabile.",
+      "Session started with defaults: the local state file could not be restored.")), 0);
+  }
   decorateControls($("#topbar"));
   const ps = $("#preset-select");
   ps.innerHTML = `<option value="">— ${L("preset didattici", "educational presets")} —</option>`;

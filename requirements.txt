@@ -16,6 +16,8 @@ plotly==5.24.1       # >=6 no longer ships package_data/plotly.min.js
 pytest==8.3.5
 ruff==0.6.9
 build==1.2.2.post1
+setuptools>=77          # required when building with --no-isolation
+wheel
 
 # Optional channel/reference integrations
 scikit-rf==2.1.0

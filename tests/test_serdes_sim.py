@@ -1490,13 +1490,15 @@ def test_public_package_metadata_and_cli_contract():
     root = Path(__file__).resolve().parent.parent
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     project = metadata["project"]
-    assert project["version"] == "0.1.2"
+    assert project["version"] == "0.1.3"
     assert project["requires-python"] == ">=3.12"
     assert project["license"] == "MIT"
     assert "THIRD_PARTY_NOTICES.md" in project["license-files"]
     assert metadata["project"]["scripts"]["serdes-lab"] == "labpro.server:main"
     assert metadata["build-system"]["build-backend"] == "setuptools.build_meta"
     assert "setuptools>=77" in metadata["build-system"]["requires"]
+    assert {"setuptools>=77", "wheel"} <= set(
+        project["optional-dependencies"]["dev"])
     assert "static/fonts/*" in metadata["tool"]["setuptools"]["package-data"]["labpro"]
     assert {"numpy==1.26.4", "scipy==1.13.1", "tornado==6.4.1",
             "plotly==5.24.1", "scikit-rf==2.1.0"} <= set(

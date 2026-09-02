@@ -13,10 +13,13 @@ import dataclasses
 import inspect
 import json
 import logging
+import os
+import signal
 import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -41,13 +44,34 @@ from labpro.action_help import ACTION_HELP   # noqa: E402
 from labpro.control_help import CONTROL_HELP  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-PERSIST = Path(__file__).resolve().parent / ".labpro_session.json"
+LEGACY_PERSIST = Path(__file__).resolve().parent / ".labpro_session.json"
 SESSION_VERSION = 1     # bump se il formato del payload cambia in modo incompatibile
+
+
+def _default_state_path() -> Path:
+    """Return a writable, per-user session path for source and wheel installs."""
+    override = os.environ.get("SERDES_LAB_STATE_FILE")
+    if override:
+        return Path(override).expanduser()
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+        return root / "SerDes Optical Lab PRO" / "session.json"
+    if os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return root / "SerDes Optical Lab PRO" / "session.json"
+    root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return root / "serdes-optical-lab" / "session.json"
+
+
+DEFAULT_PERSIST = _default_state_path()
+PERSIST: Path | None = DEFAULT_PERSIST
 
 BENCH = LiveBench()
 CLIENTS: set = set()
 MAIN_LOOP = None
 _persist_lock = threading.Lock()
+_persistence_loaded = False
+_persistence_error = None
 log = logging.getLogger("labpro")
 
 
@@ -109,11 +133,35 @@ def config_from_dict(cfg_d: dict):
     return LinkConfig(**cfg_d), dropped
 
 
+def persistence_status() -> dict:
+    """Public persistence state without exposing the user's filesystem path."""
+    if PERSIST is None:
+        return {"status": "disabled", "restored": False}
+    return {
+        "status": "error" if _persistence_error is not None else "ready",
+        "restored": _persistence_loaded,
+    }
+
+
 def load_persisted():
-    if not PERSIST.exists():
-        return
+    global _persistence_error, _persistence_loaded
+    _persistence_loaded = False
+    _persistence_error = None
+    if PERSIST is None:
+        return False
+    source = PERSIST
+    # One-way compatibility for source checkouts used before 0.1.3. The old
+    # package-local file is retained as a recoverable backup, never deleted.
+    if not source.exists() and source == DEFAULT_PERSIST and LEGACY_PERSIST.exists():
+        source = LEGACY_PERSIST
+    if not source.exists():
+        return False
     try:
-        d = json.loads(PERSIST.read_text())
+        d = json.loads(source.read_text(encoding="utf-8"))
+        if not isinstance(d, dict) or not isinstance(d.get("cfg", {}), dict):
+            raise ValueError("session payload must be a JSON object")
+        if int(d.get("version", SESSION_VERSION)) != SESSION_VERSION:
+            raise ValueError("unsupported session version")
         cfg, dropped = config_from_dict(d.get("cfg", {}))
         BENCH.set_config(cfg)
         chamber = d.get("chamber")
@@ -123,21 +171,52 @@ def load_persisted():
         if dropped:
             log.warning("sessione ripristinata ignorando campi non più esistenti: %s",
                         ", ".join(dropped))
+        _persistence_loaded = True
+        if source == LEGACY_PERSIST:
+            persist()
+        return True
     except Exception:
+        _persistence_error = "restore_failed"
         log.warning("sessione %s non ripristinabile: si riparte dai default",
-                    PERSIST.name, exc_info=True)
+                    source.name, exc_info=True)
+        return False
 
 
 def persist():
+    global _persistence_error
+    if PERSIST is None:
+        return True
     with _persist_lock:
+        tmp = None
         try:
-            tmp = PERSIST.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"version": SESSION_VERSION,
-                                       "cfg": BENCH.cfg.to_dict(),
-                                       "chamber": BENCH.chamber_settings()}))
+            PERSIST.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PERSIST.with_name(f".{PERSIST.name}.{os.getpid()}.tmp")
+            tmp.write_text(
+                json.dumps({"version": SESSION_VERSION,
+                            "cfg": BENCH.cfg.to_dict(),
+                            "chamber": BENCH.chamber_settings()}),
+                encoding="utf-8")
+            tmp.chmod(0o600)
             tmp.replace(PERSIST)
+            _persistence_error = None
+            return True
         except Exception:
+            _persistence_error = "write_failed"
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
             log.warning("persistenza sessione fallita", exc_info=True)
+            if MAIN_LOOP is not None:
+                try:
+                    MAIN_LOOP.add_callback(
+                        broadcast,
+                        {"type": "warning", "code": "session_persistence"})
+                except Exception:
+                    log.debug("persistence warning could not be queued",
+                              exc_info=True)
+            return False
 
 
 def _ws_write_done(client, future):
@@ -307,9 +386,12 @@ class Base(tornado.web.RequestHandler):
 
     def body_json(self):
         try:
-            return json.loads(self.request.body or b"{}")
-        except Exception:
-            return {}
+            body = json.loads(self.request.body or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise tornado.web.HTTPError(400, "malformed JSON body") from None
+        if not isinstance(body, dict):
+            raise tornado.web.HTTPError(400, "JSON body must be an object")
+        return body
 
     def write_error(self, status_code, **kwargs):
         # contratto d'errore UNIFORME: sempre {"error": ...} — la pagina HTML
@@ -334,6 +416,29 @@ class Index(Base):
         self.write((STATIC_DIR / "index.html").read_text())
 
 
+def _package_version() -> str:
+    try:
+        return distribution_version("serdes-optical-lab")
+    except PackageNotFoundError:
+        return "development"
+
+
+class ApiHealth(Base):
+    """Cheap readiness/support endpoint; never starts a simulation."""
+
+    def get(self):
+        persistence = persistence_status()
+        self.write_json({
+            "status": "degraded" if persistence["status"] == "error" else "ok",
+            "service": "serdes-optical-lab-pro",
+            "version": _package_version(),
+            "api_version": 1,
+            "running": BENCH.running,
+            "experiment": EXPERIMENT.current,
+            "persistence": persistence,
+        })
+
+
 class ApiState(Base):
     def get(self):
         cfg = BENCH.cfg
@@ -352,6 +457,7 @@ class ApiState(Base):
             "control_help": CONTROL_HELP,
             "action_help": ACTION_HELP,
             "experiment": EXPERIMENT.current,
+            "persistence": persistence_status(),
         })
 
 
@@ -1000,6 +1106,7 @@ def ensure_plotly():
 def make_app():
     return tornado.web.Application([
         (r"/", Index),
+        (r"/api/health", ApiHealth),
         (r"/api/state", ApiState),
         (r"/api/config", ApiConfig),
         (r"/api/config/export", ApiConfigExport),
@@ -1041,13 +1148,38 @@ def _serve_until_stopped(loop, bench):
         bench.stop()
 
 
+def _install_shutdown_handlers(loop):
+    """Make terminal and launcher shutdown graceful, including background jobs."""
+    def request_stop(signum, _frame):
+        log.info("shutdown requested by signal %s", signum)
+        loop.add_callback_from_signal(loop.stop)
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+
+
 def main():
-    global MAIN_LOOP
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8640)
+    global MAIN_LOOP, PERSIST
+    parser = argparse.ArgumentParser(
+        description="Run SerDes Optical Lab PRO on the local loopback interface.")
+    parser.add_argument("--port", type=int, default=8640,
+                        help="loopback TCP port (default: 8640)")
     parser.add_argument("--no-autostart", action="store_true",
-                        help="non avviare l'acquisizione continua all'avvio")
+                        help="start with continuous acquisition stopped")
+    persistence = parser.add_mutually_exclusive_group()
+    persistence.add_argument(
+        "--state-file", type=Path,
+        help="session file (default: platform-specific per-user state directory)")
+    persistence.add_argument(
+        "--no-persist", action="store_true",
+        help="do not load or save the Lab PRO session")
     args = parser.parse_args()
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.no_persist:
+        PERSIST = None
+    elif args.state_file is not None:
+        PERSIST = args.state_file.expanduser().resolve()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -1055,9 +1187,14 @@ def main():
     ensure_plotly()
     load_persisted()
     app = make_app()
-    app.listen(args.port, address="127.0.0.1",
-               max_body_size=MAX_REQUEST_BODY_BYTES)
+    try:
+        app.listen(args.port, address="127.0.0.1",
+                   max_body_size=MAX_REQUEST_BODY_BYTES)
+    except OSError as exc:
+        raise SystemExit(
+            f"Unable to start Lab PRO on 127.0.0.1:{args.port}: {exc}") from None
     MAIN_LOOP = tornado.ioloop.IOLoop.current()
+    _install_shutdown_handlers(MAIN_LOOP)
     if not args.no_autostart:
         BENCH.start()
     print(f"SerDes Optical Lab Pro → http://localhost:{args.port}")

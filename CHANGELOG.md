@@ -2,6 +2,19 @@
 
 All notable public changes are documented here.
 
+## 0.1.3 — 2026-09-02
+
+- Moved Lab PRO session persistence out of the Python package into a private,
+  platform-specific user state directory, with atomic writes, legacy-session
+  migration, an environment/CLI override, and an opt-out mode.
+- Added a path-safe <code>/api/health</code> readiness endpoint and changed the
+  macOS launcher to wait for real server readiness instead of sleeping for a
+  fixed interval, with signal-safe cleanup that cannot orphan the server.
+- Rejected malformed and non-object JSON bodies before they can mutate bench
+  state, and surfaced persistence failures in both health diagnostics and the
+  running UI.
+- Expanded the regression gate to 392 automated tests.
+
 ## 0.1.2 — 2026-09-02
 
 - Closed the first CodeQL findings by HTML-safely encoding JSON responses,

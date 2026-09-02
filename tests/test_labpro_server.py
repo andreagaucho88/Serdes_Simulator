@@ -64,7 +64,7 @@ def test_initial_websocket_send_consumes_async_failure():
         server.CLIENTS.update(before)
 
 
-def test_server_ctrl_c_stops_livebench_without_propagating_interrupt(capsys):
+def test_server_shutdown_stops_livebench_and_handles_process_signals(capsys):
     class InterruptingLoop:
         def start(self):
             raise KeyboardInterrupt
@@ -80,6 +80,48 @@ def test_server_ctrl_c_stops_livebench_without_propagating_interrupt(capsys):
     assert bench.stopped
     assert "arrestato" in capsys.readouterr().out
 
+    class SignalLoop:
+        stopped = False
+
+        def add_callback_from_signal(self, callback):
+            callback()
+
+        def stop(self):
+            self.stopped = True
+
+    registered = {}
+    with patch.object(server.signal, "signal",
+                      side_effect=lambda signum, handler:
+                      registered.setdefault(signum, handler)):
+        loop = SignalLoop()
+        server._install_shutdown_handlers(loop)
+    assert set(registered) == {server.signal.SIGINT, server.signal.SIGTERM}
+    registered[server.signal.SIGTERM](server.signal.SIGTERM, None)
+    assert loop.stopped
+
+
+def test_state_file_environment_override_is_expanded(tmp_path):
+    state_file = tmp_path / "private" / "session.json"
+    with patch.dict(server.os.environ,
+                    {"SERDES_LAB_STATE_FILE": str(state_file)}):
+        assert server._default_state_path() == state_file
+
+
+def test_persist_creates_private_parent_and_atomic_session(tmp_path):
+    state_file = tmp_path / "new" / "state" / "session.json"
+    old_error = server._persistence_error
+    try:
+        with patch.object(server, "PERSIST", state_file):
+            assert server.persist() is True
+            payload = json.loads(state_file.read_text(encoding="utf-8"))
+            assert payload["version"] == server.SESSION_VERSION
+            expected_cfg = json.loads(json.dumps(server.BENCH.cfg.to_dict()))
+            assert payload["cfg"] == expected_cfg
+            assert state_file.stat().st_mode & 0o777 == 0o600
+            assert list(state_file.parent.iterdir()) == [state_file]
+    finally:
+        server._persistence_error = old_error
+
 
 class ApiContractTest(AsyncHTTPTestCase):
     def get_app(self):
@@ -90,8 +132,39 @@ class ApiContractTest(AsyncHTTPTestCase):
         assert resp.code == 200
         d = json.loads(resp.body)
         for key in ("cfg", "defaults", "running", "acc",
-                    "control_help", "action_help", "profiles"):
+                    "control_help", "action_help", "profiles", "persistence"):
             assert key in d, f"chiave mancante in /api/state: {key}"
+
+    def test_health_is_lightweight_and_does_not_expose_local_paths(self):
+        resp = self.fetch("/api/health")
+        assert resp.code == 200
+        d = json.loads(resp.body)
+        assert d["status"] in {"ok", "degraded"}
+        assert d["service"] == "serdes-optical-lab-pro"
+        assert d["api_version"] == 1
+        assert d["version"]
+        assert set(d["persistence"]) == {"status", "restored"}
+        assert str(server.PERSIST).encode() not in resp.body
+
+    def test_health_reports_persistence_failure_as_degraded(self):
+        with patch.object(server, "_persistence_error", "write_failed"):
+            resp = self.fetch("/api/health")
+        assert resp.code == 200
+        d = json.loads(resp.body)
+        assert d["status"] == "degraded"
+        assert d["persistence"]["status"] == "error"
+
+    def test_malformed_json_is_rejected_without_mutating_config(self):
+        before = server.BENCH.cfg
+        resp = self.fetch("/api/config", method="POST", body=b'{"updates":')
+        assert resp.code == 400
+        assert json.loads(resp.body)["error"] == "Bad request"
+        assert server.BENCH.cfg == before
+
+    def test_non_object_json_is_rejected(self):
+        resp = self.fetch("/api/run", method="POST", body=b"[]")
+        assert resp.code == 400
+        assert json.loads(resp.body)["error"] == "Bad request"
 
     def test_unknown_panel_is_json_404(self):
         resp = self.fetch("/api/panel/pannello_inesistente")

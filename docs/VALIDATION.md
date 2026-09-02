@@ -5,7 +5,7 @@ compliance claim.
 
 ## Current quality gate
 
-- **386 automated tests**
+- **392 automated tests**
 - **13/13 physical self-test checkpoints**
 - all 32 Lab PRO panels exercised in Italian and English
 - browser checks for singleton tabs, BERT subviews, DCA EYE/WAVE, control
@@ -50,6 +50,9 @@ Tests verify that:
   Touchstone bodies are rejected before reaching the simulation engine;
 - JSON responses cannot contain literal HTML delimiters, internal exception
   details remain server-side, and AMI discovery cannot escape its trusted root;
+- malformed or non-object JSON cannot mutate the bench, session state is
+  written atomically outside the installed package, and health diagnostics do
+  not disclose its path;
 - packaged Plotly and font assets carry their third-party license files.
 
 ## Standards and procedures

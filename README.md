@@ -53,7 +53,7 @@ that same record.
 | 🧩 | **One complete datapath** | Electrical, optical, timing, DSP, and coding effects propagate end to end |
 | 🧪 | **Measured-channel support** | Touchstone 1.x/2.x S2P and mixed-mode S4P can replace the analytical channel |
 | 🎓 | **Explainable controls** | 123 bilingual controls document physics, observables, experiments, and model boundaries |
-| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 386 automated tests |
+| ✅ | **Auditable behavior** | 32 panels, signal ledger, checkpoints, paired invariants, and 392 automated tests |
 
 ### What you can investigate
 
@@ -191,6 +191,27 @@ python -m pytest -m "not slow" -q
 
 The server binds to localhost. Stop it with <code>Ctrl+C</code>; shutdown
 stops the LiveBench cleanly without leaving a traceback.
+
+Lab PRO persists the active configuration and chamber settings in a private
+per-user state file, not inside the installed Python package. The default is
+<code>~/Library/Application Support/SerDes Optical Lab PRO/session.json</code>
+on macOS, <code>$XDG_STATE_HOME/serdes-optical-lab/session.json</code> (or
+<code>~/.local/state/...</code>) on Linux, and the local application-data
+directory on Windows. Writes are atomic and the file is created with user-only
+permissions where the platform supports them.
+
+Use an ephemeral session or choose an explicit location when needed:
+
+~~~bash
+serdes-lab --no-persist
+serdes-lab --state-file ./private-session.json
+SERDES_LAB_STATE_FILE=./private-session.json serdes-lab
+~~~
+
+The read-only [health endpoint](http://localhost:8640/api/health) reports the
+service/package version, API version, acquisition state, active experiment,
+and persistence health without disclosing the local state-file path. The
+macOS launcher waits for this endpoint instead of relying on a fixed delay.
 
 ## Using the workbench
 
@@ -393,7 +414,12 @@ python -m compileall -q serdes_sim labpro
 git diff --check
 ~~~
 
-Current validated state: **386/386 tests pass**, physical self-test
+The <code>dev</code> extra installs the declared setuptools backend and wheel.
+This also makes <code>python -m build --no-isolation</code> valid after the
+development install; without that extra, prefer the isolated command shown
+above so the build frontend can provision <code>setuptools&gt;=77</code>.
+
+Current validated state: **392/392 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
