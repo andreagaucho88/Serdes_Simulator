@@ -6,7 +6,7 @@
 # un bump non vincolato può spostarla in silenzio. Aggiorna CONSAPEVOLMENTE
 # (esegui suite + selftest e dichiara l'eventuale ricalibrazione nell'handoff).
 numpy==1.26.4
-scipy==1.13.1
+scipy==1.18.1
 pandas==2.2.3
 streamlit==1.45.0    # frozen legacy UI
 tornado==6.4.1       # Lab PRO server
