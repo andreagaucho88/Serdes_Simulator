@@ -1452,6 +1452,25 @@ def test_chain_and_channel_plot_labels_are_bilingual():
     assert '"time relative to main cursor [UI]")' in source
 
 
+def test_public_text_assets_do_not_embed_local_home_paths():
+    """Public text and launchers must remain portable across developer hosts."""
+    root = Path(__file__).resolve().parent.parent
+    text_suffixes = {
+        ".command", ".css", ".html", ".js", ".json", ".md", ".py",
+        ".sh", ".toml", ".txt", ".yaml", ".yml",
+    }
+    blocked = ("/" + "Users" + "/", "C:" + chr(92) + "Users" + chr(92))
+    offenders = []
+    for path in root.rglob("*"):
+        if (not path.is_file() or path.suffix.lower() not in text_suffixes
+                or ".git" in path.parts or "__pycache__" in path.parts):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if any(marker in text for marker in blocked):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, offenders
+
+
 def test_bert_is_one_instrument_console_and_profile_feedback_is_end_to_end():
     """PPG, serializer/stress ed ED vivono nella sola console BERT, mentre
     il cambio profilo attende un riscontro fisico con BER contata."""

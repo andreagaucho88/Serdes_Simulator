@@ -632,7 +632,7 @@ python -m compileall -q serdes_sim labpro
 git diff --check
 ~~~
 
-Validated state after iteration 37: **375/375 tests pass**, physical self-test
+Validated state after iteration 38: **376/376 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
