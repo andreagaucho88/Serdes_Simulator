@@ -2,7 +2,32 @@
 
 All notable public changes are documented here.
 
-## Unreleased
+## 0.2.0 — unreleased
+
+- Golden-instrument correlation with real data: the six 53.125 GBd PAM4
+  optical waveforms of the IEEE P802.3bs SMF ad hoc contribution (Cisco TX,
+  Tektronix DSA8300/80C10, FlexDCA export) ship as a decimated library with
+  provenance and SHA-256; software pattern lock identifies the generator
+  pattern (PRBS11 MSB + delayed inverted copy on LSB, Gray), and LabPro TDECQ
+  lands inside or within 0.2 dB of the FlexDCA 5-tap range on all six
+  captures at the instrument's receiver bandwidth. FlexDCA CSV import
+  (`WaveformXYValues` / `WaveformPattern`) and `/api/golden/library`.
+- TDECQ reference equalizer optimized for minimum TDECQ (121.8.5.3) as an
+  option next to the MMSE grid; instrument receiver-bandwidth override.
+- Instrument-style reports: RFC 2544 with the Valkyrie2544 sections and
+  columns (throughput binary search, latency/jitter, frame loss,
+  back-to-back; Markdown/XML), ITU-T Y.1564 with the SAMComplete flow and
+  MEF KPIs (Markdown/CSV), and the MP1900A "Result PAM4" box (MSB/LSB ER/EC
+  with INS/OMI, 12-case symbol-error matrix; CSV).
+- SCPI server on TCP 5025 (PyVISA `TCPIP::127.0.0.1::5025::SOCKET`) with a
+  FlexDCA/MP1900A-flavoured command tree, IEEE 488.2 common commands and an
+  error queue (`docs/SCPI.md`).
+- Scope fixture from measured S-parameters (2- or 4-port Touchstone, mixed
+  mode) with the IEEE P802.3ck module compliance board bundled.
+- Stressed receiver: sinusoidal interference at the TX driver
+  (`tx_si_amp_pct`, `tx_si_freq_mhz`) in the SECQ recipe.
+- Panel catalog laid out per group; PyPI trusted publishing in the release
+  workflow.
 
 - Traffic panel rebuilt as PHY · L1 · L2 on the same record: real MAC frames
   with round-robin / weighted round-robin / IMIX scheduler, workload profiles

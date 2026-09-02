@@ -509,6 +509,32 @@ _add("tx_buj_amp_ui", "TX PLL / BERT", "serializer time base",
      "the bench: compare it with PJ at equal amplitude — no spectral "
      "line, just a broad hill in the TIE spectrum.",
      "PRBS7 indip. filtrata ~0.05·f_baud")
+_add("tx_si_amp_pct", "TX driver / BERT", "driver output",
+     "interferenza sinusoidale (SI) dello stressed-eye: un tono additivo "
+     "sull'uscita del driver, ampiezza in percento dell'ampiezza di picco del "
+     "segnale. È uno degli ingredienti del segnale di stress del ricevitore "
+     "(121.8.9.2: SJ + SI + rumore) che l'MP1900A aggiunge con il suo "
+     "generatore. 0 = spento. DICHIARATO: ampiezza e frequenza sono parametri "
+     "dichiarati, la tabella SI di clausola non è trascritta. Sul banco: "
+     "BERT → Stressed RX (SECQ) con SI, scope al driver per vedere il tono.",
+     "sinusoidal interference (SI) of the stressed eye: an additive tone at the "
+     "driver output, amplitude in percent of the signal peak amplitude. One of "
+     "the ingredients of the receiver stress signal (121.8.9.2: SJ + SI + noise) "
+     "that the MP1900A adds with its generator. 0 = off. DECLARED: amplitude and "
+     "frequency are declared parameters, the clause SI table is not transcribed. "
+     "On the bench: BERT → Stressed RX (SECQ) with SI, scope at the driver to see the tone.",
+     "v += A·sin(2π f t), A = pct/100 · V_pk", "valore > 0")
+_add("tx_si_freq_mhz", "TX driver / BERT", "driver output",
+     "frequenza del tono di interferenza sinusoidale: bassa (decine di MHz) "
+     "= modulazione lenta del baseline che il CDR/AGC possono inseguire, alta "
+     "(GHz) = interferenza in banda che chiude l'occhio. Sul banco: cambia f a "
+     "pari ampiezza e guarda l'EH@BER.",
+     "frequency of the sinusoidal interference tone: low (tens of MHz) = slow "
+     "baseline modulation the CDR/AGC can track, high (GHz) = in-band "
+     "interference closing the eye. On the bench: change f at equal amplitude "
+     "and watch EH@BER.",
+     "f [MHz]", "tx_si_amp_pct > 0")
+
 _add("tx_ssc_ppm", "TX PLL", "serializer frequency/phase",
      "profondità del down-spread: la frequenza viene modulata a triangolo "
      "verso il basso (mai sopra il nominale, per non violare i limiti "

@@ -1,0 +1,246 @@
+{
+ "schema": "labpro-golden-library/1",
+ "name": "ieee_802_3bs_smf_2017",
+ "title": "IEEE P802.3bs SMF ad hoc, 7 March 2017: 53.125 GBd PAM4 optical waveforms (Cisco TX) with FlexDCA TDECQ",
+ "source_url": "https://www.ieee802.org/3/bs/public/adhoc/smf/17_03_07/mazzini_02_0317_smf.RAR",
+ "reference_url": "https://www.ieee802.org/3/bs/public/adhoc/smf/17_03_07/mazzini_01_0317_smf.pdf",
+ "archive_sha256": "3730cc8da235235fc88f1629e4261147155f29e390bffcff916c84d3b76cfb6f",
+ "provenance": "Marco Mazzini (Cisco), '53GBaud links: sensitivities and TDECQ results versus equalizer', P802.3bs SMF ad hoc contribution. TX: SHF 613A DAC + LiNbO3 modulator; acquisition: Tektronix DSA8300 with 80C10 optical head, PRBS11 pattern, 100 samples/UI, exported through Keysight FlexDCA (N1010A, P.05.60.167) as WaveformXYValues CSV. Reference TDECQ computed by FlexDCA with the IEEE 802.3bs Draft 2.2 preset (reference receiver of the draft, 5-tap FFE, main tap at positions 2/3/4).",
+ "license_note": "Public IEEE 802.3 working-group contribution redistributed here as a decimated derivative (every 5th sample, 20 samples/UI) for measurement correlation; the original archive and slides remain the authoritative source.",
+ "instrument": "Tektronix DSA8300 + 80C10 \u2192 Keysight FlexDCA P.05.60 (802.3bs D2.2 preset)",
+ "symbol_rate_hz": 53125000000.0,
+ "samples_per_ui": 20,
+ "pattern": "PRBS11 (MSB) + delayed inverted PRBS11 (LSB), Gray levels",
+ "reference_rx_bw_fraction": 0.728,
+ "reference_rx_note": "D2.2-era reference receiver ~38.68 GHz (0.728\u00b7baud); the published clause uses 0.5\u00b7baud",
+ "tolerance_db": 0.5,
+ "waveforms": [
+  {
+   "id": "70G",
+   "file": "70G.npz",
+   "source_file": "PRBS11_70G_CISCO_AQC.csv",
+   "source_sha256": "53a0851caa51d9438161abf3d8fd2ccdebb5501a475978a2c6e23c6629c5544f",
+   "points_original": 204700,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 70000000000.0,
+   "channel_noise_w": 3.808e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 52.5,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     2.36,
+     2.06,
+     2.82
+    ],
+    "tdecq_5t_min_db": 2.06,
+    "tdecq_5t_max_db": 2.82,
+    "tdecq_5t2_main_1_2_3_db": [
+     2.77,
+     3.02,
+     3.59
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "delayed-copies-gray",
+    "prbs_order": 11,
+    "fit_residual": 0.0703,
+    "agreement_with_decisions": 0.63,
+    "decision_quality": 2.945,
+    "shift": 0
+   }
+  },
+  {
+   "id": "55G",
+   "file": "55G.npz",
+   "source_file": "PRBS11_55G_CISCO_AQC.csv",
+   "source_sha256": "46b29cddb7dc07d84890b154cebf41bdbceaf9792a9ab4391d9dd903cd27e8cc",
+   "points_original": 204700,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 55000000000.0,
+   "channel_noise_w": 2.917e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 41.25,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     2.42,
+     2.39,
+     3.17
+    ],
+    "tdecq_5t_min_db": 2.39,
+    "tdecq_5t_max_db": 3.17,
+    "tdecq_5t2_main_1_2_3_db": [
+     3.25,
+     3.54,
+     4.08
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "known-pattern (identified on 70G)",
+    "prbs_order": 11,
+    "fit_residual": 0.072,
+    "agreement_with_decisions": 0.641,
+    "decision_quality": 2.919,
+    "shift": 1857
+   }
+  },
+  {
+   "id": "43G",
+   "file": "43G.npz",
+   "source_file": "PRBS11_43G_CISCO_AQC.csv",
+   "source_sha256": "23990087d73326b63686408be110e03194b29d241470cb54d16d428150709841",
+   "points_original": 204700,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 43018140000.0,
+   "channel_noise_w": 1.972e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 32.26,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     2.97,
+     2.82,
+     3.7
+    ],
+    "tdecq_5t_min_db": 2.82,
+    "tdecq_5t_max_db": 3.7,
+    "tdecq_5t2_main_1_2_3_db": [
+     3.9,
+     4.38,
+     5.04
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "known-pattern (identified on 70G)",
+    "prbs_order": 11,
+    "fit_residual": 0.0726,
+    "agreement_with_decisions": 0.677,
+    "decision_quality": 2.934,
+    "shift": 1201
+   }
+  },
+  {
+   "id": "39G",
+   "file": "39G.npz",
+   "source_file": "PRBS11_39G_CISCO_AQC.csv",
+   "source_sha256": "7cac7d43f6224071de9bf976c6892dcb6a9d535cfe6a4269c90baf25f4bad80c",
+   "points_original": 204700,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 39813000000.0,
+   "channel_noise_w": 1.918e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 29.86,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     3.21,
+     3.12,
+     3.85
+    ],
+    "tdecq_5t_min_db": 3.12,
+    "tdecq_5t_max_db": 3.85,
+    "tdecq_5t2_main_1_2_3_db": [
+     4.19,
+     4.77,
+     5.71
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "known-pattern (identified on 70G)",
+    "prbs_order": 11,
+    "fit_residual": 0.0737,
+    "agreement_with_decisions": 0.691,
+    "decision_quality": 2.921,
+    "shift": 1578
+   }
+  },
+  {
+   "id": "32G",
+   "file": "32G.npz",
+   "source_file": "PRBS11_32G_CISCO_AQC.csv",
+   "source_sha256": "6f6e33746c72f3cfb2cbef8efd840adf31d4715dc4fe8df7e70ebb807d704d20",
+   "points_original": 204701,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 32000000000.0,
+   "channel_noise_w": 1.646e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 24.0,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     4.19,
+     3.69,
+     4.57
+    ],
+    "tdecq_5t_min_db": 3.69,
+    "tdecq_5t_max_db": 4.57,
+    "tdecq_5t2_main_1_2_3_db": [
+     5.36,
+     5.65,
+     6.51
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "known-pattern (identified on 70G)",
+    "prbs_order": 11,
+    "fit_residual": 0.0777,
+    "agreement_with_decisions": 0.605,
+    "decision_quality": 2.796,
+    "shift": 1348
+   }
+  },
+  {
+   "id": "28G",
+   "file": "28G.npz",
+   "source_file": "PRBS11_28G_CISCO_AQC.csv",
+   "source_sha256": "21b973e7aa99a6877ac8fe930b79e3fa86742f19dbfbd113edf6edafd8bc90d9",
+   "points_original": 204700,
+   "samples_per_ui_original": 100,
+   "n_symbols": 2047,
+   "channel_bandwidth_hz": 27958500000.0,
+   "channel_noise_w": 1.531e-05,
+   "acquisition_date": "11/22/2016 12:17:02",
+   "flexdca_equivalent_bw_ghz": 20.97,
+   "reference": {
+    "tdecq_5t_main_2_3_4_db": [
+     5.81,
+     4.48,
+     4.83
+    ],
+    "tdecq_5t_min_db": 4.48,
+    "tdecq_5t_max_db": 5.81,
+    "tdecq_5t2_main_1_2_3_db": [
+     8.32,
+     7.32,
+     10.1
+    ],
+    "oma_outer_dbm": null,
+    "er_db": null
+   },
+   "pattern_model": {
+    "model": "known-pattern (identified on 70G)",
+    "prbs_order": 11,
+    "fit_residual": 0.074,
+    "agreement_with_decisions": 0.62,
+    "decision_quality": 2.704,
+    "shift": 1221
+   }
+  }
+ ],
+ "pattern_model": {
+  "model": "delayed-copies-gray",
+  "prbs_order": 11,
+  "description": "PRBS11 on MSB and a delayed, inverted copy of the same PRBS11 on LSB (MUX-based PAM4 generator), Gray level order; identified on the 70G capture by least-squares FFE residual (7 % of the level spacing) and aligned to every capture"
+ }
+}

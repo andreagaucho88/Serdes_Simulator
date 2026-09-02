@@ -49,6 +49,8 @@ class LinkConfig:
     tx_pj_freq_mhz: float = 200.0  # frequenza del PJ sinusoidale
     tx_dcd_pct: float = 0.0       # duty-cycle distortion [% di UI, alternato ±/2]
     tx_buj_amp_ui: float = 0.0    # BUJ: jitter bounded non correlato (PRBS filtrata) [UI pk]
+    tx_si_amp_pct: float = 0.0    # interferenza sinusoidale sul driver [% dell'ampiezza pk]
+    tx_si_freq_mhz: float = 1000.0  # frequenza dell'interferenza sinusoidale [MHz]
     tx_ssc_ppm: float = 0.0       # SSC down-spread [ppm picco] (triangolare)
     tx_ssc_khz: float = 33.0      # frequenza di modulazione SSC
 
@@ -527,6 +529,7 @@ _NUMERIC_RANGES = {
     "wavelength_nm": (600, 2100), "fiber_km": (0, 500),
     "dispersion_ps_nm_km": (-200, 200), "dispersion_slope_ps_nm2_km": (-5, 5),
     "pmd_ps_sqrt_km": (0, 10), "pmd_power_split": (0, 1),
+    "tx_si_amp_pct": (0, 30), "tx_si_freq_mhz": (1, 20000),
     "fiber_gamma_w_inv_km": (0, 100), "fiber_loss_db_km": (0, 20),
     "mmf_modal_bw_mhz_km": (1, 1e6), "pd_responsivity_a_w": (0.001, 2),
     "pd_dark_current_a": (0, 1e-2), "pd_bw_hz": (1e8, 1e12),

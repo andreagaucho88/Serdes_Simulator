@@ -330,6 +330,74 @@ _a("golden_example", "Esempio sintetico", "Synthetic example", "DR4 · golden",
    "Non è una correlazione strumentale: non chiude lo step della DR4.",
    "Not an instrument correlation: it does not close the DR4 step.",
    "/api/golden", "last golden dataset (in memory)")
+_a("rfc2544", "RFC 2544 (Xena2544-style)", "RFC 2544 (Xena2544-style)", "Traffic",
+   "MAC → PHY → analyzer, offered load via IPG",
+   "Esegue le quattro prove RFC 2544 (Throughput con ricerca binaria dell'offered "
+   "rate, Latency/Jitter, Frame Loss, Back-to-Back) e produce il report con le "
+   "sezioni e le colonne del Valkyrie2544 (Tx Off.Rate, Tx/Rx Frames, Rate L1/L2, "
+   "Loss Rate, latenza e jitter in microsecondi, burst massimo).",
+   "Runs the four RFC 2544 tests (Throughput with a binary search of the offered "
+   "rate, Latency/Jitter, Frame Loss, Back-to-Back) and produces the report with "
+   "the Valkyrie2544 sections and columns (Tx Off.Rate, Tx/Rx Frames, L1/L2 rates, "
+   "Loss Rate, latency and jitter in microseconds, maximum burst).",
+   "Tabelle per frame size con Result State; export Markdown e XML nello stile "
+   "del report Xena.",
+   "Per-frame-size tables with Result State; Markdown and XML export in the "
+   "Xena report style.",
+   "Una corsia seriale senza DUT: la perdita viene dal BER del PHY ed è "
+   "indipendente dal rate, la latenza è budget + ritardo analogico misurato, il "
+   "jitter viene dal CDR; non è una certificazione RFC 2544.",
+   "One serial lane without a DUT: losses come from the PHY BER and are "
+   "rate-independent, latency is budget + measured analog delay, jitter comes "
+   "from the CDR; not an RFC 2544 certification.",
+   "/api/experiment/rfc2544", "report only")
+_a("y1564", "Y.1564 (SAMComplete-style)", "Y.1564 (SAMComplete-style)", "Traffic",
+   "services = L2 streams, offered CIR/EIR via IPG",
+   "Service Configuration Test (passi 25/50/75/100 % del CIR, CIR+EIR, policing) e "
+   "Service Performance Test con i KPI MEF: IR, FTD, FDV, FLR, Availability, "
+   "confrontati con lo SLA.",
+   "Service Configuration Test (25/50/75/100 % CIR steps, CIR+EIR, policing) and "
+   "Service Performance Test with the MEF KPIs: IR, FTD, FDV, FLR, Availability, "
+   "checked against the SLA.",
+   "Una riga per servizio e passo con Result; export Markdown e CSV.",
+   "One row per service and step with Result; Markdown and CSV export.",
+   "Senza policer né code lo step di policing è NOT_APPLICABLE e l'availability "
+   "dipende solo dal link; IR = offered × (1 − FLR) sulla finestra del record.",
+   "Without a policer or queues the policing step is NOT_APPLICABLE and "
+   "availability depends only on the link; IR = offered × (1 − FLR) over the record window.",
+   "/api/experiment/y1564", "report only")
+_a("bert_result_pam4", "Result PAM4 (MP1900A-style)", "Result PAM4 (MP1900A-style)",
+   "BERT · ED", "post-DFE decisions of the last record",
+   "Mostra gli errori come l'ED Anritsu: ER/EC per MSB e LSB con Total/INS/OMI, la "
+   "matrice dei 12 casi di errore di simbolo PAM4, Sync Loss e FEC; export CSV.",
+   "Shows errors like the Anritsu ED: ER/EC for MSB and LSB with Total/INS/OMI, the "
+   "12-case PAM4 symbol-error matrix, Sync Loss and FEC; CSV export.",
+   "Confronta INS (0→1) e OMI (1→0) e i casi di errore fra livelli adiacenti.",
+   "Compare INS (0→1) and OMI (1→0) and the error cases between adjacent levels.",
+   "La matrice viene dalla finestra di validazione dell'ultimo record; i contatori "
+   "cumulativi dall'accumulatore del banco.",
+   "The matrix comes from the validation window of the last record; cumulative "
+   "counters from the bench accumulator.",
+   "/api/report/bert", "report only")
+_a("golden_library", "Libreria golden IEEE", "IEEE golden library", "DR4 · golden",
+   "instrument waveforms → LabPro TDECQ",
+   "Correla LabPro con le sei waveform PAM4 misurate del contributo IEEE 802.3bs "
+   "SMF ad hoc (TX Cisco, scope Tektronix, TDECQ FlexDCA): pattern lock software, "
+   "TDECQ alla banda del ricevitore dello strumento e alla banda di clausola, "
+   "confronto con l'intervallo FlexDCA.",
+   "Correlates LabPro with the six measured PAM4 waveforms of the IEEE 802.3bs SMF "
+   "ad hoc contribution (Cisco TX, Tektronix scope, FlexDCA TDECQ): software pattern "
+   "lock, TDECQ at the instrument's receiver bandwidth and at the clause bandwidth, "
+   "comparison with the FlexDCA range.",
+   "Una riga per waveform con Δ e verdetto; l'ultima waveform caricata chiude lo "
+   "step di correlazione della DR4.",
+   "One row per waveform with Δ and verdict; the last loaded waveform closes the "
+   "DR4 correlation step.",
+   "Riferimenti FlexDCA del 2017 (draft 2.2): banda del ricevitore 0.728·baud, "
+   "non quella pubblicata; tolleranza dichiarata 0.5 dB.",
+   "2017 FlexDCA references (draft 2.2): 0.728·baud receiver bandwidth, not the "
+   "published one; declared tolerance 0.5 dB.",
+   "/api/experiment/golden-library", "last golden library run (in memory)")
 _a("traffic_benchmark", "Benchmark frame size", "Frame-size benchmark", "Traffic", "MAC → PHY → analyzer",
    "Esegue frame reali a più dimensioni attraverso la catena completa.",
    "Runs real frames of several sizes through the complete chain.",

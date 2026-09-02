@@ -7,8 +7,10 @@
 - [x] Public validation, contribution, security, and panel documentation
 - [x] Guided DCA/BER/FEC demo
 - [ ] Correlated example Touchstone datasets with provenance
-- [x] Golden-instrument correlation pipeline (`labpro-golden/1`), waiting for
-      a real DCA export to close the DR4 step
+- [x] Golden-instrument correlation with the IEEE P802.3bs SMF ad hoc
+      waveform library (6/6 within tolerance); FlexDCA CSV import
+- [x] SCPI/PyVISA remote control of the bench
+- [x] PyPI trusted publishing (`pipx install serdes-optical-lab`)
 - [ ] Automated accessibility and browser-performance checks
 
 ## 0.2 — comparison and reporting

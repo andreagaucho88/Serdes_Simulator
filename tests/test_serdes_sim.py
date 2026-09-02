@@ -1546,7 +1546,7 @@ def test_public_package_metadata_and_cli_contract():
     root = Path(__file__).resolve().parent.parent
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     project = metadata["project"]
-    assert project["version"] == "0.1.3"
+    assert project["version"] == "0.2.0"
     assert project["requires-python"] == ">=3.12"
     assert project["license"] == "MIT"
     assert "THIRD_PARTY_NOTICES.md" in project["license-files"]

@@ -37,6 +37,8 @@ KNOBS = {
                        {"ber"}, set()),
     "tx_rj_rms_fs": (500.0, {}, {"driver"}, set()),
     "tx_pj_amp_ui": (0.1, {}, {"driver"}, set()),
+    "tx_si_amp_pct": (8.0, {}, {"driver"}, set()),
+    "tx_si_freq_mhz": (400.0, {"tx_si_amp_pct": 8.0}, {"driver"}, set()),
     "tx_pj_freq_mhz": (1200.0, {"tx_pj_amp_ui": 0.08}, {"driver"}, set()),
     "tx_dcd_pct": (10.0, {}, {"driver"}, set()),
     "tx_buj_amp_ui": (0.12, {}, {"driver"}, set()),

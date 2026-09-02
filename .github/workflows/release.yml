@@ -37,3 +37,33 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
           fi
+
+      - name: Keep distributions for the PyPI job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish-pypi:
+    # PyPI trusted publishing (OIDC): il progetto serdes-optical-lab su PyPI
+    # accetta questo repository, questo workflow e l'environment "pypi";
+    # nessun token o password nei secret.
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/serdes-optical-lab/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true

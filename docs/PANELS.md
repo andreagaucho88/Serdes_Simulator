@@ -51,7 +51,10 @@ The one-box BERT contains four mutually exclusive subviews:
   <code>NOT_ASSESSED</code>.
 
 The ED is a digital checker connected to the same physical RX. It is not a
-second hidden analog receiver.
+second hidden analog receiver. Its **Result PAM4** box follows the Anritsu
+MP1900A layout: ER and EC for MSB and LSB split into Total / INS (0→1) /
+OMI (1→0), the 12-case PAM4 symbol-error matrix (tx level → rx level),
+Sync Loss and FEC counters, with a CSV export (`/api/report/bert`).
 
 #### 4. TX: FIR, DAC, and driver
 
@@ -210,7 +213,9 @@ Signal chain panel.
 
 **Fixture and de-embedding.** The scope bar declares a measurement fixture
 between DUT and DCA (0, 3, 6 or 10 dB at Nyquist, √f loss with a 50 ps delay)
-and a regularized inverse filter <code>H*/(|H|²+ε)</code> with a 30 dB floor.
+or takes a **measured S-parameter fixture** (2- or 4-port Touchstone, mixed
+mode Sdd21; the IEEE P802.3ck module compliance board is bundled) and a
+regularized inverse filter <code>H*/(|H|²+ε)</code> with a 30 dB floor.
 Both are evaluated by the server on the same record (EYE and WAVE) and never
 touch the datapath: the "embedded" eye is what the DCA would see without
 correction, the de-embedded one recovers the DUT plane up to the
@@ -289,9 +294,22 @@ lock, PCS overhead 66/64 — and go to <code>NOT_ASSESSED</code> with a
 suggested record length when no complete frame fits the window.
 
 Frame-size benchmark, ONT-style load ramp with latency budget and service
-disruption from CDR lock are kept. Declared: one serial lane, no switch,
-queues or congestion, no header modifiers or payload timestamps, not RFC 2544
-or Y.1564.
+disruption from CDR lock are kept.
+
+**Instrument reports.** *RFC 2544 · Xena2544-style* runs the four tests
+(throughput with a binary search of the offered rate through the IPG,
+latency/jitter at the throughput rate, frame loss at 100 % and 50 %,
+back-to-back) and renders them with the Valkyrie2544 sections and column
+names (`Tx Off.Rate (Percent)`, `Tx (Frames)`, `Tx Rate (L1) (Bit/s)`,
+`Loss Rate (Percent)`, `Avg Latency (micsec)`, `Tx Burst (Frames)` …), with
+Markdown and XML export. *Y.1564 · SAMComplete-style* runs the Service
+Configuration Test (25/50/75/100 % CIR, CIR+EIR, policing) and the Service
+Performance Test with the MEF KPIs IR, FTD, FDV, FLR and Availability against
+an SLA, with Markdown and CSV export. Declared: one serial lane, no switch,
+queues, policer or congestion, no header modifiers or payload timestamps;
+losses come from the PHY bit errors and are rate-independent, latency is a
+block budget plus the measured analog delay, jitter comes from the CDR phase
+trace. The reports keep the instruments' structure, not their certification.
 
 #### 23. Module / CMIS-lite
 
@@ -383,7 +401,11 @@ cases carry their own steps).
 **Golden correlation.** A <code>labpro-golden/1</code> JSON (optical
 waveform, transmitted symbols, instrument references for TDECQ/OMA/ER) can be
 loaded from the panel; LabPro measures the same waveform and reports the
-deltas with a tolerance. A dataset exported from a real DCA
+deltas with a tolerance. The **IEEE 802.3bs library** button correlates the
+six measured Cisco/FlexDCA waveforms shipped with the package (software
+pattern lock, TDECQ at the instrument's receiver bandwidth and at the clause
+bandwidth, FlexDCA 5-tap range, Δ and verdict per capture); any capture can
+also be loaded as the DR4 golden dataset. A dataset exported from a real DCA
 (<code>source = instrument</code>) closes the correlation step with a
 PASS/FAIL model verdict; the built-in synthetic example only exercises the
 pipeline (<code>PROXY</code>). Traceable instrument uncertainty remains out of
@@ -419,3 +441,11 @@ Runs paired checks and invariants. Examples include:
 
 Results distinguish <code>PASS</code>, <code>FAIL</code>, and not assessable
 conditions.
+
+## Remote control (SCPI)
+
+Every instrument of the workbench can be driven from PyVISA over TCP
+(`TCPIP::127.0.0.1::5025::SOCKET`): configuration, acquisition, DCA and
+jitter measurements, BERT ED/PPG in the MP1900A style, traffic procedures and
+reports. The command tree and a client example are in
+[SCPI.md](SCPI.md).

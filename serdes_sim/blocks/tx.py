@@ -104,6 +104,14 @@ def run_tx(cfg, pam4_symbols, rng=None) -> TxResult:
                                        causal=cfg.causal_filters))
     driver_voltage_v = np.clip(driver_filtered_v, -cfg.driver_clip_v, cfg.driver_clip_v)
     driver_clip_fraction = float(np.mean(np.abs(driver_filtered_v) > cfg.driver_clip_v))
+    if cfg.tx_si_amp_pct > 0:
+        # Interferenza sinusoidale (SI) dello stressed-eye di clausola: un tono
+        # additivo sul driver, ampiezza in % dell'ampiezza di picco del segnale
+        # (parametri dichiarati: la tabella SI di clausola non è trascritta)
+        peak = 0.5 * float(np.max(driver_filtered_v) - np.min(driver_filtered_v))
+        t = np.arange(len(driver_voltage_v), dtype=float) / cfg.fs_analog_hz
+        driver_voltage_v = driver_voltage_v + (cfg.tx_si_amp_pct / 100.0) * peak * np.sin(
+            2 * np.pi * cfg.tx_si_freq_mhz * 1e6 * t)
     if not cfg.tx_output_on:
         # OUTPUT OFF stile PPG/MP1900A: lo stadio d'uscita non pilota nulla
         # (mute elettrico, P/N al solo common-mode). La sorgente ottica resta

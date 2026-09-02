@@ -462,7 +462,8 @@ STRESSED_RX_FINAL_SYMBOLS = 32768       # record del test BER finale (PRBS)
 
 def run_stressed_receiver(cfg, profile=None, seed: int = 500283,
                           sj_ui: float = STRESSED_SJ_UI,
-                          sj_mhz: float = STRESSED_SJ_MHZ,
+                          sj_mhz: float = STRESSED_SJ_MHZ, si_pct: float = 0.0,
+                          si_mhz: float = 1000.0,
                           target_secq_db=None, iters: int = 8, cancel=None) -> dict:
     """Calibrazione dello stressed eye sul SECQ (struttura 802.3 stressed
     receiver sensitivity): SJ + rumore gaussiano (RIN) calibrati finché il
@@ -492,6 +493,7 @@ def run_stressed_receiver(cfg, profile=None, seed: int = 500283,
         target = float(target_secq_db)
         target_basis = "model"
     base = cfg.with_updates(tx_pj_amp_ui=float(sj_ui), tx_pj_freq_mhz=float(sj_mhz),
+                            tx_si_amp_pct=float(si_pct), tx_si_freq_mhz=float(si_mhz),
                             rin_at_source=True,
                             fec_mode="none" if cfg.pattern != "prbs" else cfg.fec_mode)
     trail = []
@@ -600,9 +602,14 @@ def run_stressed_receiver(cfg, profile=None, seed: int = 500283,
               "no uncorrectable codeword on the record",
               (f"{fl.frames_uncorrectable} uncorrectable · post-FEC BER {fl.post_fec_ber:.3g}"
                if fl is not None else "FEC not in path"), "model"),
-        _step("si", "Interferenza sinusoidale (SI)", "Sinusoidal interference (SI)", NOT_ASSESSED,
-              "SI di clause non implementata", "clause SI not implemented",
-              "blocker: no sinusoidal interference source in the model", "blocker"),
+        _step("si", "Interferenza sinusoidale (SI)", "Sinusoidal interference (SI)",
+              PROXY if si_pct > 0 else NOT_ASSESSED,
+              (f"SI {si_pct:g} % @ {si_mhz:g} MHz sul driver (parametri dichiarati)" if si_pct > 0
+               else "SI non applicata (imposta si_pct > 0); tabella SI di clausola non trascritta"),
+              (f"SI {si_pct:g} % @ {si_mhz:g} MHz at the driver (declared parameters)" if si_pct > 0
+               else "SI not applied (set si_pct > 0); clause SI table not transcribed"),
+              ("additive tone at the TX driver output" if si_pct > 0
+               else "no sinusoidal interference in this run"), "proxy"),
         _step("instruments", "Calibrazione strumentale", "Instrument calibration", NOT_ASSESSED,
               "O/E, scope, sorgenti di stress tracciabili", "traceable O/E, scope and stress sources",
               "numerical bench: no instrument uncertainty", "blocker"),
@@ -615,7 +622,8 @@ def run_stressed_receiver(cfg, profile=None, seed: int = 500283,
                       "profile": profile, "interface": meta.get("interface")},
         "status": status, "target_secq_db": target, "target_basis": target_basis,
         "recipe": {"rin_db_hz": float(rin_cal), "tx_pj_amp_ui": float(sj_ui),
-                   "tx_pj_freq_mhz": float(sj_mhz)},
+                   "tx_pj_freq_mhz": float(sj_mhz), "tx_si_amp_pct": float(si_pct),
+                   "tx_si_freq_mhz": float(si_mhz)},
         "secq_db": secq_cal, "secq_verdict": secq_v,
         "secq_calibration_db": secq_calibration_db,
         "final_record_symbols": int(final_n),

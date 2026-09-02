@@ -339,7 +339,8 @@ def _tdecq_noise_enhancement(taps, b_ref, a_ref, sps, n_freq=8192):
 def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
                  target_ser=TDECQ_TARGET_SER, q_t=TDECQ_Q_T,
                  histogram_width_ui=TDECQ_HISTOGRAM_WIDTH_UI,
-                 sigma_s_w=0.0, measure="TDECQ"):
+                 sigma_s_w=0.0, measure="TDECQ", optimize="mmse",
+                 rx_bw_fraction=None):
     """TDECQ con la struttura di clause 121.8.5.3 — DICHIARATO non certificato.
 
     ``sigma_s_w`` è il rumore RMS del ricevitore di misura (O/E + scope,
@@ -361,8 +362,11 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
 
     TDECQ = 10·log10(σ_ideal / σ_G),  σ_ideal = OMA_outer/(6·Q_t), Q_t=3.414.
     Deviazioni dichiarate: BT4 zero-fase; adattamento con i simboli noti
-    (bench, non pattern lock dello strumento); la ricerca dei tap usa una
-    griglia ridge finita, non l'ottimizzazione strumentale esaustiva.
+    (bench, non pattern lock dello strumento). ``optimize="mmse"`` (default
+    storico) sceglie i tap su una griglia ridge MMSE; ``optimize="min_tdecq"``
+    parte da lì e ottimizza i tap per il TDECQ minimo come richiede
+    121.8.5.3. ``rx_bw_fraction`` sovrascrive la banda del BT4 (0.5·baud di
+    clausola) per correlazioni con strumenti che usano un'altra impostazione.
     """
     from scipy import signal as _sig
     P = np.asarray(P_w, dtype=float)
@@ -371,8 +375,9 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
     m = len(levels)
 
     # 1. filtro di ricezione BT4 0.5·baud (zero-fase, dichiarato)
-    wn = min(TDECQ_REFERENCE_RX_BW_FRACTION * symbol_rate_hz / (fs_hz / 2),
-             0.99)
+    bw_frac = (TDECQ_REFERENCE_RX_BW_FRACTION if rx_bw_fraction is None
+               else float(rx_bw_fraction))
+    wn = min(bw_frac * symbol_rate_hz / (fs_hz / 2), 0.99)
     b, a = _sig.bessel(4, wn, btype="low", norm="mag")
     Pf = _sig.filtfilt(b, a, P)
 
@@ -470,28 +475,25 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
             tot += ser / len(cl)
         return tot
 
-    best_out = None
-    for lam in (0.0, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.3):
-        try:
-            taps = np.linalg.solve(
-                XtX + lam * trace_n * np.eye(5), Xty)
-        except np.linalg.LinAlgError:
-            continue
-        # Il reference equalizer ha guadagno DC unitario: Σc[k] = 1.
+    def evaluate(taps, lam=None):
+        """TDECQ per un set di tap; None se il SER resta sopra il target
+        anche senza rumore aggiunto. Il reference equalizer ha guadagno DC
+        unitario: Σc[k] = 1."""
+        taps = np.asarray(taps, dtype=float)
         tap_sum = float(np.sum(taps))
         if abs(tap_sum) < 1e-12:
-            continue
+            return None
         taps = taps / tap_sum
         ceq = _tdecq_noise_enhancement(taps, b, a, sps)
         cl = [clusters_for(taps, y_m, t_m), clusters_for(taps, y_p, t_p)]
         if any(c is None for c in cl):
-            continue
+            return None
         oma_outer = float(np.mean([c[0][-1] - c[0][0] for c in cl]))
         if oma_outer <= 0:
-            continue
+            return None
         sigma_ideal = oma_outer / (6.0 * q_t)
         if ser_with(cl, ceq, 0.0) > target_ser:
-            continue
+            return None
         lo, hi = 0.0, 4.0 * sigma_ideal
         while ser_with(cl, ceq, hi) < target_ser and hi < 64 * sigma_ideal:
             hi *= 2
@@ -504,21 +506,59 @@ def tdecq_report(P_w, symbols, spec, sps, symbol_rate_hz, fs_hz,
         sigma_g = 0.5 * (lo + hi)
         sigma_total = float(np.sqrt(sigma_g ** 2 + float(sigma_s_w) ** 2))
         tdecq = float(10 * np.log10(sigma_ideal / max(sigma_total, 1e-30)))
-        if best_out is None or tdecq < best_out["tdecq_db"]:
-            best_out = {"tdecq_db": tdecq, "sigma_ideal": sigma_ideal,
-                        "sigma_g": sigma_g, "sigma_s": float(sigma_s_w),
-                        "oma_outer": oma_outer,
-                        "ceq_db": float(20 * np.log10(ceq)),
-                        "taps": [float(v) for v in taps],
-                        "tap_sum": float(np.sum(taps)),
-                        "ridge_lambda": lam,
-                        "target_ser": target_ser, "q_t": q_t,
-                        "histogram_centers_ui": list(TDECQ_HISTOGRAM_CENTERS_UI),
-                        "histogram_width_ui": histogram_width_ui,
-                        "reference_receiver_bw_hz": (
-                            TDECQ_REFERENCE_RX_BW_FRACTION * symbol_rate_hz),
-                        "ceq_method": "BT4-shaped noise integral (121-9)",
-                        "measure": measure}
+        return {"tdecq_db": tdecq, "sigma_ideal": sigma_ideal,
+                "sigma_g": sigma_g, "sigma_s": float(sigma_s_w),
+                "oma_outer": oma_outer,
+                "ceq_db": float(20 * np.log10(ceq)),
+                "taps": [float(v) for v in taps],
+                "tap_sum": float(np.sum(taps)),
+                "ridge_lambda": lam,
+                "target_ser": target_ser, "q_t": q_t,
+                "histogram_centers_ui": list(TDECQ_HISTOGRAM_CENTERS_UI),
+                "histogram_width_ui": histogram_width_ui,
+                "reference_receiver_bw_hz": bw_frac * symbol_rate_hz,
+                "ceq_method": "BT4-shaped noise integral (121-9)",
+                "equalizer_optimization": optimize,
+                "measure": measure}
+
+    best_out = None
+    for lam in (0.0, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.3):
+        try:
+            taps = np.linalg.solve(
+                XtX + lam * trace_n * np.eye(5), Xty)
+        except np.linalg.LinAlgError:
+            continue
+        out = evaluate(taps, lam)
+        if out is not None and (best_out is None
+                                or out["tdecq_db"] < best_out["tdecq_db"]):
+            best_out = out
+    if optimize == "min_tdecq" and best_out is not None:
+        # 121.8.5.3: i tap dell'equalizzatore di riferimento sono ottimizzati
+        # per MINIMIZZARE il TDECQ, non in senso MMSE. Ricerca Nelder-Mead sui
+        # 4 tap liberi (somma vincolata a 1) a partire dalla soluzione
+        # MMSE/ridge migliore.
+        from scipy import optimize as _opt
+        start = np.asarray(best_out["taps"], dtype=float)
+        free_idx = [0, 1, 3, 4]
+
+        def unpack(v):
+            t = np.zeros(5)
+            t[free_idx] = v
+            t[2] = 1.0 - float(np.sum(v))
+            return t
+
+        def cost(v):
+            out = evaluate(unpack(v))
+            return 1e3 if out is None else out["tdecq_db"]
+
+        res = _opt.minimize(cost, start[free_idx], method="Nelder-Mead",
+                            options={"xatol": 1e-3, "fatol": 2e-3,
+                                     "maxiter": 400})
+        out = evaluate(unpack(res.x))
+        if out is not None and out["tdecq_db"] < best_out["tdecq_db"]:
+            out["ridge_lambda"] = best_out["ridge_lambda"]
+            out["optimizer_iterations"] = int(res.nit)
+            best_out = out
     if best_out is None:
         return {"tdecq_db": None, "measure": measure,
                 "reason": {"it": "SER oltre il target per ogni equalizzatore provato",

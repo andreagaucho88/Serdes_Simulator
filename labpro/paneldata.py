@@ -162,28 +162,65 @@ def _node_delay_ui(sim, node):
 # Eye + misure da strumento
 # ---------------------------------------------------------------------------
 
-def fixture_response(f_hz, cfg, loss_db_nyq, delay_ps=50.0):
-    """Fixture di misura dichiarata (cavo/connettore fra DUT e DCA): perdita
-    ∝ √f (skin effect) con ``loss_db_nyq`` dB a Nyquist e ritardo lineare."""
-    f = np.abs(np.asarray(f_hz, dtype=float))
+def fixture_response(f_hz, cfg, loss_db_nyq, delay_ps=50.0, sparams=None):
+    """Fixture di misura fra DUT e DCA.  Senza ``sparams``: modello
+    dichiarato con perdita ∝ √f (skin effect), ``loss_db_nyq`` dB a Nyquist
+    e ritardo lineare.  Con ``sparams`` (dict ``f_hz``, ``h`` complesso dal
+    Touchstone misurato, S21 o Sdd21): modulo e fase srotolata interpolati
+    sulla griglia, H(−f) = H(f)* per la simmetria hermitiana."""
+    f_signed = np.asarray(f_hz, dtype=float)
+    f = np.abs(f_signed)
+    if sparams is not None:
+        fs, h = np.asarray(sparams["f_hz"], float), np.asarray(sparams["h"], complex)
+        mag = np.interp(f, fs, np.abs(h), left=float(np.abs(h[0])), right=float(np.abs(h[-1])))
+        ph = np.interp(f, fs, np.unwrap(np.angle(h)), left=0.0, right=float(np.unwrap(np.angle(h))[-1]))
+        H = mag * np.exp(1j * ph)
+        return np.where(f_signed < 0, np.conj(H), H)
     mag = 10 ** (-float(loss_db_nyq) * np.sqrt(f / cfg.nyquist_hz) / 20)
-    return mag * np.exp(-2j * np.pi * np.asarray(f_hz) * delay_ps * 1e-12)
+    return mag * np.exp(-2j * np.pi * f_signed * delay_ps * 1e-12)
 
 
-def apply_fixture(wave, cfg, loss_db_nyq):
+def fixture_from_touchstone(text, pairs="13_24"):
+    """Touchstone (2 o 4 porte) → dict ``{"f_hz", "h", "ports", "z0", "n_points"}``
+    con la risposta di trasmissione (S21, o Sdd21 mixed-mode per 4 porte)."""
+    from serdes_sim.blocks.channel import parse_touchstone_text, s4p_mixed_mode_21
+    f, S, z0, n_ports = parse_touchstone_text(text)
+    if n_ports == 4:
+        h, _ = s4p_mixed_mode_21(f, S, pairs=pairs)
+    else:
+        h = S[:, 1, 0]
+    h = np.asarray(h, complex)
+    return {"f_hz": np.asarray(f, float), "h": h, "ports": int(n_ports), "z0": float(z0),
+            "n_points": int(len(f)),
+            "il_db": {f"{x / 1e9:g}": float(20 * np.log10(max(abs(np.interp(x, f, np.abs(h))), 1e-12)))
+                      for x in (1e9, 10e9, 26.5625e9, 40e9) if x <= f[-1]}}
+
+
+def bundled_fixtures():
+    """Fixture misurate incluse nel pacchetto (con provenienza)."""
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "serdes_sim" / "data" / "fixtures"
+    meta = root / "fixtures.json"
+    if not meta.exists():
+        return []
+    return [dict(x, path=str(root / x["file"])) for x in json.loads(meta.read_text())["fixtures"]]
+
+
+def apply_fixture(wave, cfg, loss_db_nyq, sparams=None):
     """Waveform come la vede il DCA ATTRAVERSO la fixture (embedded)."""
     y, _, _ = apply_frequency_response(
         np.asarray(wave, float), cfg.fs_analog_hz,
-        lambda f: fixture_response(f, cfg, loss_db_nyq))
+        lambda f: fixture_response(f, cfg, loss_db_nyq, sparams=sparams))
     return y
 
 
-def deembed_fixture(wave, cfg, loss_db_nyq, reg_db=30.0):
+def deembed_fixture(wave, cfg, loss_db_nyq, reg_db=30.0, sparams=None):
     """De-embedding della fixture: filtro inverso regolarizzato
     H⁻¹ = H*/(|H|²+ε), ε = 10^(−reg/10)·max|H|² — il guadagno ad alta
     frequenza resta limitato dal floor di regolarizzazione (rumore)."""
     def inv(f):
-        H = fixture_response(f, cfg, loss_db_nyq)
+        H = fixture_response(f, cfg, loss_db_nyq, sparams=sparams)
         eps = 10 ** (-float(reg_db) / 10) * float(np.max(np.abs(H)) ** 2)
         return np.conj(H) / (np.abs(H) ** 2 + eps)
     y, _, _ = apply_frequency_response(np.asarray(wave, float),
@@ -191,8 +228,14 @@ def deembed_fixture(wave, cfg, loss_db_nyq, reg_db=30.0):
     return y
 
 
-def _fixture_stage(wave, cfg, fixture_db=0.0, deembed=False):
+def _fixture_stage(wave, cfg, fixture_db=0.0, deembed=False, sparams=None):
     """Applica fixture (+ de-embedding) e ritorna (wave, etichetta)."""
+    if sparams is not None:
+        name = sparams.get("name", "S-parameter")
+        w = apply_fixture(wave, cfg, 0.0, sparams=sparams)
+        if deembed:
+            return deembed_fixture(w, cfg, 0.0, sparams=sparams), f"fixture {name} · de-embedded"
+        return w, f"fixture {name} (embedded)"
     if not fixture_db or fixture_db <= 0:
         return wave, ""
     w = apply_fixture(wave, cfg, fixture_db)
@@ -218,13 +261,13 @@ def _bt4_reference(wave, cfg, ref):
 
 
 def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter="",
-              profile=None, fixture_db=0.0, deembed=False):
+              profile=None, fixture_db=0.0, deembed=False, fixture_sparams=None):
     wave = np.asarray(get_wave(sim, node), dtype=float)
-    wave, fix_label = _fixture_stage(wave, cfg, fixture_db, deembed)
+    wave, fix_label = _fixture_stage(wave, cfg, fixture_db, deembed, sparams=fixture_sparams)
     wave, ref_label = _bt4_reference(wave, cfg, ref_filter)
     meas = dict(_memo(sim, ("eye", node, ref_filter, float(fixture_db or 0), bool(deembed)),
                       lambda: eye_measures(sim, cfg, node, ref_filter=ref_filter,
-                                           fixture_db=fixture_db, deembed=deembed)))
+                                           fixture_db=fixture_db, deembed=deembed, fixture_sparams=fixture_sparams)))
     meas["fixture"] = fix_label
     if node == "pfiber" and sim.spec.bits_per_symbol == 2:
         meas["tdecq"] = _tdecq_for(sim, cfg, profile)
@@ -256,13 +299,13 @@ def eye_panel(sim, cfg, node="vctle", n_traces=500, ref_filter="",
 
 
 def eye_measures(sim, cfg, node="vctle", ref_filter="", fixture_db=0.0,
-                 deembed=False):
+                 deembed=False, fixture_sparams=None):
     """Misure per occhio: livelli μ/σ, height 3σ, width alla soglia, Q, RLM.
 
     Proxy dichiarati: allineamento dal timing dell'acquisition, niente filtro
     di riferimento né procedure di clause (non è TDECQ)."""
     wave = np.asarray(get_wave(sim, node), dtype=float)
-    wave, _fix_label = _fixture_stage(wave, cfg, fixture_db, deembed)
+    wave, _fix_label = _fixture_stage(wave, cfg, fixture_db, deembed, sparams=fixture_sparams)
     wave, _ref_label = _bt4_reference(wave, cfg, ref_filter)
     sps = cfg.analog_sps
     spec = sim.spec
@@ -771,14 +814,14 @@ def _wave_window(wave, cfg, start_ui=80, span_ui=32, max_points=1200):
 
 
 def wave_panel(sim, cfg, node="vctle", start_ui=100.0, span_ui=64.0,
-               ref_filter="", max_points=2600, fixture_db=0.0, deembed=False):
+               ref_filter="", max_points=2600, fixture_db=0.0, deembed=False, fixture_sparams=None):
     """Vista Oscilloscope stile FlexDCA/N1000A: finestra della waveform
     CONTINUA del nodo — non ripiegata sull'occhio — dallo stesso record
     coerente dello Scope, con lo stesso ricevitore di riferimento BT4
     opzionale usato dalle misure. start/span navigano il record."""
     wave = get_wave(sim, node)
     label, _domain, unit, _side = NODES[node]
-    wave, fix_label = _fixture_stage(np.asarray(wave, float), cfg, fixture_db, deembed)
+    wave, fix_label = _fixture_stage(np.asarray(wave, float), cfg, fixture_db, deembed, sparams=fixture_sparams)
     wave, rf_note = _bt4_reference(wave, cfg, ref_filter)
     if fix_label:
         rf_note = (rf_note + " · " if rf_note else "") + fix_label

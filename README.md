@@ -208,7 +208,63 @@ for both EYE and WAVE; the jitter panel adds the DCA jitter-mode pair J2/J9
 
 ![Jitter panel with J2/J9 readout](docs/media/12-jitter-j2-j9.jpg)
 
+### 8. Golden correlation with real instrument data, instrument-style reports, SCPI
+
+![Golden library correlation table in the DR4 panel](docs/media/13-golden-library.jpg)
+
+**Correlation with measured waveforms.** The package ships the six 53.125 GBd
+PAM4 optical waveforms contributed to the IEEE P802.3bs SMF ad hoc (Cisco
+transmitter, Tektronix DSA8300 + 80C10, exported through Keysight FlexDCA)
+as a decimated library with provenance and SHA-256 of the originals. LabPro
+locks to the generator pattern in software (PRBS11 on the MSB and a delayed,
+inverted copy on the LSB) and measures TDECQ with the reference equalizer
+optimized for minimum TDECQ. At the instrument's receiver bandwidth the
+LabPro values fall inside, or within 0.2 dB of, the FlexDCA 5-tap range on
+all six captures:
+
+| Capture | Equivalent BW | FlexDCA 5T (main tap 2/3/4) | LabPro @ instrument BW | LabPro @ clause 0.5·Bd |
+| --- | --- | --- | --- | --- |
+| 70G | 52.50 GHz | 2.06 – 2.82 dB | 3.02 dB (+0.20) | 4.23 dB |
+| 55G | 41.25 GHz | 2.39 – 3.17 dB | 3.25 dB (+0.08) | 4.54 dB |
+| 43G | 32.26 GHz | 2.82 – 3.70 dB | 3.54 dB (in range) | 4.93 dB |
+| 39G | 29.86 GHz | 3.12 – 3.85 dB | 3.88 dB (+0.03) | 5.58 dB |
+| 32G | 24.00 GHz | 3.69 – 4.57 dB | 4.40 dB (in range) | 6.32 dB |
+| 28G | 20.97 GHz | 4.48 – 5.81 dB | 4.95 dB (in range) | 7.27 dB |
+
+The references date from March 2017 (802.3bs Draft 2.2 preset, receiver at
+0.728·baud), so this is a model correlation with a declared tolerance of
+0.5 dB, not a compliance claim; the clause-bandwidth column is what the
+published standard asks for. A FlexDCA CSV export of your own transmitter
+can be loaded the same way.
+
+![RFC 2544 report in the Xena2544 structure inside the traffic panel](docs/media/14-rfc2544-report.jpg)
+
+**Reports shaped like the instruments' own.** The traffic panel runs RFC 2544
+(throughput binary search, latency/jitter, frame loss, back-to-back) and
+ITU-T Y.1564 (service configuration and performance tests with the MEF KPIs
+IR, FTD, FDV, FLR, availability) and exports them with the sections and
+column names of the Valkyrie2544 and SAMComplete reports (Markdown, XML,
+CSV). The BERT checker shows the MP1900A "Result PAM4" box: MSB/LSB error
+ratio and count split into insertions and omissions, plus the 12-case PAM4
+symbol-error matrix. Every report states its declared boundary: one serial
+lane, no packet DUT, losses from the PHY bit errors.
+
+**Remote control.** The bench answers SCPI over TCP like a real instrument:
+`*IDN?`, `MEASure:EYE:TDEQ?`, `CALCulate:DATA:EALarm? "CURRent:ER:TOTal"`,
+`SOURce:JITTer:SJ:AMPLitude`, `TRAFfic:RFC2544:RUN`, and a generic
+`CONFigure:PARameter` for every field. See [docs/SCPI.md](docs/SCPI.md).
+
 ## Quick start
+
+The fastest way, once the 0.2.0 release is on PyPI:
+
+~~~bash
+pipx install serdes-optical-lab      # or: pip install serdes-optical-lab
+serdes-lab                           # opens the bench on http://localhost:8640
+~~~
+
+The same command also starts the SCPI server on `127.0.0.1:5025` for
+PyVISA scripts (see [SCPI remote control](docs/SCPI.md)).
 
 ### Requirements
 
@@ -326,7 +382,7 @@ The public workbench contains 32 panels organized by signal flow:
 | Channel and optics | Electrical channel, COM, modulator/fiber |
 | Receiver and DSP | RX front end, PD, TIA, AGC, CTLE, ADC, CDR, FSE/DFE, decisions |
 | Live instruments | DCA (fixture/de-embed), jitter/TIE (J2/J9), spectrum, BER, FEC, traffic PHY · L1 · L2, CMIS-lite |
-| Procedures | Sweep, JTOL, training, AN/LT, Compliance, DR4 (stress space + golden), alignment, ledger, physics audit |
+| Procedures | Sweep, JTOL, training, AN/LT, Compliance, DR4 (stress space + golden library), alignment, ledger, physics audit |
 
 Each entry documents purpose, controls, readouts, a suggested experiment, and
 the boundary between implemented physics and educational approximation.
@@ -385,6 +441,12 @@ automation:
 | <code>/api/golden</code> | GET / POST | Golden-instrument dataset (<code>labpro-golden/1</code>) and its correlation |
 | <code>/api/scope?fix=&lt;dB&gt;&amp;deembed=1</code> | GET | EYE/WAVE with a declared fixture and regularized de-embedding |
 | <code>/api/report/standards?format=json|md</code> | GET | Traceable compliance report from the same record |
+| <code>/api/golden/library</code> | GET | Bundled golden libraries (IEEE 802.3bs SMF ad hoc waveforms) |
+| <code>/api/experiment/golden-library</code> | POST | Systematic LabPro-vs-instrument correlation over a library |
+| <code>/api/experiment/rfc2544</code>, <code>/api/experiment/y1564</code> | POST | Instrument-style procedures on the current bench |
+| <code>/api/report/rfc2544</code>, <code>/api/report/y1564</code>, <code>/api/report/bert</code> | GET | Xena2544 / SAMComplete / MP1900A-style exports (json, md, xml, csv) |
+| <code>/api/scope/fixture</code> | GET / POST | Measured S-parameter fixture for scope de-embedding |
+| TCP <code>127.0.0.1:5025</code> | SCPI | PyVISA-compatible remote control (`docs/SCPI.md`) |
 | <code>/ws</code> | WebSocket | State, invalidation, record, and progress updates |
 
 Example:
@@ -474,7 +536,7 @@ This also makes <code>python -m build --no-isolation</code> valid after the
 development install; without that extra, prefer the isolated command shown
 above so the build frontend can provision <code>setuptools&gt;=77</code>.
 
-Current validated state: **475/475 tests pass**, physical self-test
+Current validated state: **494/494 tests pass**, physical self-test
 **13/13**, JavaScript syntax, Python compilation, and whitespace checks clean.
 
 The additional browser audit traverses all 32 panels in both IT and EN,
@@ -569,8 +631,15 @@ process. Symlinks that resolve outside that directory are ignored.
 - CMIS and traffic tests are functional subsets.
 - DR4 covers dispersion × polarization, a reflection pair and stress RIN,
   but traceable instrument uncertainty is still missing and the stress RIN
-  value is declared (clause RIN_21.4OMA to verify); golden correlation needs
-  a real DCA export to close.
+  value is declared (clause RIN_21.4OMA to verify).
+- The golden correlation uses 2017 draft-era FlexDCA references at the
+  instrument's receiver bandwidth; it is a model correlation with a
+  declared tolerance, not a certification, and it covers TDECQ only.
+- RFC 2544 and Y.1564 reports keep the instruments' structure but run on
+  one serial lane without a packet DUT: no queues, no policer, latency from
+  a block budget plus the measured analog delay.
+- The SCPI server mirrors instrument mnemonics without their full grammars
+  and is unauthenticated on the loopback interface.
 - Traffic is one serial lane without switch, queues or congestion; no header
   modifiers, payload timestamps, RFC 2544 or Y.1564.
 - RIN at the source and the receiver noise-current model are alternatives

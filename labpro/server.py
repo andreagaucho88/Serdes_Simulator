@@ -12,6 +12,7 @@ import argparse
 import dataclasses
 import inspect
 import json
+import time
 import math
 import logging
 import os
@@ -40,7 +41,12 @@ from serdes_sim.engine import (ExperimentCancelled, anlt_session,  # noqa: E402
                                rx_sensitivity_search, stressed_eye_calibrate,
                                traffic_sweep)
 from serdes_sim.procedures import run_dr4_tdecq_e2e, run_stressed_receiver  # noqa: E402
-from serdes_sim.golden import (correlate_golden, synthetic_golden_dataset,  # noqa: E402
+from labpro import scpi  # noqa: E402
+from serdes_sim.instrument_procedures import (bert_pam4_result,  # noqa: E402
+                                              rfc2544_report, y1564_report)
+from serdes_sim.golden import (correlate_golden, correlate_library,  # noqa: E402
+                               dataset_from_flexdca, golden_library,
+                               load_library_dataset, synthetic_golden_dataset,
                                validate_dataset)
 from serdes_sim.livebench import (BertNotRunning, InjectionInProgress,  # noqa: E402
                                   LiveBench)
@@ -79,6 +85,11 @@ PROFILE = {"name": None}
 LAST_DR4 = {"report": None}
 # Ultima correlazione golden e ultima calibrazione stressed-RX.
 LAST_GOLDEN = {"result": None, "dataset_meta": None}
+LAST_GOLDEN_LIBRARY = {"report": None}
+LAST_RFC2544 = {"report": None}
+LAST_FIXTURE = {"sparams": None, "meta": None}
+SCPI_SETTINGS = {"enabled": True, "port": scpi.DEFAULT_PORT}
+LAST_Y1564 = {"report": None}
 LAST_STRESSED = {"report": None}
 CLIENTS: set = set()
 MAIN_LOOP = None
@@ -337,6 +348,8 @@ def broadcast(payload: dict):
 EXPERIMENT_POOL = ThreadPoolExecutor(max_workers=1,
                                      thread_name_prefix="experiment")
 REF_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="refsim")
+# le query SCPI hanno un worker proprio: non fanno coda dietro ai pannelli del browser
+SCPI_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scpi")
 
 
 class ExperimentRegistry:
@@ -1011,6 +1024,8 @@ class ApiStressedRx(Base):
                          default=500283)
         sj_ui = as_number(body.get("sj_ui"), "sj_ui", 0.0, 0.4, default=0.05)
         sj_mhz = as_number(body.get("sj_mhz"), "sj_mhz", 1.0, 5000.0, default=100.0)
+        si_pct = as_number(body.get("si_pct"), "si_pct", 0.0, 30.0, default=0.0)
+        si_mhz = as_number(body.get("si_mhz"), "si_mhz", 1.0, 20000.0, default=1000.0)
         target = (as_number(body.get("target_secq_db"), "target_secq_db", 0.1, 10.0)
                   if body.get("target_secq_db") is not None else None)
         cfg = BENCH.cfg
@@ -1022,6 +1037,7 @@ class ApiStressedRx(Base):
             self, "stressed RX",
             lambda evt: run_stressed_receiver(cfg, profile=profile, seed=seed,
                                               sj_ui=sj_ui, sj_mhz=sj_mhz,
+                                              si_pct=si_pct, si_mhz=si_mhz,
                                               target_secq_db=target, cancel=evt))
         if not ok:
             return
@@ -1038,9 +1054,36 @@ class ApiGolden(Base):
 
     async def post(self):
         body = self.body_json()
+        loop = tornado.ioloop.IOLoop.current()
         if body.get("example"):
-            dataset = await tornado.ioloop.IOLoop.current().run_in_executor(
-                REF_POOL, synthetic_golden_dataset)
+            dataset = await loop.run_in_executor(REF_POOL, synthetic_golden_dataset)
+        elif body.get("library"):
+            # waveform della libreria golden inclusa nel pacchetto
+            lib = str(body.get("library"))
+            wid = str(body.get("waveform") or "")
+            try:
+                dataset = await loop.run_in_executor(
+                    REF_POOL, load_library_dataset, lib, wid)
+            except (KeyError, FileNotFoundError) as exc:
+                return self.write_bad(f"libreria golden: {exc}", f"golden library: {exc}")
+        elif body.get("flexdca_csv"):
+            # export FlexDCA (WaveformXYValues / WaveformPattern) + riferimenti
+            text = body.get("flexdca_csv")
+            if not isinstance(text, str) or len(text) > 64 * 1024 * 1024:
+                return self.write_bad("flexdca_csv deve essere testo (< 64 MB)",
+                                      "flexdca_csv must be text (< 64 MB)")
+            rate = (as_number(body.get("symbol_rate_hz"), "symbol_rate_hz", 1e9, 400e9)
+                    if body.get("symbol_rate_hz") is not None else None)
+            reference = body.get("reference") if isinstance(body.get("reference"), dict) else {}
+            try:
+                dataset = await loop.run_in_executor(
+                    REF_POOL, lambda: dataset_from_flexdca(
+                        text, symbol_rate_hz=rate, reference=reference,
+                        instrument=str(body.get("instrument") or "Keysight FlexDCA export"),
+                        note=str(body.get("note") or "")))
+            except ValueError as exc:
+                return self.write_bad(f"export FlexDCA non valido: {exc}",
+                                      f"invalid FlexDCA export: {exc}")
         else:
             dataset = body.get("dataset")
         problems = validate_dataset(dataset)
@@ -1050,11 +1093,141 @@ class ApiGolden(Base):
         result = await tornado.ioloop.IOLoop.current().run_in_executor(
             REF_POOL, correlate_golden, dataset)
         meta = {k: dataset.get(k) for k in ("schema", "source", "instrument", "interface",
-                                             "symbol_rate_hz", "samples_per_ui", "note")}
+                                             "symbol_rate_hz", "samples_per_ui", "note",
+                                             "library", "waveform_id", "title", "provenance",
+                                             "source_url", "pattern_model", "acquisition",
+                                             "sigma_s_w")}
         meta["n_symbols"] = len(dataset.get("symbols", []))
+        meta["reference"] = {k: v for k, v in (dataset.get("reference") or {}).items()
+                             if not isinstance(v, (list, dict)) or k == "tdecq_range_db"}
         LAST_GOLDEN["result"] = paneldata.J(result)
         LAST_GOLDEN["dataset_meta"] = meta
         self.write_json({"ok": True, "result": LAST_GOLDEN["result"], "dataset": meta})
+
+
+class ApiGoldenLibrary(Base):
+    """Librerie golden incluse nel pacchetto (metadati e provenienza)."""
+
+    def get(self):
+        self.write_json({"libraries": golden_library(),
+                         "last_run": LAST_GOLDEN_LIBRARY["report"]})
+
+
+class ApiGoldenLibraryRun(Base):
+    """Correlazione sistematica LabPro vs strumento su tutta una libreria."""
+
+    async def post(self):
+        body = self.body_json()
+        lib = str(body.get("library") or "ieee_802_3bs_smf_2017")
+        optimize = str(body.get("optimize") or "min_tdecq")
+        if optimize not in ("mmse", "min_tdecq"):
+            raise BadParam("optimize deve essere mmse o min_tdecq",
+                           "optimize must be mmse or min_tdecq")
+        if not any(x["name"] == lib for x in golden_library()):
+            raise BadParam(f"libreria golden sconosciuta: {lib}",
+                           f"unknown golden library: {lib}")
+        report, ok = await run_experiment(
+            self, "golden library",
+            lambda evt: correlate_library(lib, optimize=optimize, cancel=evt))
+        if not ok:
+            return
+        LAST_GOLDEN_LIBRARY["report"] = paneldata.J(report)
+        self.write_json({"ok": True, "report": LAST_GOLDEN_LIBRARY["report"]})
+
+
+class ApiRfc2544(Base):
+    """RFC 2544 con la struttura del report Xena2544/Valkyrie2544."""
+
+    async def post(self):
+        body = self.body_json()
+        sizes = body.get("frame_sizes") or [64, 256, 512, 1024]
+        if not isinstance(sizes, list) or not 1 <= len(sizes) <= 8:
+            raise BadParam("frame_sizes deve contenere 1..8 valori", "frame_sizes must hold 1..8 values")
+        sizes = [int(as_number(v, "frame_sizes", 64, 1024, integer=True)) for v in sizes]
+        loss = as_number(body.get("acceptable_loss_pct"), "acceptable_loss_pct", 0.0, 50.0, default=0.0)
+        iters = int(as_number(body.get("max_iterations"), "max_iterations", 0, 8, integer=True, default=4))
+        cfg = BENCH.cfg
+        profile = PROFILE["name"]
+        report, ok = await run_experiment(
+            self, "RFC 2544",
+            lambda evt: rfc2544_report(cfg, frame_sizes=sizes, acceptable_loss_pct=loss,
+                                       max_iterations=iters, profile=profile, cancel=evt))
+        if not ok:
+            return
+        LAST_RFC2544["report"] = paneldata.J(report)
+        self.write_json({"ok": True, "report": LAST_RFC2544["report"]})
+
+
+class ApiY1564(Base):
+    """ITU-T Y.1564 con il flusso e i KPI di VIAVI SAMComplete."""
+
+    async def post(self):
+        body = self.body_json()
+        steps = body.get("cir_steps_pct") or [25, 50, 75, 100]
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 6:
+            raise BadParam("cir_steps_pct deve contenere 1..6 valori", "cir_steps_pct must hold 1..6 values")
+        steps = [float(as_number(v, "cir_steps_pct", 1.0, 100.0)) for v in steps]
+        sla = body.get("sla") if isinstance(body.get("sla"), dict) else None
+        cfg = BENCH.cfg
+        profile = PROFILE["name"]
+        report, ok = await run_experiment(
+            self, "Y.1564",
+            lambda evt: y1564_report(cfg, cir_steps_pct=tuple(steps), sla=sla, profile=profile, cancel=evt))
+        if not ok:
+            return
+        LAST_Y1564["report"] = paneldata.J(report)
+        self.write_json({"ok": True, "report": LAST_Y1564["report"]})
+
+
+def bench_cumulative(acc: dict) -> dict:
+    """Contatori cumulativi del banco nel vocabolario dell'ED (Bit Count,
+    Error Count, Error Rate, Sync/Clock Loss, FEC)."""
+    fec = acc.get("fec") or {}
+    return {"bits": acc.get("bits_total"), "errors": acc.get("bit_errors_total"),
+            "ber": acc.get("ber_cum"), "sync_losses": acc.get("sync_losses"),
+            "clock_losses": acc.get("link_down_records"),
+            "fec_symbol_errors": fec.get("symbols_corrected", fec.get("fec_symbols_corrected")),
+            "fec_uncorrectable": fec.get("frames_uncorrectable", fec.get("fec_frames_uncorrectable"))}
+
+
+class ApiInstrumentReport(Base):
+    """Export in formato strumento: rfc2544 (json|md|xml), y1564 (json|md|csv),
+    bert (json|md|csv, dall'ultimo record del banco)."""
+
+    def get(self, kind):
+        from labpro import instrument_reports as ir
+        fmt = self.get_argument("format", "json").lower()
+        if kind == "bert":
+            cfg, sim, records, _ = BENCH.capture()
+            cum = bench_cumulative(BENCH.snapshot() or {})
+            report = (bert_pam4_result(sim, cum, mapping=cfg.pam4_mapping) if sim is not None
+                      else {"available": False, "reason": "no record acquired yet"})
+            report = paneldata.J(report)
+            table = {"json": None, "md": (ir.bert_markdown, "text/markdown", "md"),
+                     "csv": (ir.bert_csv, "text/csv", "csv")}
+        elif kind == "rfc2544":
+            report = LAST_RFC2544["report"]
+            table = {"json": None, "md": (ir.rfc2544_markdown, "text/markdown", "md"),
+                     "xml": (ir.rfc2544_xml, "application/xml", "xml")}
+        elif kind == "y1564":
+            report = LAST_Y1564["report"]
+            table = {"json": None, "md": (ir.y1564_markdown, "text/markdown", "md"),
+                     "csv": (ir.y1564_csv, "text/csv", "csv")}
+        else:
+            return self.write_bad("report sconosciuto", "unknown report")
+        if fmt not in table:
+            return self.write_bad(f"format deve essere uno di {', '.join(table)}",
+                                  f"format must be one of {', '.join(table)}")
+        if report is None:
+            return self.write_bad("nessun report: esegui prima la procedura",
+                                  "no report yet: run the procedure first")
+        if fmt == "json":
+            return self.write_json({"kind": kind, "report": report})
+        fn, mime, ext = table[fmt]
+        self.set_header("Content-Type", f"{mime}; charset=utf-8")
+        self.set_header("Content-Disposition",
+                        f'attachment; filename="labpro-{kind}-{time.strftime("%Y%m%d-%H%M%S")}.{ext}"')
+        self.finish(fn(report))
 
 
 class ApiSensitivity(Base):
@@ -1200,6 +1373,8 @@ class ApiReport(Base):
             sim = live_sim if cfg_matches_live(live_sim, cfg) else paneldata.ref_sim(cfg)
             extras = {"records": records, "dr4": dr4,
                       "golden": LAST_GOLDEN["result"],
+                      "golden_library": LAST_GOLDEN_LIBRARY["report"],
+                      "rfc2544": LAST_RFC2544["report"], "y1564": LAST_Y1564["report"],
                       "stressed_rx": LAST_STRESSED["report"]}
             if cfg.link_medium == "copper" and cfg.modulation == "PAM4":
                 from serdes_sim.blocks.com import com_report
@@ -1226,6 +1401,49 @@ class ApiReport(Base):
         self.write_json(rep)
 
 
+class ApiScopeFixture(Base):
+    """Fixture di misura da S-parameter (Touchstone caricato o misura IEEE
+    inclusa nel pacchetto) per il de-embedding dello scope."""
+
+    def get(self):
+        self.write_json({"loaded": LAST_FIXTURE["meta"],
+                         "bundled": [{k: v for k, v in f.items() if k != "path"}
+                                     for f in paneldata.bundled_fixtures()]})
+
+    def post(self):
+        body = self.body_json()
+        if body.get("clear"):
+            LAST_FIXTURE["sparams"] = None
+            LAST_FIXTURE["meta"] = None
+            return self.write_json({"ok": True, "loaded": None})
+        name = None
+        text = None
+        if body.get("bundled"):
+            fx = next((f for f in paneldata.bundled_fixtures() if f["id"] == body.get("bundled")), None)
+            if fx is None:
+                return self.write_bad("fixture inclusa sconosciuta", "unknown bundled fixture")
+            text = Path(fx["path"]).read_text()
+            name = fx["id"]
+        elif isinstance(body.get("text"), str):
+            text = body["text"]
+            if len(text) > 32 * 1024 * 1024:
+                return self.write_bad("Touchstone troppo grande (> 32 MB)", "Touchstone too large (> 32 MB)")
+            name = str(body.get("name") or "upload")
+        else:
+            return self.write_bad("serve 'text' (Touchstone) o 'bundled'", "need 'text' (Touchstone) or 'bundled'")
+        pairs = str(body.get("pairs") or "13_24")
+        try:
+            sp = paneldata.fixture_from_touchstone(text, pairs=pairs)
+        except (ValueError, TypeError) as exc:
+            return self.write_bad(f"Touchstone non valido: {exc}", f"invalid Touchstone: {exc}")
+        sp["name"] = name
+        LAST_FIXTURE["sparams"] = sp
+        LAST_FIXTURE["meta"] = {"name": name, "ports": sp["ports"], "z0": sp["z0"],
+                                "n_points": sp["n_points"], "f_max_ghz": float(sp["f_hz"][-1] / 1e9),
+                                "il_db": sp["il_db"], "pairs": pairs}
+        self.write_json({"ok": True, "loaded": LAST_FIXTURE["meta"]})
+
+
 class ApiScope(Base):
     """Acquisizione DCA coerente: fino a quattro nodi dallo stesso record."""
     async def get(self):
@@ -1246,7 +1464,16 @@ class ApiScope(Base):
         span_ui = self.float_arg("span", 64.0, 1.0, 1e5)
         # fixture di misura (dB a Nyquist) e de-embedding: strumenti del DCA,
         # non del datapath
-        fixture_db = self.float_arg("fix", 0.0, 0.0, 30.0)
+        fix_raw = self.get_argument("fix", "0").strip().lower()
+        fixture_sparams = None
+        if fix_raw == "s2p":
+            fixture_db = 0.0
+            fixture_sparams = LAST_FIXTURE["sparams"]
+            if fixture_sparams is None:
+                raise BadParam("nessuna fixture S-parameter caricata (POST /api/scope/fixture)",
+                               "no S-parameter fixture loaded (POST /api/scope/fixture)")
+        else:
+            fixture_db = as_number(fix_raw, "fix", 0.0, 30.0, default=0.0)
         deembed = self.get_argument("deembed", "0") == "1"
 
         def work():
@@ -1260,7 +1487,7 @@ class ApiScope(Base):
                                                  start_ui=start_ui,
                                                  span_ui=span_ui,
                                                  ref_filter=rf,
-                                                 fixture_db=fixture_db,
+                                                 fixture_db=fixture_db, fixture_sparams=fixture_sparams,
                                                  deembed=deembed)
                             for n in requested]
             else:
@@ -1268,7 +1495,7 @@ class ApiScope(Base):
                                                 n_traces=n_traces,
                                                 ref_filter=rf,
                                                 profile=PROFILE["name"],
-                                                fixture_db=fixture_db,
+                                                fixture_db=fixture_db, fixture_sparams=fixture_sparams,
                                                 deembed=deembed)
                             for n in requested]
             return sim, source_used, channels
@@ -1372,6 +1599,11 @@ def make_app():
         (r"/api/experiment/dr4-tdecq", ApiDr4Procedure),
         (r"/api/experiment/stressed-rx", ApiStressedRx),
         (r"/api/golden", ApiGolden),
+        (r"/api/golden/library", ApiGoldenLibrary),
+        (r"/api/experiment/rfc2544", ApiRfc2544),
+        (r"/api/experiment/y1564", ApiY1564),
+        (r"/api/report/(rfc2544|y1564|bert)", ApiInstrumentReport),
+        (r"/api/experiment/golden-library", ApiGoldenLibraryRun),
         (r"/api/experiment/anlt", ApiAnlt),
         (r"/api/experiment/ont", ApiOnt),
         (r"/api/experiment/sensitivity", ApiSensitivity),
@@ -1381,6 +1613,7 @@ def make_app():
         (r"/api/disrupt", ApiDisrupt),
         (r"/api/inject", ApiInject),
         (r"/api/scope", ApiScope),
+        (r"/api/scope/fixture", ApiScopeFixture),
         (r"/api/panel/(\w+)", ApiPanel),
         (r"/api/report/standards", ApiReport),
         (r"/ws", WS),
@@ -1393,6 +1626,16 @@ def make_app():
 def _serve_until_stopped(loop, bench):
     """Esegue il loop e chiude il LiveBench anche su SIGINT da terminale."""
     try:
+        if SCPI_SETTINGS["enabled"] and callable(getattr(loop, "add_callback", None)):
+            async def _start_scpi():
+                port = SCPI_SETTINGS["port"]
+                try:
+                    await scpi.start_server(ScpiContext(), "127.0.0.1", port)
+                    print(f"SCPI server on 127.0.0.1:{port} "
+                          f"(PyVISA: TCPIP::127.0.0.1::{port}::SOCKET)", flush=True)
+                except OSError as exc:
+                    print(f"SCPI server not started: {exc}", flush=True)
+            loop.add_callback(_start_scpi)
         loop.start()
     except KeyboardInterrupt:
         print("\nSerDes Optical Lab Pro arrestato.")
@@ -1410,6 +1653,277 @@ def _install_shutdown_handlers(loop):
     signal.signal(signal.SIGTERM, request_stop)
 
 
+class ScpiContext:
+    """Adattatore fra l'albero SCPI (labpro.scpi) e il banco: stessi
+    percorsi di validazione, persistenza e broadcast delle API HTTP."""
+
+    def serial(self):
+        return "LABPRO-1"
+
+    def version(self):
+        from labpro import __version__
+        return __version__
+
+    # --- configurazione ------------------------------------------------------
+    def _apply(self, new):
+        problems = new.validate()
+        if problems:
+            raise ValueError("; ".join(problems))
+        BENCH.set_config(new)
+        persist()
+        broadcast({"type": "config", "cfg": public_cfg(new), "profile": profile_state()})
+        broadcast({"type": "tick", "acc": paneldata.J(BENCH.snapshot())})
+
+    def set_param(self, name, value):
+        cfg = BENCH.cfg
+        if name not in type(cfg).__dataclass_fields__:
+            raise KeyError(f"unknown LinkConfig field {name}")
+        if isinstance(value, str) and isinstance(getattr(cfg, name), bool):
+            value = scpi._onoff(value)
+        if isinstance(getattr(cfg, name), tuple) and isinstance(value, str):
+            value = tuple(float(v) for v in value.split(","))
+        try:
+            new = cfg.with_updates(**{name: value})
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+        self._apply(new)
+
+    def get_param(self, name):
+        cfg = BENCH.cfg
+        if name not in type(cfg).__dataclass_fields__:
+            raise KeyError(f"unknown LinkConfig field {name}")
+        v = getattr(cfg, name)
+        return list(v) if isinstance(v, tuple) else v
+
+    def param_names(self):
+        return sorted(type(BENCH.cfg).__dataclass_fields__)
+
+    def load_profile(self, name):
+        if name not in STANDARD_PROFILES:
+            raise KeyError(f"unknown profile {name}")
+        BENCH.set_config(STANDARD_PROFILES[name][0])
+        PROFILE["name"] = name
+        persist()
+        broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg), "profile": profile_state()})
+
+    def load_preset(self, name):
+        if name not in PRESETS:
+            raise KeyError(f"unknown preset {name}")
+        BENCH.set_config(PRESETS[name][0])
+        PROFILE["name"] = None
+        persist()
+        broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg), "profile": profile_state()})
+
+    def profile_name(self):
+        return PROFILE["name"]
+
+    def config_hash(self):
+        return BENCH.cfg.short_hash() if hasattr(BENCH.cfg, "short_hash") else profile_state().get("hash", "")
+
+    def config_dict(self):
+        return public_cfg(BENCH.cfg)
+
+    def reset(self):
+        from serdes_sim.config import LinkConfig
+        BENCH.set_config(LinkConfig())
+        PROFILE["name"] = None
+        BENCH.reset_stats()
+        persist()
+        broadcast({"type": "config", "cfg": public_cfg(BENCH.cfg), "profile": profile_state()})
+
+    # --- acquisizione --------------------------------------------------------
+    def run(self, on):
+        if on:
+            BENCH.start()
+        else:
+            BENCH.stop()
+        broadcast({"type": "run", "running": BENCH.running})
+
+    def running(self):
+        return bool(BENCH.running)
+
+    def records(self):
+        return int((BENCH.snapshot() or {}).get("records", 0))
+
+    def reset_stats(self):
+        BENCH.reset_stats()
+
+    def single(self):
+        return self._offload(lambda: self._single())
+
+    def _single(self):
+        cfg, sim, records, _ = BENCH.capture()
+        return int(records or 0)
+
+    def _sim(self):
+        cfg, sim, records, _ = BENCH.capture()
+        if sim is None:
+            raise scpi.ScpiError(-230, "Data corrupt or stale; no record acquired yet")
+        return cfg, sim
+
+    @staticmethod
+    def _offload(fn):
+        """Le misure girano nel pool di riferimento, mai sull'IOLoop (che
+        serve HTTP, WebSocket e il LiveBench)."""
+        return tornado.ioloop.IOLoop.current().run_in_executor(SCPI_POOL, fn)
+
+    # --- misure DCA ----------------------------------------------------------
+    def measure(self, kind, node):
+        return self._offload(lambda: self._measure(kind, node))
+
+    def _measure(self, kind, node):
+        cfg, sim = self._sim()
+        node = str(node).lower()
+        if node in ("optical", "pfib", "pfiber", "opt", "pd"):
+            node = "pfiber"
+        if kind == "tdecq":
+            # percorso rapido: solo il TDECQ di clausola sulla potenza ottica
+            if cfg.link_medium != "optical" or getattr(sim, "optical", None) is None:
+                return None
+            from serdes_sim.blocks.metrics import tdecq_report
+            rep = tdecq_report(sim.optical.P_fiber_w, sim.pam4_symbols, sim.spec,
+                               cfg.analog_sps, cfg.symbol_rate_hz, cfg.fs_analog_hz)
+            return rep.get("tdecq_db")
+        m = paneldata.eye_measures(sim, cfg, node=node)
+        if kind == "all":
+            return m
+        table = {"tdecq": lambda: (m.get("tdecq") or {}).get("tdecq_db"),
+                 "eye_height": lambda: min(m.get("eye_heights") or [float("nan")]),
+                 "eye_width": lambda: min(m.get("eye_widths_ui") or [float("nan")]),
+                 "oma": lambda: m.get("oma_outer_mw"), "er": lambda: m.get("er_db"),
+                 "rlm": lambda: m.get("rlm_proxy"), "sndr": lambda: m.get("sndr_db")}
+        return table[kind]()
+
+    def jitter(self, key):
+        return self._offload(lambda: self._jitter(key))
+
+    def _jitter(self, key):
+        cfg, sim = self._sim()
+        j = paneldata.jitter_panel(sim, cfg)
+        tf = j.get("tail_fit") or {}
+        if key == "all":
+            return tf
+        alias = {"tj_ps": "tj_1e12_ps"}
+        return tf.get(alias.get(key, key))
+
+    def com(self):
+        return self._offload(lambda: self._com())
+
+    def _com(self):
+        cfg, sim = self._sim()
+        return (paneldata.com_panel(sim, cfg, profile=PROFILE["name"]) or {}).get("com_db")
+
+    def standards(self):
+        return self._offload(lambda: self._standards())
+
+    def _standards(self):
+        cfg, sim = self._sim()
+        return paneldata.standards_report(sim, cfg, profile=PROFILE["name"])
+
+    # --- BERT ----------------------------------------------------------------
+    def ed_item(self, item):
+        return self._offload(lambda: self._ed_item(item))
+
+    def _ed_item(self, item):
+        acc = bench_cumulative(BENCH.snapshot() or {})
+        cfg, sim, records, _ = BENCH.capture()
+        key = item.upper().replace(" ", "")
+        pam4 = bert_pam4_result(sim, acc, mapping=cfg.pam4_mapping) if sim is not None else {"available": False}
+        lanes = pam4.get("lanes") or {}
+        table = {
+            "CURRENT:ER:TOTAL": acc.get("ber"), "CURRENT:EC:TOTAL": acc.get("errors"),
+            "CURRENT:BITS": acc.get("bits"), "CURRENT:SYNC:LOSS": acc.get("sync_losses"),
+            "CURRENT:CLOCK:LOSS": acc.get("clock_losses"),
+            "CURRENT:FEC:UNCORR": acc.get("fec_uncorrectable"),
+            "CURRENT:ER:MSB": (lanes.get("MSB") or {}).get("ER"), "CURRENT:ER:LSB": (lanes.get("LSB") or {}).get("ER"),
+            "CURRENT:EC:MSB": (lanes.get("MSB") or {}).get("EC"), "CURRENT:EC:LSB": (lanes.get("LSB") or {}).get("EC"),
+            "CURRENT:EC:INS": sum((lanes.get(k) or {}).get("INS", {}).get("EC", 0) for k in ("MSB", "LSB")),
+            "CURRENT:EC:OMI": sum((lanes.get(k) or {}).get("OMI", {}).get("EC", 0) for k in ("MSB", "LSB")),
+            "CURRENT:SER": (pam4.get("symbol_error_matrix") or {}).get("symbol_error_ratio"),
+        }
+        if key not in table:
+            raise scpi.ScpiError(-224, f"Illegal parameter value; {item}")
+        return table[key]
+
+    def pam4_result(self):
+        return self._offload(lambda: self._pam4_result())
+
+    def _pam4_result(self):
+        cfg, sim = self._sim()
+        return bert_pam4_result(sim, bench_cumulative(BENCH.snapshot() or {}), mapping=cfg.pam4_mapping)
+
+    def inject(self, n, target):
+        return BENCH.inject_errors(int(n), burst=False, target=str(target).lower())
+
+    def traffic_stats(self):
+        return self._offload(lambda: self._traffic_stats())
+
+    def _traffic_stats(self):
+        cfg, sim = self._sim()
+        return paneldata.l2_panel(sim, cfg)
+
+    # --- esperimenti (sincroni per la connessione SCPI) ---------------------
+    async def experiment(self, name, arg):
+        cfg = BENCH.cfg
+        profile = PROFILE["name"]
+        if name == "rfc2544":
+            fn = lambda: rfc2544_report(cfg, frame_sizes=arg or (64, 256, 512, 1024), profile=profile)  # noqa: E731
+        elif name == "y1564":
+            fn = lambda: y1564_report(cfg, profile=profile)  # noqa: E731
+        elif name == "dr4":
+            fn = lambda: run_dr4_tdecq_e2e(seed=int(arg or 500283), golden=LAST_GOLDEN["result"])  # noqa: E731
+        elif name == "stressed_rx":
+            fn = lambda: run_stressed_receiver(cfg, profile=profile,  # noqa: E731
+                                               target_secq_db=(float(arg) if arg is not None else None))
+        elif name == "golden_library":
+            fn = lambda: correlate_library("ieee_802_3bs_smf_2017", optimize=str(arg or "min_tdecq"))  # noqa: E731
+        else:
+            raise scpi.ScpiError(-224, f"Illegal parameter value; {name}")
+        was_running = BENCH.running
+        if was_running:
+            await tornado.ioloop.IOLoop.current().run_in_executor(None, BENCH.stop)
+        try:
+            report = await tornado.ioloop.IOLoop.current().run_in_executor(EXPERIMENT_POOL, fn)
+        finally:
+            if was_running:
+                BENCH.start()
+        store = {"rfc2544": LAST_RFC2544, "y1564": LAST_Y1564, "stressed_rx": LAST_STRESSED,
+                 "golden_library": LAST_GOLDEN_LIBRARY}
+        if name in store:
+            store[name]["report"] = paneldata.J(report)
+        elif name == "dr4":
+            LAST_DR4["report"] = paneldata.J(report)
+        return None
+
+    def report(self, kind, fmt):
+        return self._offload(lambda: self._report(kind, fmt))
+
+    def _report(self, kind, fmt):
+        from labpro import instrument_reports as ir
+        if kind == "standards":
+            cfg, sim = self._sim()
+            rep = paneldata.standards_report(sim, cfg, profile=PROFILE["name"])
+            return paneldata.standards_report_markdown(rep) if fmt == "md" else rep
+        if kind == "bert":
+            res = self._pam4_result()
+            return {"json": lambda: res, "md": lambda: ir.bert_markdown(res), "csv": lambda: ir.bert_csv(res)}[fmt]()
+        table = {"rfc2544": (LAST_RFC2544, {"md": ir.rfc2544_markdown, "xml": ir.rfc2544_xml}),
+                 "y1564": (LAST_Y1564, {"md": ir.y1564_markdown, "csv": ir.y1564_csv}),
+                 "dr4": (LAST_DR4, {}), "stressed_rx": (LAST_STRESSED, {}),
+                 "golden_library": (LAST_GOLDEN_LIBRARY, {})}
+        if kind not in table:
+            raise scpi.ScpiError(-224, f"Illegal parameter value; {kind}")
+        store, fmts = table[kind]
+        rep = store.get("report")
+        if rep is None:
+            raise scpi.ScpiError(-230, "Data corrupt or stale; run the procedure first")
+        if fmt == "json":
+            return rep
+        if fmt not in fmts:
+            raise scpi.ScpiError(-224, f"Illegal parameter value; {fmt}")
+        return fmts[fmt](rep)
+
+
 def main():
     global MAIN_LOOP, PERSIST
     parser = argparse.ArgumentParser(
@@ -1418,6 +1932,11 @@ def main():
                         help="loopback TCP port (default: 8640)")
     parser.add_argument("--no-autostart", action="store_true",
                         help="start with continuous acquisition stopped")
+    parser.add_argument("--scpi-port", type=int, default=scpi.DEFAULT_PORT,
+                        help="loopback TCP port of the SCPI server (default: 5025, PyVISA "
+                             "TCPIP::127.0.0.1::5025::SOCKET)")
+    parser.add_argument("--no-scpi", action="store_true",
+                        help="do not start the SCPI server")
     persistence = parser.add_mutually_exclusive_group()
     persistence.add_argument(
         "--state-file", type=Path,
@@ -1428,6 +1947,10 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if not 1 <= args.scpi_port <= 65535:
+        parser.error("--scpi-port must be between 1 and 65535")
+    SCPI_SETTINGS["enabled"] = not args.no_scpi
+    SCPI_SETTINGS["port"] = args.scpi_port
     if args.no_persist:
         PERSIST = None
     elif args.state_file is not None:

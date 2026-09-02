@@ -1,0 +1,16 @@
+{
+ "schema": "labpro-fixtures/1",
+ "fixtures": [
+  {
+   "id": "ieee_3ck_module_board",
+   "file": "ieee_3ck_ito_module_board.s4p",
+   "title": "IEEE P802.3ck module compliance board PCB trace (ito_3ck_01_1118), 4-port, decimated 10:1",
+   "source_url": "https://www.ieee802.org/3/ck/public/tools/c2m/ito_3ck_01_1118_PCBtrace.zip",
+   "source_file": "ito_3ck_01 touch stone file_PCB/Module_Board.s4p",
+   "source_sha256": "860cce7cbf4f86d31035675fff817a0d373664c1019b068fa99dbd4dd2adf08a",
+   "n_points_original": 7001,
+   "n_points": 701,
+   "note": "differential S21 (ports 1-3 \u2192 2-4) used as the fixture transfer function"
+  }
+ ]
+}

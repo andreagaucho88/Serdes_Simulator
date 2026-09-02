@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serdes-optical-lab"
-version = "0.1.3"
+version = "0.2.0"
 description = "Physics-backed virtual instrument bench for electrical and optical SerDes links"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -58,6 +58,7 @@ include = ["labpro*", "serdes_sim*"]
 
 [tool.setuptools.package-data]
 labpro = ["static/*", "static/fonts/*"]
+serdes_sim = ["data/golden/*/*.npz", "data/golden/*/*.json", "data/fixtures/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

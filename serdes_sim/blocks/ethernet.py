@@ -398,6 +398,7 @@ class L2Analysis:
     lost_emulated: int = 0     # persi per drop emulato (impairment)
     lost_phy: int = 0          # persi per errori del PHY
     corrupt_emulated: int = 0  # FCS bad attese dall'emulatore
+    window_s: float = 0.0      # durata della finestra analizzata [s]
     scheduler: str = "round_robin"
     coding: str = "scrambler"
     weights: tuple = (1,)
@@ -554,6 +555,7 @@ def analyze_line_bytes(cfg, data: bytes, schedule: TxSchedule,
         frames_out_of_order=sum(p["ooo"] for p in per),
         lost_emulated=lost_emu, lost_phy=max(lost_total - lost_emu, 0),
         corrupt_emulated=corrupt_emu,
+        window_s=float(window_s),
         scheduler=schedule.scheduler, coding=schedule.coding,
         weights=schedule.weights, offered_load_pct=offered,
         window_frames=[(k[0], k[1]) for k in list(logical)[:64]],
