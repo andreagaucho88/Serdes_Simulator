@@ -18,7 +18,7 @@ license-files = [
 dependencies = [
     "numpy==1.26.4",
     "scipy==1.13.1",
-    "pandas==2.2.3",
+    "pandas==3.0.5",
     "tornado==6.4.1",
     "plotly==5.24.1",
     "scikit-rf==2.1.0",
