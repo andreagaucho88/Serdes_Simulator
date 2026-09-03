@@ -35,8 +35,8 @@ electrical and electro-optical SerDes links up to the 224G class.</strong></p>
 </p>
 
 <p align="center">
-  <em>Persistent DCA eye → synchronized waveform → accumulated BER → in-path
-  KP4/KR4 FEC codeword analysis.</em>
+  <em>Annotated live story: persistent DCA eye and mask → synchronized
+  waveform → accumulated BER → in-path KP4/KR4 FEC codeword analysis.</em>
 </p>
 
 ---
@@ -118,8 +118,11 @@ in <code>app/</code> is preserved as a frozen reference.
 
 ## Visual tour
 
-Every GIF and screenshot below comes from the real application. Each tab
-change requests bench data; none of the screens use mocked plots.
+Every GIF and screenshot below comes from the real application. Each animation
+opens with a short chapter card, then labels every live view with what to look
+for and where it sits in the sequence. The recording overlay is explanatory
+metadata only: each tab change requests real bench data and none of the plots
+are mocked or post-produced.
 
 ### 1. Workspace, signal chain, Academy, and standards
 
@@ -129,6 +132,8 @@ The signal chain is navigable: clicking a block opens its instrument panel.
 Failed checkpoints highlight the responsible block, while amber triangles
 show the reference planes currently acquired by DCA scopes.
 
+**Animation path:** signal chain → Academy → standards and model boundaries.
+
 ### 2. Source, BERT, and transmitter
 
 ![BERT, generator, and transmitter tour](docs/media/02-source-and-tx.gif)
@@ -136,6 +141,9 @@ show the reference planes currently acquired by DCA scopes.
 The BERT combines four views: PPG source, TX stress, error checker, and RX
 procedures. Its state is shared with the FIR, DAC, P/N driver, TX PLL, and
 error-insertion path.
+
+**Animation path:** PPG source → stress injection → error checker → RX
+procedures → analog transmitter.
 
 ### 3. Channel, COM, and optics
 
@@ -145,12 +153,18 @@ The channel can be analytical or imported from a Touchstone file. COM,
 modulator, fiber, and CMIS-lite expose their own physical planes,
 measurements, and declared limitations.
 
+**Animation path:** channel response → COM Annex 93A → optical path → CMIS
+telemetry.
+
 ### 4. Receiver and DSP
 
 ![Receiver, ADC, CDR, and equalization tour](docs/media/04-rx-and-dsp.gif)
 
 PD, TIA, AGC, CTLE, interleaved ADC, CDR, FSE/DFE, and slicer operate on the
 same end-to-end record. They are not disconnected demonstrations.
+
+**Animation path:** RX front end → photodiode → TIA/AFE → AGC → ADC → CDR →
+FSE/DFE → slicer decisions.
 
 ### 5. Live instruments
 
@@ -160,6 +174,9 @@ DCA EYE/WAVE, TIE, spectrum, BER, and FEC update while acquisition is
 running. Counters grow record by record and reset whenever the underlying
 physics changes.
 
+**Animation path:** DCA eye and mask → waveform → TIE/J2/J9 → spectrum → BER
+confidence → FEC correction histogram.
+
 ### 6. Procedures, training, and audit
 
 ![L2, JTOL, AN/LT, training, and audit tour](docs/media/06-procedures-and-audit.gif)
@@ -167,6 +184,9 @@ physics changes.
 Sweep, JTOL-lite, link training, AN/LT, DR4, instrument alignment, the signal
 ledger, and the physics audit make both the result and the path that produced
 it inspectable.
+
+**Animation path:** traffic layers → sweep → JTOL → link training → AN/LT →
+DR4 stress → instrument alignment → signal ledger → physics invariants.
 
 ### 7. Latest developments: traffic PHY · L1 · L2, DR4 stress space, stressed RX, compliance
 
@@ -575,9 +595,12 @@ The script:
 2. saves the current configuration and RUN state in an isolated browser
    profile;
 3. switches the UI to English;
-4. visits real tabs and captures 1440 by 900 frames;
-5. builds seven optimized 1000 by 625 GIFs with ImageMagick;
-6. restores the initial bench state even if capture fails.
+4. visits real tabs and captures 1440 by 810 application frames;
+5. injects recording-only chapter cards, live-view titles, concise observation
+   prompts, and progress markers;
+6. exercises both DCA EYE/MASK and WAVE modes and lets live FEC counters settle;
+7. builds seven optimized 1000 by 563 GIFs with per-scene reading time;
+8. restores the initial bench state even if capture fails.
 
 Options:
 

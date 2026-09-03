@@ -2,6 +2,18 @@
 
 All notable public changes are documented here.
 
+## Unreleased
+
+- Rebuilt all seven README animations as annotated 16:9 product stories with
+  branded chapter cards, large live-view titles, concise observation prompts,
+  progress markers, and scene-specific timing. The hero now explicitly follows
+  the real DCA eye/mask → waveform → cumulative BER → in-path FEC evidence
+  chain; every generated application frame still comes from the live bench.
+- Made the GIF generator declarative and reproducible: tours now carry their
+  own narrative metadata, DCA EYE/MASK and WAVE modes are exercised
+  automatically, repeated panels are deduplicated, live FEC is allowed to
+  settle, and the original configuration and RUN state remain protected.
+
 ## 0.2.0 — 2026-09-02
 
 - Completed a release-hardening review across HTTP, persistence, SCPI,
